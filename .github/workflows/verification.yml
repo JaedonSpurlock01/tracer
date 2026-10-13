@@ -25,6 +25,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
+        with:
+          version: 12.9.1
+          run_install: false
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:integration
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -77,6 +92,7 @@ jobs:
     environment: tracer
     needs:
       - fast-tests
+      - integration-tests
       - typecheck
       - lint
       - build
