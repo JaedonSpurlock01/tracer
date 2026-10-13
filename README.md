@@ -9,6 +9,7 @@ Tracer is designed to replace the core operational value of higher-cost call-tra
 - [Domain language and relationships](./CONTEXT.md)
 - [Product, page, and brand design](./DESIGN.md)
 - [Incremental implementation roadmap](./docs/IMPLEMENTATION_ROADMAP.md)
+- [Data platform operations](./docs/DATA_PLATFORM.md)
 - [Project-evolution Changelog](./docs/CHANGELOG.md)
 - [Agent execution rules](./AGENTS.md)
 
@@ -284,6 +285,7 @@ Staging and Production use separate Neon projects. Preview intentionally shares 
 
 - Node.js 22
 - pnpm 12.9.1 through Corepack
+- A Docker-compatible daemon when running `test:integration` locally
 
 Enable the pinned package manager with `corepack enable`. If Windows prevents Corepack from writing its shim under the Node.js installation, use `npm install --global pnpm@12.9.1` instead.
 
@@ -426,7 +428,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 
 | Domain | Required behavior coverage | Primary layer |
 | --- | --- | --- |
-| Organization and identity | Bootstrap uniqueness, provisioned-only sign-in, role changes, disabled sessions, last-Operator protection | Domain and integration |
+| Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; bootstrap uniqueness, provisioned-only sign-in, role changes, disabled sessions, and last-Operator protection remain scheduled | Domain and integration |
 | Workspace access | Direct Access Grants, Organization scope, granted reads, ungranted denials, immediate revocation | Domain, integration, and browser |
 | Workspace lifecycle | Setup Required, Active, Archived, restore to setup, archive history preservation | Domain and integration |
 | Number Assignment | One active assignment, prior Twilio configuration restoration, replacement history, number uniqueness | Domain, integration, and contract |
