@@ -29,10 +29,17 @@ interface HyperdriveBinding {
 
 interface EnvironmentBindings {
   hyperdrive?: HyperdriveBinding[];
+  send_email?: SendEmailBinding[];
   services?: unknown[];
 }
 
+interface SendEmailBinding {
+  name: string;
+  remote?: boolean;
+}
+
 interface WranglerConfiguration extends EnvironmentBindings {
+  send_email?: SendEmailBinding[];
   previews?: EnvironmentBindings;
   env?: {
     staging?: EnvironmentBindings;
@@ -66,4 +73,6 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
   expect(staging?.id).not.toBe(production?.id);
   expect(configuration.previews?.services).toBeUndefined();
   expect(configuration.env?.staging?.services).toBeUndefined();
+  expect(configuration.send_email).toEqual([{ name: "EMAIL", remote: true }]);
+  expect(configuration.previews?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
 });

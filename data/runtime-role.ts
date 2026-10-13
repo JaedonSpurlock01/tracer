@@ -5,7 +5,7 @@
  *
  * @description
  *  Creates or rotates Tracer's application role and limits it to the
- *  Organization operations exposed by the public repository.
+ *  authentication and Organization operations required at runtime.
  *
  * @remarks
  *  The password format is validated before it is interpolated into role SQL.
@@ -52,5 +52,16 @@ export async function provisionRuntimeRole(
   await connection.query(`GRANT CONNECT ON DATABASE "${database}" TO ${runtimeRole}`);
   await connection.query(`GRANT USAGE ON SCHEMA public TO ${runtimeRole}`);
   await connection.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${runtimeRole}`);
-  await connection.query(`GRANT SELECT, INSERT ON TABLE public.organization TO ${runtimeRole}`);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.organization TO ${runtimeRole}`);
+  await connection.query(`
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+      public.session,
+      public.account,
+      public.verification,
+      public.member,
+      public.invitation
+    TO ${runtimeRole}
+  `);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public."user" TO ${runtimeRole}`);
+  await connection.query(`REVOKE CREATE ON SCHEMA public FROM ${runtimeRole}`);
 }

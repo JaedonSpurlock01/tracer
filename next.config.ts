@@ -18,9 +18,16 @@
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
 
-initOpenNextCloudflareForDev();
+if (process.env.NODE_ENV === "development") {
+  initOpenNextCloudflareForDev(
+    process.env.E2E_AUTH_FAKE === "true"
+      ? { configPath: "wrangler.test.jsonc", envFiles: [] }
+      : undefined,
+  );
+}
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   outputFileTracingIncludes: {
     "**/*": ["./node_modules/pg-cloudflare/dist/**", "./node_modules/pg-cloudflare/esm/**"],
   },

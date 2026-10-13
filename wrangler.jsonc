@@ -17,12 +17,24 @@
         "binding": "HYPERDRIVE",
         "id": "36fd65b2679c4b739d224f1056b29070"
       }
+    ],
+    "send_email": [
+      {
+        "name": "EMAIL",
+        "remote": true
+      }
     ]
   },
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
       "service": "tracer"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "remote": true
     }
   ],
   "hyperdrive": [
