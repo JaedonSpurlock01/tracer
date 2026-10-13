@@ -54,6 +54,7 @@ describe("verification harness", () => {
     const commands = [
       "pnpm test",
       "pnpm test:integration",
+      "pnpm exec playwright install --with-deps chromium",
       "pnpm test:e2e",
       "pnpm typecheck",
       "pnpm lint",
