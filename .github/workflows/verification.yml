@@ -107,7 +107,7 @@ jobs:
           if [ "$status" -ne 0 ]; then
             exit "$status"
           fi
-          preview_url="$(printf '%s' "$output" | jq -er '.preview.urls[0]')"
+          preview_url="$(printf '%s\n' "$output" | sed -n '/^{/,$p' | jq -er '.preview.urls[0]')"
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
       - name: Check health
         run: curl --fail --retry 5 --retry-delay 2 "${{ steps.preview.outputs.preview_url }}/health"
