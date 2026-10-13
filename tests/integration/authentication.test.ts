@@ -125,6 +125,14 @@ describe.sequential("provisioned identity", () => {
     expect(await disallowed.json()).toEqual({ success: true });
     expect(disallowedTasks).toHaveLength(0);
     expect(backgroundTasks).toHaveLength(0);
+
+    const freshAllowed = await auth.handler(request({ email: "operator@example.com", type: "sign-in" }));
+    expect(freshAllowed.status).toBe(provisioned.status);
+    expect(backgroundTasks).toHaveLength(1);
+    await Promise.all(backgroundTasks.splice(0));
+    const signInCode = sentCode;
+    expect(signInCode).toMatch(/^\d{6}$/);
+
     const unprovisionedVerification = await auth.handler(new Request("http://localhost:3000/api/auth/sign-in/email-otp", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -145,7 +153,7 @@ describe.sequential("provisioned identity", () => {
     const signIn = await auth.handler(new Request("http://localhost:3000/api/auth/sign-in/email-otp", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "operator@example.com", otp: sentCode }),
+      body: JSON.stringify({ email: "operator@example.com", otp: signInCode }),
     }));
     expect(signIn.status).toBe(200);
     await expect(pool!.query('select state from "user"')).resolves.toMatchObject({ rows: [{ state: "Active" }] });
@@ -178,12 +186,12 @@ describe.sequential("provisioned identity", () => {
     expect(deletion.status).not.toBe(200);
     await expect(pool!.query("select count(*) from organization")).resolves.toMatchObject({ rows: [{ count: "1" }] });
 
-    const freshCodeRequest = await auth.handler(request({ email: "operator@example.com", type: "sign-in" }));
-    expect(freshCodeRequest.status).toBe(provisioned.status);
+    const disabledCodeRequest = await auth.handler(request({ email: "operator@example.com", type: "sign-in" }));
+    expect(disabledCodeRequest.status).toBe(provisioned.status);
     expect(backgroundTasks).toHaveLength(1);
     await Promise.all(backgroundTasks.splice(0));
-    const freshCode = sentCode;
-    expect(freshCode).toMatch(/^\d{6}$/);
+    const disabledCode = sentCode;
+    expect(disabledCode).toMatch(/^\d{6}$/);
 
     const [{ id: userId }] = (await pool!.query<{ id: string }>('select id from "user" limit 1')).rows;
     await createIdentityAdministration(pool!).disable(userId);
@@ -194,7 +202,7 @@ describe.sequential("provisioned identity", () => {
     const disabledSignIn = await auth.handler(new Request("http://localhost:3000/api/auth/sign-in/email-otp", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "operator@example.com", otp: freshCode }),
+      body: JSON.stringify({ email: "operator@example.com", otp: disabledCode }),
     }));
     expect(disabledSignIn.status).not.toBe(200);
     await expect(pool!.query("select count(*) from session")).resolves.toMatchObject({ rows: [{ count: "0" }] });

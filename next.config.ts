@@ -18,7 +18,9 @@
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
 
-initOpenNextCloudflareForDev();
+if (process.env.NODE_ENV === "development") {
+  initOpenNextCloudflareForDev();
+}
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],

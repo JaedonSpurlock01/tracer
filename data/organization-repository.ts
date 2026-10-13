@@ -59,7 +59,12 @@ export function createOrganizationRepository(connection: Pool | PoolClient): Org
 
     async findById(id) {
       const [organization] = await database
-        .select()
+        .select({
+          id: organizations.id,
+          name: organizations.name,
+          slug: organizations.slug,
+          createdAt: organizations.createdAt,
+        })
         .from(organizations)
         .where(eq(organizations.id, id))
         .limit(1);
