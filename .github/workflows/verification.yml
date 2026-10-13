@@ -71,7 +71,18 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm verify:full
+      - name: Run fast tests
+        run: pnpm test
+      - name: Run integration tests
+        run: pnpm test:integration
+      - name: Run browser journey
+        run: pnpm test:e2e
+      - name: Run typecheck
+        run: pnpm typecheck
+      - name: Run lint
+        run: pnpm lint
+      - name: Run production build
+        run: pnpm build
 
   typecheck:
     runs-on: ubuntu-latest
