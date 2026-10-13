@@ -19,7 +19,11 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
 
 if (process.env.NODE_ENV === "development") {
-  initOpenNextCloudflareForDev();
+  initOpenNextCloudflareForDev(
+    process.env.E2E_AUTH_FAKE === "true"
+      ? { configPath: "wrangler.test.jsonc", envFiles: [] }
+      : undefined,
+  );
 }
 
 const nextConfig: NextConfig = {
