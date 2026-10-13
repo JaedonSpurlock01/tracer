@@ -16,11 +16,18 @@
  * -------------------------------------------------------------------------
  */
 import { GET as getHealth } from "../../app/health/route";
+import { handleDatabaseSmoke } from "../../app/internal/smoke/database/route";
 
 const testWorker = {
-  fetch(request: Request): Response {
-    if (new URL(request.url).pathname === "/health") {
+  async fetch(request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+
+    if (path === "/health") {
       return getHealth();
+    }
+
+    if (path === "/internal/smoke/database") {
+      return handleDatabaseSmoke(request, {});
     }
 
     return new Response(null, { status: 404 });

@@ -66,6 +66,8 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 - Started M1 - Verified Application Skeleton for the Local and Preview foundation.
 - Blocked M1 completion until the `tracer` Cloudflare Worker exists and a trusted pull request passes the Preview deployment and `/health` smoke check.
+- Started M2 - Data Platform and Environment Isolation after M1 passed its trusted Preview deployment gate.
+- Revised M2 so Preview intentionally shares Staging data while separate Hyperdrive configurations keep both non-production paths isolated from Production.
 - Selected OpenNext as the Cloudflare Workers adapter because Tracer requires standard Next.js runtime behavior while vinext remains beta.
 - Replaced the coarse implementation sequence with small vertical milestones that each define dependencies, test-first behaviors, verification gates, and exit criteria.
 - Sequenced Workspace setup before Call Flow publication and activation, then scheduled Client Viewer provisioning and Access Grants after an Active Workspace exists.
@@ -73,6 +75,12 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Required at most one roadmap milestone to be In Progress at a time.
 - Required agents to update the roadmap and Changelog when substantive project state changes.
 
+### Deployment
+
+- Promoted M2's isolated Staging data path after direct migration and protected Hyperdrive read/write smoke checks passed.
+
 ### Completed
 
 - Completed M0 - Planning and Governance Baseline.
+- Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
+- Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.

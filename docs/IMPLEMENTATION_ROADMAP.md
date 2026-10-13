@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M1 - Verified Application Skeleton
-- **Next milestone:** M2 - Data Platform and Environment Isolation
-- **Current environment:** Local foundation verified; Preview blocked pending Worker creation and a trusted pull request
+- **Current milestone:** None
+- **Next milestone:** M3 - Provisioned Authentication and Organization Bootstrap
+- **Current environment:** Local, Preview, and Staging data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-12
 
-M1 started on 2026-10-12 and is blocked only on its live Preview gate. M2 must not start until M1 is Complete or explicitly Deferred.
+M2 is Complete after Testcontainers, migration, environment-isolation, least-privilege, Preview, and live Staging Hyperdrive gates passed. M3 has not started.
 
 ## Status model
 
@@ -168,8 +168,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | ID | Milestone | Status | Target environment | Depends on |
 | --- | --- | --- | --- | --- |
 | M0 | Planning and Governance Baseline | Complete | Documentation | None |
-| M1 | Verified Application Skeleton | Blocked | Local and Preview | M0 |
-| M2 | Data Platform and Environment Isolation | Not Started | Local, Preview, and Staging | M1 |
+| M1 | Verified Application Skeleton | Complete | Local and Preview | M0 |
+| M2 | Data Platform and Environment Isolation | Complete | Local, Preview, and Staging | M1 |
 | M3 | Provisioned Authentication and Organization Bootstrap | Not Started | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Not Started | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Not Started | Staging | M4 |
@@ -216,11 +216,10 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M1 - Verified Application Skeleton
 
-- **Status:** Blocked
+- **Status:** Complete
 - **Outcome:** A minimal Next.js application runs locally and in Preview with the final styling foundations and fast verification commands.
 - **Depends on:** M0
 - **Target environment:** Local and Preview
-- **Blocker:** The Cloudflare Worker `tracer` does not yet exist, so the trusted pull-request Preview workflow cannot run. Create the Worker and open a trusted pull request to execute the Preview deployment and `/health` smoke check.
 
 #### Vertical slices
 
@@ -261,34 +260,35 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M2 - Data Platform and Environment Isolation
 
-- **Status:** Not Started
-- **Outcome:** Tracer can migrate and query isolated PostgreSQL environments through the production-compatible data path.
+- **Status:** Complete
+- **Outcome:** Tracer can migrate and query PostgreSQL through production-compatible paths while non-production data and bindings remain isolated from Production.
 - **Depends on:** M1
 - **Target environment:** Local, Preview, and Staging
+- **Execution note:** Testcontainers persistence suites run in GitHub Actions because the Local Windows environment cannot provide a Docker-compatible runtime.
 
 #### Vertical slices
 
 1. Prove a Drizzle migration against Testcontainers PostgreSQL.
-2. Read and write a minimal application record through a public repository interface.
+2. Create and read a minimal Organization through a public repository interface.
 3. Connect Staging to Neon through Hyperdrive using a least-privilege role.
 4. Prove Preview and Staging cannot access Production data or bindings.
 
 #### Test-first behaviors
 
 - A clean database reaches the latest schema through migrations.
-- Applying migrations twice is safe or fails with the expected migration-tool behavior.
-- Repository behavior is identical through Testcontainers and Staging Hyperdrive paths.
-- An environment cannot resolve another environment's tenant data or object bindings.
+- Applying migrations twice succeeds as a no-op through Drizzle's migration journal.
+- Organization repository behavior is identical through Testcontainers and Staging Hyperdrive paths.
+- Preview and Staging cannot resolve Production tenant data or object bindings.
 
 #### Deliverables
 
-- Neon projects or branches for Staging and Production
-- Hyperdrive configuration per environment
+- Separate Neon projects for Staging and Production
+- Separate Hyperdrive configurations for Preview, Staging, and Production; Preview and Staging intentionally share the Staging database
 - Drizzle schema and migration workflow
-- Dedicated migration connection outside the Worker runtime
-- Testcontainers PostgreSQL harness with container reuse
+- Dedicated migration connections outside the Worker runtime
+- Testcontainers PostgreSQL 17 harness with container reuse in GitHub Actions
 - Environment binding inventory without secret values
-- Migration rollback or forward-recovery procedure
+- Forward-recovery procedure with Neon point-in-time or branch restore fallback
 
 #### Verification gate
 
