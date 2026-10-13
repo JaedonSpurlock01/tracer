@@ -38,7 +38,8 @@
       "hyperdrive": [
         {
           "binding": "HYPERDRIVE",
-          "id": "19a5d9e69d2a4a82b33c5d3f8cf2480f"
+          "id": "19a5d9e69d2a4a82b33c5d3f8cf2480f",
+          "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:5432/tracer"
         }
       ]
     }

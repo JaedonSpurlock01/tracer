@@ -60,6 +60,7 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
   expect(staging).toEqual({
     binding: "HYPERDRIVE",
     id: "19a5d9e69d2a4a82b33c5d3f8cf2480f",
+    localConnectionString: "postgresql://postgres:postgres@127.0.0.1:5432/tracer",
   });
   expect(preview?.id).not.toBe(production?.id);
   expect(staging?.id).not.toBe(production?.id);
