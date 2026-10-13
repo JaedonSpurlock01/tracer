@@ -261,6 +261,8 @@ See [DESIGN.md](./DESIGN.md) for page composition, states, responsive behavior, 
 
 Database migrations use a direct Neon connection outside the Worker runtime. Application queries use a dedicated least-privilege Hyperdrive role.
 
+Staging and Production use separate Neon projects. Preview intentionally shares the Staging database while using its own Hyperdrive configuration; both non-production paths are unable to resolve Production data or bindings. Database changes use forward recovery, with Neon point-in-time or branch restore reserved for failed promotion recovery. The rationale is recorded in [ADR 0002](./docs/adr/0002-isolate-production-data-from-shared-non-production.md).
+
 ### Telephony, jobs, and AI
 
 - Twilio Programmable Voice
