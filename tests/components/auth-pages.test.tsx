@@ -17,6 +17,7 @@
  * -------------------------------------------------------------------------
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
@@ -53,6 +54,13 @@ describe("authentication pages", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("If this identity is eligible");
     expect(window.sessionStorage.getItem("tracer.pending-email")).toBe("operator@example.com");
     expect(router.push).toHaveBeenCalledWith("/verify-email");
+  });
+
+  it("renders the generic description on the server while the pending email is only read in the browser", () => {
+    window.sessionStorage.setItem("tracer.pending-email", "operator@example.com");
+    expect(renderToString(<VerifyEmailPage />)).toContain("your email address");
+    render(<VerifyEmailPage />);
+    expect(screen.getByText(/o\*+@example\.com/)).toBeInTheDocument();
   });
 
   it("submits pasted six-digit OTP input, resends without form submission, and clears Change Email", async () => {

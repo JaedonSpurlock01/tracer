@@ -90,7 +90,6 @@ export default function SignInPage() {
               {busy ? "Sending..." : "Send sign-in code"}
             </Button>
           </form>
-          <FieldDescription>Use a provisioned Spurlock Labs identity.</FieldDescription>
           {message ? <p className="text-sm text-muted-foreground" role="status">{message}</p> : null}
         </CardContent>
       </Card>

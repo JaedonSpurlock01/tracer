@@ -20,7 +20,7 @@
 
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,7 @@ import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/comp
 
 const pendingEmailKey = "tracer.pending-email";
 const genericMessage = "We could not verify that code.";
+const otpSlotClassName = "h-12 flex-1 text-base";
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split("@");
@@ -40,8 +41,10 @@ function maskEmail(email: string): string {
 
 export default function VerifyEmailPage() {
   const router = useRouter();
-  const [email] = useState(() =>
-    typeof window === "undefined" ? "" : window.sessionStorage.getItem(pendingEmailKey) ?? "",
+  const email = useSyncExternalStore(
+    () => () => {},
+    () => window.sessionStorage.getItem(pendingEmailKey) ?? "",
+    () => "",
   );
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -116,17 +119,18 @@ export default function VerifyEmailPage() {
                 onChange={(value) => setCode(value.replace(/\D/g, ""))}
                 required
                 aria-invalid={Boolean(error)}
+                containerClassName="w-full gap-2"
               >
-                <InputOTPGroup>
-                  <InputOTPSlot index={0} aria-invalid={Boolean(error)} />
-                  <InputOTPSlot index={1} aria-invalid={Boolean(error)} />
-                  <InputOTPSlot index={2} aria-invalid={Boolean(error)} />
+                <InputOTPGroup className="flex-1">
+                  <InputOTPSlot index={0} className={otpSlotClassName} aria-invalid={Boolean(error)} />
+                  <InputOTPSlot index={1} className={otpSlotClassName} aria-invalid={Boolean(error)} />
+                  <InputOTPSlot index={2} className={otpSlotClassName} aria-invalid={Boolean(error)} />
                 </InputOTPGroup>
                 <InputOTPSeparator />
-                <InputOTPGroup>
-                  <InputOTPSlot index={3} aria-invalid={Boolean(error)} />
-                  <InputOTPSlot index={4} aria-invalid={Boolean(error)} />
-                  <InputOTPSlot index={5} aria-invalid={Boolean(error)} />
+                <InputOTPGroup className="flex-1">
+                  <InputOTPSlot index={3} className={otpSlotClassName} aria-invalid={Boolean(error)} />
+                  <InputOTPSlot index={4} className={otpSlotClassName} aria-invalid={Boolean(error)} />
+                  <InputOTPSlot index={5} className={otpSlotClassName} aria-invalid={Boolean(error)} />
                 </InputOTPGroup>
               </InputOTP>
               {error ? <FieldError>{error}</FieldError> : null}
