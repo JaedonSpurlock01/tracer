@@ -21,6 +21,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { migrateDatabase } from "@/data/migrate";
+import { createOrganizationRepository } from "@/data/organization-repository";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -65,3 +66,16 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
 
   expect(Number(result.rows[0].count)).toBe(1);
 }, 30_000);
+
+it("creates and reads an Organization by its generated ID", async () => {
+  const repository = createOrganizationRepository(pool);
+
+  const created = await repository.create({
+    name: "Spurlock Labs",
+    slug: "spurlock-labs",
+  });
+
+  expect(created.id).toEqual(expect.any(String));
+  expect(created.createdAt).toEqual(expect.any(Date));
+  await expect(repository.findById(created.id)).resolves.toEqual(created);
+});
