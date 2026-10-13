@@ -32,5 +32,5 @@ test("provisioned identity signs in with an email code", async ({ page, request 
   await page.getByLabel("Verification code").fill(code!);
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page).toHaveURL(/\/account\/settings$/);
-  await expect(page.getByText("Profile")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible();
 });
