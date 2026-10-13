@@ -23,6 +23,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { migrateDatabase } from "@/data/migrate";
 import { smokeDatabase } from "@/data/database-smoke";
 import { createOrganizationRepository } from "@/data/organization-repository";
+import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -88,4 +89,39 @@ it("smokes Organization reads and writes without retaining data", async () => {
 
   const after = await pool.query<{ count: string }>("select count(*) from organization");
   expect(after.rows[0].count).toBe(before.rows[0].count);
+});
+
+it("limits the runtime role to creating and reading Organizations", async () => {
+  const password = "A".repeat(64);
+  await provisionRuntimeRole(pool, password);
+
+  const grants = await pool.query<{ privilege_type: string }>(
+    `select privilege_type
+       from information_schema.role_table_grants
+      where grantee = $1
+        and table_schema = 'public'
+        and table_name = 'organization'
+      order by privilege_type`,
+    [runtimeRole],
+  );
+  expect(grants.rows.map(({ privilege_type }) => privilege_type)).toEqual(["INSERT", "SELECT"]);
+
+  const runtimeUrl = new URL(container.getConnectionUri());
+  runtimeUrl.username = runtimeRole;
+  runtimeUrl.password = password;
+  const runtimePool = new Pool({ connectionString: runtimeUrl.toString() });
+
+  try {
+    await expect(runtimePool.query("update organization set name = name")).rejects.toMatchObject({
+      code: "42501",
+    });
+    await expect(runtimePool.query("delete from organization")).rejects.toMatchObject({
+      code: "42501",
+    });
+    await expect(runtimePool.query("create table forbidden (id text)")).rejects.toMatchObject({
+      code: "42501",
+    });
+  } finally {
+    await runtimePool.end();
+  }
 });
