@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M2 - Data Platform and Environment Isolation
+- **Current milestone:** None
 - **Next milestone:** M3 - Provisioned Authentication and Organization Bootstrap
-- **Current environment:** Local and Preview skeleton verified; Staging data platform in progress
+- **Current environment:** Local, Preview, and Staging data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-12
 
-M1 is Complete after its trusted pull-request Preview deployment and `/health` smoke check passed. M2 started on 2026-10-12.
+M2 is Complete after Testcontainers, migration, environment-isolation, least-privilege, Preview, and live Staging Hyperdrive gates passed. M3 has not started.
 
 ## Status model
 
@@ -169,7 +169,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | --- | --- | --- | --- | --- |
 | M0 | Planning and Governance Baseline | Complete | Documentation | None |
 | M1 | Verified Application Skeleton | Complete | Local and Preview | M0 |
-| M2 | Data Platform and Environment Isolation | In Progress | Local, Preview, and Staging | M1 |
+| M2 | Data Platform and Environment Isolation | Complete | Local, Preview, and Staging | M1 |
 | M3 | Provisioned Authentication and Organization Bootstrap | Not Started | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Not Started | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Not Started | Staging | M4 |
@@ -260,7 +260,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M2 - Data Platform and Environment Isolation
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Tracer can migrate and query PostgreSQL through production-compatible paths while non-production data and bindings remain isolated from Production.
 - **Depends on:** M1
 - **Target environment:** Local, Preview, and Staging

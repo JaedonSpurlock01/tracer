@@ -44,7 +44,7 @@ When a migration fails before commit:
 1. Stop promotion and keep the affected milestone or deployment blocked.
 2. Diagnose the failed SQL without editing an already-applied migration.
 3. Generate a new corrective migration.
-4. prove the correction against a clean Testcontainers database and Staging.
+4. Prove the correction against a clean Testcontainers database and Staging.
 5. Resume promotion only after the normal verification gate passes.
 
 When an applied migration causes data corruption:

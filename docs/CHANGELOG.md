@@ -75,7 +75,12 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Required at most one roadmap milestone to be In Progress at a time.
 - Required agents to update the roadmap and Changelog when substantive project state changes.
 
+### Deployment
+
+- Promoted M2's isolated Staging data path after direct migration and protected Hyperdrive read/write smoke checks passed.
+
 ### Completed
 
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
+- Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.
