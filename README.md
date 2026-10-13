@@ -298,7 +298,7 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 3. Apply migrations with `pnpm db:migrate` through `DATABASE_MIGRATION_URL`.
 4. Bootstrap the initial Operator with `pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago`.
 5. Configure non-production `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_EMAIL_FROM`, and `AUTH_EMAIL_ALLOWED_RECIPIENTS` outside the repository. The Cloudflare bindings are named `HYPERDRIVE` and `EMAIL`.
-6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev` with `E2E_AUTH_FAKE=true` and read the code from `http://127.0.0.1:3000/api/test/auth-otp`; this seam is disabled in production.
+6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev:local` instead of `pnpm dev`; it targets the local `tracer` database on port 5433 with `E2E_AUTH_FAKE=true`, so read the code from `http://127.0.0.1:3000/api/test/auth-otp`. This seam is disabled in production.
 7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
 
 The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.

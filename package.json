@@ -11,6 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "dev:local": "cross-env E2E_AUTH_FAKE=true DATABASE_MIGRATION_URL=postgresql://postgres:postgres@127.0.0.1:5433/tracer BETTER_AUTH_URL=http://127.0.0.1:3000 BETTER_AUTH_SECRET=local-dev-only-secret-not-a-credential AUTH_EMAIL_FROM=auth@example.com AUTH_EMAIL_ALLOWED_RECIPIENTS=spurjae@gmail.com next dev",
     "build": "corepack pnpm cf-typegen && next build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
