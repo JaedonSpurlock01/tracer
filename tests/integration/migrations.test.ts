@@ -53,3 +53,15 @@ it("migrates a clean database to the latest Organization schema", async () => {
     "created_at",
   ]);
 }, 30_000);
+
+it("applies the latest migrations repeatedly as a no-op", async () => {
+  await migrateDatabase(container.getConnectionUri());
+  await migrateDatabase(container.getConnectionUri());
+
+  const result = await pool.query<{ count: string }>(
+    `select count(*)
+       from drizzle.__drizzle_migrations`,
+  );
+
+  expect(Number(result.rows[0].count)).toBe(1);
+}, 30_000);
