@@ -7,7 +7,8 @@
  *  Prepares Playwright for the six journeys defined in the testing contract.
  *
  * @remarks
- *  M1 adds no browser journey before product behavior exists.
+ *  The web server timeout covers a cold migrate, bootstrap, and Next.js start
+ *  on slower local machines.
  *
  * @see
  *  README.md
@@ -25,6 +26,7 @@ export default defineConfig({
   webServer: {
     command: "corepack pnpm db:migrate && corepack pnpm auth:bootstrap --email operator@example.com --name \"Example Operator\" --timezone America/Chicago && corepack pnpm dev",
     url: "http://127.0.0.1:3000",
+    timeout: 180_000,
     reuseExistingServer: !process.env.CI,
     env: {
       E2E_AUTH_FAKE: "true",

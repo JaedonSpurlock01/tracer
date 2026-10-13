@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M3 - Provisioned Authentication and Organization Bootstrap
+- **Current milestone:** None
 - **Next milestone:** M4 - Operator Administration and Application Shell
 - **Current environment:** Local, Preview, and Staging data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-12
+- **Last roadmap review:** 2026-10-13
 
-M2 is Complete after Testcontainers, migration, environment-isolation, least-privilege, Preview, and live Staging Hyperdrive gates passed. M3 is In Progress. Live Preview Email Service sender and recipient validation remains an external gate.
+M3 is Complete after the domain, contract, integration, component, and browser suites, typecheck, lint, build, Preview deployment, and local bootstrap plus email-code sign-in and session revocation gates passed. Live Preview Email Service delivery to an allowlisted recipient remains an external check for M4's Preview work. M4 has not started.
 
 ## Status model
 
@@ -170,7 +170,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M0 | Planning and Governance Baseline | Complete | Documentation | None |
 | M1 | Verified Application Skeleton | Complete | Local and Preview | M0 |
 | M2 | Data Platform and Environment Isolation | Complete | Local, Preview, and Staging | M1 |
-| M3 | Provisioned Authentication and Organization Bootstrap | In Progress | Local and Preview | M2 |
+| M3 | Provisioned Authentication and Organization Bootstrap | Complete | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Not Started | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Not Started | Staging | M4 |
 | M6 | Workspace Setup | Not Started | Preview and Staging | M5 |
@@ -305,9 +305,9 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M3 - Provisioned Authentication and Organization Bootstrap
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** The initial Operator can bootstrap Spurlock Labs and sign in only through the approved passwordless email-code method.
-- **Execution note:** Live Preview Email Service sender and allowlisted recipient validation remains an external gate.
+- **Execution note:** Local verification runs on PostgreSQL 17 in a Docker-compatible container, with the explicit `E2E_AUTH_FAKE` seam standing in for Cloudflare Email Service. Preview enforces non-production credentials and the application recipient allowlist by configuration; live Email Service delivery to an allowlisted recipient was not exercised and remains an external check.
 - **Depends on:** M2
 - **Target environment:** Local and Preview
 

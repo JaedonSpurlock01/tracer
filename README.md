@@ -285,8 +285,9 @@ Staging and Production use separate Neon projects. Preview intentionally shares 
 
 - Node.js 22
 - pnpm 12.9.1 through Corepack
-- A Docker-compatible daemon when running `test:integration` locally
-- A PostgreSQL instance at `127.0.0.1:5433/tracer_e2e` when running Playwright locally; Playwright applies migrations and bootstrap automatically
+- A Docker-compatible daemon when running `test:integration` locally. With Podman, enable the user socket (`systemctl --user enable --now podman.socket`) and export `DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock` and `TESTCONTAINERS_RYUK_DISABLED=true`.
+- A PostgreSQL instance at `127.0.0.1:5433/tracer_e2e` when running Playwright locally; Playwright applies migrations and bootstrap automatically. For example: `docker run -d --name tracer-postgres -p 5433:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=tracer_e2e docker.io/library/postgres:17-alpine`
+- Chromium for Playwright through `pnpm exec playwright install chromium`
 
 Enable the pinned package manager with `corepack enable`. If Windows prevents Corepack from writing its shim under the Node.js installation, use `npm install --global pnpm@12.9.1` instead.
 
@@ -297,7 +298,7 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 3. Apply migrations with `pnpm db:migrate` through `DATABASE_MIGRATION_URL`.
 4. Bootstrap the initial Operator with `pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago`.
 5. Configure non-production `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_EMAIL_FROM`, and `AUTH_EMAIL_ALLOWED_RECIPIENTS` outside the repository. The Cloudflare bindings are named `HYPERDRIVE` and `EMAIL`.
-6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication.
+6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev` with `E2E_AUTH_FAKE=true` and read the code from `http://127.0.0.1:3000/api/test/auth-otp`; this seam is disabled in production.
 7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
 
 The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.

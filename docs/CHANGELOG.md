@@ -86,3 +86,4 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
 - Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.
+- Completed M3 - Provisioned Authentication and Organization Bootstrap after the domain, contract, integration, component, and browser suites, Preview deployment, and local bootstrap, email-code sign-in, and session revocation gates passed; live Email Service delivery remains an external check.
