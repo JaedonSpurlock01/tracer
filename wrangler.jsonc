@@ -11,11 +11,36 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  "previews": {},
+  "previews": {
+    "hyperdrive": [
+      {
+        "binding": "HYPERDRIVE",
+        "id": "36fd65b2679c4b739d224f1056b29070"
+      }
+    ]
+  },
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
       "service": "tracer"
     }
-  ]
+  ],
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "c7bee152d6814904b4244700482815e2",
+      "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:5432/tracer"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "tracer-staging",
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "19a5d9e69d2a4a82b33c5d3f8cf2480f"
+        }
+      ]
+    }
+  }
 }
