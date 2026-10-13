@@ -28,7 +28,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       E2E_AUTH_FAKE: "true",
-      NODE_ENV: "test",
+      NODE_ENV: "development",
       DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
       AUTH_EMAIL_FROM: "auth@example.com",
       AUTH_EMAIL_ALLOWED_RECIPIENTS: "operator@example.com",

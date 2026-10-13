@@ -15,10 +15,22 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
+
+const playwrightConfiguration = readFileSync(
+  new URL("../../playwright.config.ts", import.meta.url),
+  "utf8",
+);
 
 describe("verification harness", () => {
   it("executes fast test assertions", () => {
     expect(true).toBe(true);
+  });
+
+  it("runs the E2E web server in development with the explicit auth fake", () => {
+    expect(playwrightConfiguration).toContain('E2E_AUTH_FAKE: "true"');
+    expect(playwrightConfiguration).toContain('NODE_ENV: "development"');
   });
 });
