@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None
-- **Next milestone:** M1 - Verified Application Skeleton
-- **Current environment:** Documentation only
+- **Current milestone:** M1 - Verified Application Skeleton
+- **Next milestone:** M2 - Data Platform and Environment Isolation
+- **Current environment:** Local foundation verified; Preview blocked pending Worker creation and a trusted pull request
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-12
 
-No implementation milestone is In Progress until an agent or contributor explicitly starts M1 and updates this section and `docs/CHANGELOG.md`.
+M1 started on 2026-10-12 and is blocked only on its live Preview gate. M2 must not start until M1 is Complete or explicitly Deferred.
 
 ## Status model
 
@@ -168,7 +168,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | ID | Milestone | Status | Target environment | Depends on |
 | --- | --- | --- | --- | --- |
 | M0 | Planning and Governance Baseline | Complete | Documentation | None |
-| M1 | Verified Application Skeleton | Not Started | Local and Preview | M0 |
+| M1 | Verified Application Skeleton | Blocked | Local and Preview | M0 |
 | M2 | Data Platform and Environment Isolation | Not Started | Local, Preview, and Staging | M1 |
 | M3 | Provisioned Authentication and Organization Bootstrap | Not Started | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Not Started | Local and Preview | M3 |
@@ -216,14 +216,15 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M1 - Verified Application Skeleton
 
-- **Status:** Not Started
+- **Status:** Blocked
 - **Outcome:** A minimal Next.js application runs locally and in Preview with the final styling foundations and fast verification commands.
 - **Depends on:** M0
 - **Target environment:** Local and Preview
+- **Blocker:** The Cloudflare Worker `tracer` does not yet exist, so the trusted pull-request Preview workflow cannot run. Create the Worker and open a trusted pull request to execute the Preview deployment and `/health` smoke check.
 
 #### Vertical slices
 
-1. Render a health page through the Cloudflare-compatible Next.js runtime.
+1. Serve a typed JSON health endpoint through the Cloudflare-compatible Next.js runtime.
 2. Apply the dark-only Tailwind, shadcn/ui, ReUI, Geist, and Tracer token foundations.
 3. Expose stable verification scripts without adding product behavior.
 4. Deploy the verified skeleton to a branch Preview.

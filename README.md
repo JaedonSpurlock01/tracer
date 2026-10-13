@@ -271,10 +271,35 @@ Database migrations use a direct Neon connection outside the Worker runtime. App
 ### Testing
 
 - Vitest for domain, application, contract, and component tests
-- Cloudflare's Vitest Workers pool for code that depends on Worker bindings
+- Cloudflare's Vitest plugin for code that depends on Worker bindings or `workerd` semantics
 - React Testing Library for meaningful component behavior
 - Testcontainers with PostgreSQL for persistence and migration integration tests
 - Playwright for a small critical browser suite
+
+## Local development
+
+### Prerequisites
+
+- Node.js 22
+- pnpm 12.9.1 through Corepack
+
+Enable the pinned package manager with `corepack enable`. If Windows prevents Corepack from writing its shim under the Node.js installation, use `npm install --global pnpm@12.9.1` instead.
+
+### Setup
+
+1. Run `pnpm install --frozen-lockfile`.
+2. Run `pnpm dev`.
+3. Open `http://127.0.0.1:3000` for the branded skeleton.
+4. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
+
+M1 requires no application runtime secrets. GitHub Actions secrets are authoritative for Preview deployment credentials. A local `.env` remains ignored and must never be committed; Worker tests and type generation exclude it, while Next.js development and builds may load it, so it must contain only non-production credentials.
+
+### Cloudflare runtime
+
+- `pnpm cf-typegen` regenerates ignored Worker runtime declarations from `wrangler.jsonc` without loading local environment variables.
+- `pnpm preview` builds through OpenNext and starts a local `workerd` preview.
+- OpenNext provides only best-effort Windows support. Use WSL, Linux, or the Linux GitHub Actions Preview job when Windows blocks adapter symlink creation.
+- The architecture rationale is recorded in [ADR 0001](./docs/adr/0001-use-opennext-for-cloudflare-workers.md).
 
 ## Architecture
 
@@ -534,8 +559,8 @@ Provider prices change. Validate current Twilio, Cloudflare, Neon, Trigger.dev, 
 
 [docs/IMPLEMENTATION_ROADMAP.md](./docs/IMPLEMENTATION_ROADMAP.md) is the authoritative sequence from ideation through Production. It uses small vertical milestones with explicit dependencies, test-first behaviors, verification gates, environment targets, and exit criteria.
 
-- Current milestone: None
-- Next milestone: M1 - Verified Application Skeleton
+- Current milestone: M1 - Verified Application Skeleton, Blocked
+- Next milestone: M2 - Data Platform and Environment Isolation
 - At most one milestone may be In Progress.
 - Local, Preview, Staging, and Production are distinct promotion stages.
 - Substantive roadmap and milestone changes are recorded in [docs/CHANGELOG.md](./docs/CHANGELOG.md).
@@ -544,4 +569,4 @@ Do not implement work that is absent from the roadmap. Add or change a milestone
 
 ## Repository status
 
-This repository currently contains planning documentation only. Application scaffolding, package-manager commands, environment templates, and deployment instructions will be added during implementation.
+M1 - Verified Application Skeleton has passed its Local verification gate. Completion is blocked until the `tracer` Cloudflare Worker exists and a trusted pull request passes the Preview deployment and `/health` smoke check.

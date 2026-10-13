@@ -1,0 +1,15 @@
+node_modules/
+.next/
+.open-next/
+.wrangler/
+out/
+coverage/
+playwright-report/
+test-results/
+.env*
+!.env.example
+.dev.vars
+*.tsbuildinfo
+cloudflare-env.d.ts
+.DS_Store
+Thumbs.db
