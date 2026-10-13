@@ -13,6 +13,8 @@
     "dev": "next dev",
     "build": "corepack pnpm cf-typegen && next build",
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:provision": "node --experimental-strip-types scripts/provision-data-platform.ts",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "preview:deploy": "opennextjs-cloudflare build && wrangler preview",
     "cf-typegen": "cross-env CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false CLOUDFLARE_INCLUDE_PROCESS_ENV=false wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",

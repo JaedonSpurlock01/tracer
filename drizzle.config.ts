@@ -18,8 +18,11 @@
  */
 import { defineConfig } from "drizzle-kit";
 
+const migrationUrl = process.env.DATABASE_MIGRATION_URL;
+
 export default defineConfig({
   dialect: "postgresql",
   out: "./drizzle",
   schema: "./data/schema.ts",
+  ...(migrationUrl ? { dbCredentials: { url: migrationUrl } } : {}),
 });
