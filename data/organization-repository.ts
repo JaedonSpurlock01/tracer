@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { organizations } from "@/data/schema";
 
@@ -41,8 +41,8 @@ export interface OrganizationRepository {
   findById(id: string): Promise<Organization | null>;
 }
 
-export function createOrganizationRepository(pool: Pool): OrganizationRepository {
-  const database = drizzle(pool);
+export function createOrganizationRepository(connection: Pool | PoolClient): OrganizationRepository {
+  const database = drizzle(connection);
 
   return {
     async create(input) {

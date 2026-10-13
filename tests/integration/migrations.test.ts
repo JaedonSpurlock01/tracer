@@ -21,6 +21,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { migrateDatabase } from "@/data/migrate";
+import { smokeDatabase } from "@/data/database-smoke";
 import { createOrganizationRepository } from "@/data/organization-repository";
 
 let container: StartedPostgreSqlContainer;
@@ -78,4 +79,13 @@ it("creates and reads an Organization by its generated ID", async () => {
   expect(created.id).toEqual(expect.any(String));
   expect(created.createdAt).toEqual(expect.any(Date));
   await expect(repository.findById(created.id)).resolves.toEqual(created);
+});
+
+it("smokes Organization reads and writes without retaining data", async () => {
+  const before = await pool.query<{ count: string }>("select count(*) from organization");
+
+  await expect(smokeDatabase(pool)).resolves.toBeUndefined();
+
+  const after = await pool.query<{ count: string }>("select count(*) from organization");
+  expect(after.rows[0].count).toBe(before.rows[0].count);
 });
