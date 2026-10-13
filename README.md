@@ -258,7 +258,7 @@ See [DESIGN.md](./DESIGN.md) for page composition, states, responsive behavior, 
 - Better Auth
 - Better Auth Organization plugin
 - Better Auth Email OTP plugin with sign-up disabled
-- Google OAuth for pre-provisioned identities
+- Email verification code authentication for provisioned identities
 
 Database migrations use a direct Neon connection outside the Worker runtime. Application queries use a dedicated least-privilege Hyperdrive role.
 
@@ -286,6 +286,7 @@ Staging and Production use separate Neon projects. Preview intentionally shares 
 - Node.js 22
 - pnpm 12.9.1 through Corepack
 - A Docker-compatible daemon when running `test:integration` locally
+- A PostgreSQL instance at `127.0.0.1:5433/tracer_e2e` when running Playwright locally; Playwright applies migrations and bootstrap automatically
 
 Enable the pinned package manager with `corepack enable`. If Windows prevents Corepack from writing its shim under the Node.js installation, use `npm install --global pnpm@12.9.1` instead.
 
@@ -293,8 +294,15 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 
 1. Run `pnpm install --frozen-lockfile`.
 2. Run `pnpm dev`.
-3. Open `http://127.0.0.1:3000` for the branded skeleton.
-4. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
+3. Apply migrations with `pnpm db:migrate` through `DATABASE_MIGRATION_URL`.
+4. Bootstrap the initial Operator with `pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago`.
+5. Configure non-production `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_EMAIL_FROM`, and `AUTH_EMAIL_ALLOWED_RECIPIENTS` outside the repository. The Cloudflare bindings are named `HYPERDRIVE` and `EMAIL`.
+6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication.
+7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
+
+The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.
+
+Local setup uses the commands above. The approved GitHub Actions database path uses the protected `Bootstrap Authentication` workflow, which verifies the branch before applying migrations, runtime grants, and idempotent bootstrap in the `tracer` Environment.
 
 M1 requires no application runtime secrets. GitHub Actions secrets are authoritative for Preview deployment credentials. A local `.env` remains ignored and must never be committed; Worker tests and type generation exclude it, while Next.js development and builds may load it, so it must contain only non-production credentials.
 
@@ -428,7 +436,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 
 | Domain | Required behavior coverage | Primary layer |
 | --- | --- | --- |
-| Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; bootstrap uniqueness, provisioned-only sign-in, role changes, disabled sessions, and last-Operator protection remain scheduled | Domain and integration |
+| Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; identity normalization and admission in `tests/domain/auth-policy.test.ts`; transactional email mapping in `tests/contracts/transactional-email.test.ts`; bootstrap uniqueness, generic provisioned-only sign-in, disabled sessions, first-sign-in activation, Organization deletion protection, and session revocation are covered in `tests/integration/authentication.test.ts`, with UI behavior in `tests/components/auth-pages.test.tsx` and the browser journey in `tests/e2e/provisioned-email-code-sign-in.spec.ts` | Domain, contract, integration, component, and browser |
 | Workspace access | Direct Access Grants, Organization scope, granted reads, ungranted denials, immediate revocation | Domain, integration, and browser |
 | Workspace lifecycle | Setup Required, Active, Archived, restore to setup, archive history preservation | Domain and integration |
 | Number Assignment | One active assignment, prior Twilio configuration restoration, replacement history, number uniqueness | Domain, integration, and contract |

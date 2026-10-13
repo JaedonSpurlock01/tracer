@@ -1,0 +1,64 @@
+name: Bootstrap Authentication
+
+on:
+  workflow_dispatch:
+    inputs:
+      operator_email:
+        description: Initial Operator email
+        required: true
+        type: string
+      operator_name:
+        description: Initial Operator display name
+        required: true
+        type: string
+      operator_timezone:
+        description: Initial Operator IANA timezone
+        required: true
+        default: America/New_York
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-authentication-staging
+  cancel-in-progress: false
+
+jobs:
+  verify-and-bootstrap:
+    environment: tracer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
+        with:
+          version: 12.9.1
+          run_install: false
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm db:migrate
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+      - run: pnpm db:grant-runtime
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+          DATABASE_RUNTIME_PASSWORD: ${{ secrets.DATABASE_RUNTIME_PASSWORD }}
+      - name: Bootstrap initial Operator
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+          OPERATOR_EMAIL: ${{ inputs.operator_email }}
+          OPERATOR_NAME: ${{ inputs.operator_name }}
+          OPERATOR_TIMEZONE: ${{ inputs.operator_timezone }}
+        run: >-
+          pnpm auth:bootstrap
+          --email "$OPERATOR_EMAIL"
+          --name "$OPERATOR_NAME"
+          --timezone "$OPERATOR_TIMEZONE"

@@ -23,8 +23,17 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:3000",
   },
   webServer: {
-    command: "corepack pnpm dev",
+    command: "corepack pnpm db:migrate && corepack pnpm auth:bootstrap --email operator@example.com --name \"Example Operator\" --timezone America/Chicago && corepack pnpm dev",
     url: "http://127.0.0.1:3000",
     reuseExistingServer: !process.env.CI,
+    env: {
+      E2E_AUTH_FAKE: "true",
+      NODE_ENV: "test",
+      DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
+      AUTH_EMAIL_FROM: "auth@example.com",
+      AUTH_EMAIL_ALLOWED_RECIPIENTS: "operator@example.com",
+      BETTER_AUTH_SECRET: "e2e-only-secret-that-is-not-a-credential",
+      BETTER_AUTH_URL: "http://127.0.0.1:3000",
+    },
   },
 });

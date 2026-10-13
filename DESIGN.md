@@ -918,7 +918,7 @@ Safeguards:
 2. **Archetype:** Auth card
 3. **Container family:** One centered Card
 4. **Density:** Default
-5. **Regions:** Brand, Google action, divider, email-code action, support copy
+5. **Regions:** Brand, email-code action, support copy
 6. **States:** Inline field errors, busy actions, and recoverable provider errors
 7. **Motion:** One subtle Card reveal with reduced-motion fade; no animated orb
 
@@ -930,13 +930,11 @@ Order:
 
 1. `Sign in to Tracer`
 2. One-clause description
-3. Continue with Google
-4. Labeled divider
-5. Email field
-6. Send Code
-7. Access support copy
+3. Email field
+4. Send Code
+5. Access support copy
 
-Only provisioned, non-disabled identities may continue. Google and email-code authentication never create a Tracer user. The email-code send response remains generic so it does not disclose whether an address is provisioned.
+Only provisioned, non-disabled identities may continue. Email-code authentication never creates a Tracer user. The email-code send response remains generic so it does not disclose whether an address is provisioned.
 
 ### Verify Email Code
 
@@ -953,9 +951,9 @@ Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=
 
 ### Authentication rules
 
-- Better Auth Google provider and Email OTP plugin
+- Better Auth Email OTP plugin
 - Email OTP sign-up disabled
-- Google sign-in resolved only to an existing provisioned identity
+- Email OTP never creates a user
 - Disabled users cannot authenticate
 - No passwords, password reset, or password settings
 - Authentication verifies identity; application role and Access Grants authorize resources
@@ -996,7 +994,6 @@ Global dashboards, Activity grouping, and multi-Workspace report defaults use th
 ### Security
 
 - Available email-code sign-in
-- Google connection status
 - Current session details
 - Other active sessions with last activity and approximate device information
 - Revoke individual session
@@ -1006,7 +1003,6 @@ There is no password section. Revoking the current session redirects to Sign In.
 
 ### States
 
-- **Google not connected:** Explain that Google sign-in is optional and must use the provisioned email.
 - **No other sessions:** Show the current session only.
 - **Save success:** Use a concise toast.
 - **Session revoke failure:** Keep the session visible and offer Retry.

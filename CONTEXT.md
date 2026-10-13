@@ -37,7 +37,7 @@ An Operator-provisioned business user with read-only access to explicitly author
 _Avoid_: Operator, admin
 
 **User State**:
-The access lifecycle of an Operator or Client Viewer: Provisioned, Active, or Disabled.
+The access lifecycle of an Operator or Client Viewer: Provisioned, Active, or Disabled. A successful first sign-in changes Provisioned to Active, while Disabled blocks all sessions.
 _Avoid_: Role
 
 **Access Grant**:

@@ -34,27 +34,64 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  if (!pool || !container) return;
   await pool.end();
   await container.stop();
 });
 
-it("migrates a clean database to the latest Organization schema", async () => {
+it("migrates a clean database to the latest authentication and Organization schema", async () => {
   await migrateDatabase(container.getConnectionUri());
 
-  const result = await pool.query<{ column_name: string }>(
-    `select column_name
+  const result = await pool.query<{ table_name: string }>(
+    `select table_name
+       from information_schema.tables
+      where table_schema = 'public'
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation')
+      order by table_name`,
+  );
+  expect(result.rows.map(({ table_name }) => table_name)).toEqual([
+    "account",
+    "invitation",
+    "member",
+    "organization",
+    "session",
+    "user",
+    "verification",
+  ]);
+
+  const columns = await pool.query<{ table_name: string; column_name: string }>(
+    `select table_name, column_name
        from information_schema.columns
       where table_schema = 'public'
-        and table_name = 'organization'
-      order by ordinal_position`,
+        and ((table_name = 'organization' and column_name in ('id', 'name', 'slug', 'created_at', 'logo', 'metadata'))
+          or (table_name = 'user' and column_name in ('state', 'timezone'))
+          or (table_name = 'session' and column_name = 'active_organization_id'))
+      order by table_name, ordinal_position`,
   );
+  expect(columns.rows).toEqual(expect.arrayContaining([
+    { table_name: "organization", column_name: "created_at" },
+    { table_name: "user", column_name: "state" },
+    { table_name: "user", column_name: "timezone" },
+    { table_name: "session", column_name: "active_organization_id" },
+  ]));
 
-  expect(result.rows.map(({ column_name }) => column_name)).toEqual([
-    "id",
-    "name",
-    "slug",
-    "created_at",
-  ]);
+  const stateConstraint = await pool.query<{ constraint_name: string }>(
+    `select constraint_name
+       from information_schema.check_constraints
+      where constraint_name = 'user_state_check'`,
+  );
+  expect(stateConstraint.rows).toEqual([{ constraint_name: "user_state_check" }]);
+  const foreignKeys = await pool.query<{ constraint_name: string }>(
+    `select constraint_name
+       from information_schema.table_constraints
+      where constraint_type = 'FOREIGN KEY'
+        and constraint_name in ('session_active_organization_id_organization_id_fk', 'member_organization_id_organization_id_fk', 'member_user_id_user_id_fk')`,
+  );
+  expect(foreignKeys.rows.map(({ constraint_name }) => constraint_name)).toEqual(expect.arrayContaining([
+    "session_active_organization_id_organization_id_fk",
+    "member_organization_id_organization_id_fk",
+    "member_user_id_user_id_fk",
+  ]));
 }, 30_000);
 
 it("applies the latest migrations repeatedly as a no-op", async () => {
@@ -66,7 +103,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(1);
+  expect(Number(result.rows[0].count)).toBe(3);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {
@@ -91,20 +128,23 @@ it("smokes Organization reads and writes without retaining data", async () => {
   expect(after.rows[0].count).toBe(before.rows[0].count);
 });
 
-it("limits the runtime role to creating and reading Organizations", async () => {
+it("grants Better Auth tables without granting schema creation or user deletion", async () => {
   const password = "A".repeat(64);
   await provisionRuntimeRole(pool, password);
 
-  const grants = await pool.query<{ privilege_type: string }>(
-    `select privilege_type
+  const grants = await pool.query<{ table_name: string; privilege_type: string }>(
+    `select table_name, privilege_type
        from information_schema.role_table_grants
       where grantee = $1
         and table_schema = 'public'
-        and table_name = 'organization'
-      order by privilege_type`,
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation')
+      order by table_name, privilege_type`,
     [runtimeRole],
   );
-  expect(grants.rows.map(({ privilege_type }) => privilege_type)).toEqual(["INSERT", "SELECT"]);
+  expect(grants.rows).not.toContainEqual({ table_name: "organization", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "organization", privilege_type: "UPDATE" });
+  expect(grants.rows).toContainEqual({ table_name: "session", privilege_type: "DELETE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "user", privilege_type: "DELETE" });
 
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
@@ -112,12 +152,7 @@ it("limits the runtime role to creating and reading Organizations", async () => 
   const runtimePool = new Pool({ connectionString: runtimeUrl.toString() });
 
   try {
-    await expect(runtimePool.query("update organization set name = name")).rejects.toMatchObject({
-      code: "42501",
-    });
-    await expect(runtimePool.query("delete from organization")).rejects.toMatchObject({
-      code: "42501",
-    });
+    await expect(runtimePool.query("delete from \"user\"")).rejects.toMatchObject({ code: "42501" });
     await expect(runtimePool.query("create table forbidden (id text)")).rejects.toMatchObject({
       code: "42501",
     });

@@ -64,6 +64,8 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M3 - Provisioned Authentication and Organization Bootstrap for provisioned passwordless identity, Organization bootstrap, and session revocation.
+- Deferred Google sign-in from M3 to the unscheduled backlog because email-code authentication meets current Operator needs.
 - Started M1 - Verified Application Skeleton for the Local and Preview foundation.
 - Blocked M1 completion until the `tracer` Cloudflare Worker exists and a trusted pull request passes the Preview deployment and `/health` smoke check.
 - Started M2 - Data Platform and Environment Isolation after M1 passed its trusted Preview deployment gate.

@@ -17,6 +17,36 @@
  */
 @import "tailwindcss";
 
+@keyframes auth-card-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-card-reveal {
+  animation: auth-card-reveal 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes auth-card-reveal {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .auth-card-reveal {
+    animation: auth-card-reveal 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root,

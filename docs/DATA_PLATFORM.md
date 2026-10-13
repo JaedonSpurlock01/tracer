@@ -20,9 +20,21 @@ Preview intentionally shares the Staging Neon project but uses a separate Hyperd
 Each Neon project has two database roles:
 
 - `tracer_migration` owns the `tracer` database and applies checked-in migrations through a direct connection.
-- `tracer_app` can connect, use the `public` schema, and `SELECT` or `INSERT` the `organization` table. It cannot create schema objects, update or delete Organizations, or read the Drizzle migration journal.
+- `tracer_app` can connect and use only the Better Auth and Organization tables required by runtime authentication. It cannot create schema objects, delete users, or read the Drizzle migration journal. The migration role remains responsible for bootstrap and schema changes.
 
 The `tracer` GitHub Environment stores non-production Cloudflare credentials, `DATABASE_MIGRATION_URL`, `DATABASE_RUNTIME_PASSWORD`, and `DATABASE_SMOKE_TOKEN`. The `Production` GitHub Environment stores separate Production values. Secret values must never be copied into repository files, logs, issues, or documentation.
+
+## Authentication runtime bindings
+
+The Worker uses the `HYPERDRIVE` binding for request-scoped PostgreSQL pools and the `EMAIL` send binding for Cloudflare Email Service. The following values are deployment secrets or environment configuration and must not be committed: `AUTH_EMAIL_FROM`, `AUTH_EMAIL_ALLOWED_RECIPIENTS`, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL`. An empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` value disables OTP sends. Preview uses a non-production sender and an allowlisted recipient configured outside the repository.
+
+Run the initial bootstrap only through the migration connection:
+
+```text
+pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago
+```
+
+The command requires `DATABASE_MIGRATION_URL` and prints only status and opaque identifiers. Run migrations before bootstrap. Local and Preview authentication requires the non-production secret and binding configuration above; live Preview Email Service sender and recipient validation remains an external gate. For the approved GitHub Actions database path, run the protected `Bootstrap Authentication` workflow from the approved branch, provide the initial Operator email, display name, and IANA timezone inputs, and approve the `tracer` Environment. The workflow verifies the code before applying idempotent migrations, runtime grants, and bootstrap.
 
 ## Migration path
 
@@ -30,8 +42,9 @@ The `tracer` GitHub Environment stores non-production Cloudflare credentials, `D
 2. Run `pnpm db:generate` and review the generated SQL and metadata.
 3. Run `pnpm test:integration` against a clean Testcontainers PostgreSQL 17 database in GitHub Actions.
 4. Apply the migration to Staging with `pnpm db:migrate` through the `tracer` GitHub Environment.
-5. Run the `Verification` workflow manually. Its Staging gate reapplies migrations as a no-op, deploys `tracer-staging`, and performs the protected transactional read/write smoke check through Hyperdrive.
-6. Before Production promotion, run `verify:full`, review the SQL, rehearse it in Staging, and apply it through the `Production` GitHub Environment.
+5. Apply runtime grants with `pnpm db:grant-runtime` through the approved GitHub Environment before deploying to Staging.
+6. Run the `Verification` workflow manually. Its Staging gate reapplies migrations as a no-op, deploys `tracer-staging`, and performs the protected transactional read/write smoke check through Hyperdrive.
+7. Before Production promotion, run `verify:full`, review the SQL, rehearse it in Staging, and apply it through the `Production` GitHub Environment.
 
 The current Windows environment cannot run Docker, so Testcontainers integration suites run on GitHub Actions. Other Local environments may run `pnpm test:integration` when a Docker-compatible daemon is available.
 
