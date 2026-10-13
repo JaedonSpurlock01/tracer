@@ -39,7 +39,17 @@ export async function provisionRuntimeRole(
     $$
   `);
   await connection.query(`ALTER ROLE ${runtimeRole} PASSWORD '${password}'`);
-  await connection.query(`GRANT CONNECT ON DATABASE tracer TO ${runtimeRole}`);
+
+  const result = await connection.query<{ database: string }>(
+    "select current_database() as database",
+  );
+  const database = result.rows[0]?.database;
+
+  if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+    throw new Error("Current database name cannot be used in a role grant");
+  }
+
+  await connection.query(`GRANT CONNECT ON DATABASE "${database}" TO ${runtimeRole}`);
   await connection.query(`GRANT USAGE ON SCHEMA public TO ${runtimeRole}`);
   await connection.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT ON TABLE public.organization TO ${runtimeRole}`);
