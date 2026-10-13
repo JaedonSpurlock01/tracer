@@ -9,12 +9,11 @@ This inventory contains resource identifiers only. Credentials remain in GitHub 
 | Path | Neon project | Neon branch | Hyperdrive | Worker | Object bindings |
 | --- | --- | --- | --- | --- | --- |
 | Local integration CI | Testcontainers PostgreSQL 17 | Ephemeral container | None | None | None |
-| Local interactive remote | `shy-firefly-82384009` (`tracer-staging`) | `br-hidden-poetry-b7w8wc99` (`main`) | Existing Staging Hyperdrive with explicit remote mode | Local Next dev with `NEXT_DEV_WRANGLER_ENV=staging` | None |
 | Preview | `shy-firefly-82384009` (`tracer-staging`) | `br-hidden-poetry-b7w8wc99` (`main`) | `36fd65b2679c4b739d224f1056b29070` (`tracer-preview`) | Pull-request Preview | None |
 | Staging | `shy-firefly-82384009` (`tracer-staging`) | `br-hidden-poetry-b7w8wc99` (`main`) | `19a5d9e69d2a4a82b33c5d3f8cf2480f` (`tracer-staging`) | `tracer-staging` | None |
 | Production | `cool-darkness-44273242` (`tracer-production`) | `br-winter-moon-b7xsmx9g` (`main`) | `c7bee152d6814904b4244700482815e2` (`tracer-production`) | `tracer`, not yet deployed to Production | None |
 
-Preview intentionally shares the Staging Neon project but uses a separate Hyperdrive configuration. Neither non-production configuration references the Production Neon project or Hyperdrive identifier. Local interactive development may explicitly set `NEXT_DEV_WRANGLER_ENV=staging` to use the existing remote Staging Hyperdrive and Email Service; integration tests remain isolated in ephemeral Testcontainers PostgreSQL.
+Preview intentionally shares the Staging Neon project but uses a separate Hyperdrive configuration. Neither non-production configuration references the Production Neon project or Hyperdrive identifier.
 
 ## Roles and secrets
 
@@ -27,7 +26,7 @@ The `tracer` GitHub Environment stores non-production Cloudflare credentials, `D
 
 ## Authentication runtime bindings
 
-The Worker uses the `HYPERDRIVE` binding for request-scoped PostgreSQL pools and the `EMAIL` send binding for Cloudflare Email Service. Local interactive remote mode is an explicit opt-in through `NEXT_DEV_WRANGLER_ENV=staging` and uses existing Staging bindings; the default Local mode remains isolated. The following values are deployment secrets or environment configuration and must not be committed: `AUTH_EMAIL_FROM`, `AUTH_EMAIL_ALLOWED_RECIPIENTS`, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL`. An empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` value disables OTP sends. Preview uses a non-production sender and an allowlisted recipient configured outside the repository.
+The Worker uses the `HYPERDRIVE` binding for request-scoped PostgreSQL pools and the `EMAIL` send binding for Cloudflare Email Service. The following values are deployment secrets or environment configuration and must not be committed: `AUTH_EMAIL_FROM`, `AUTH_EMAIL_ALLOWED_RECIPIENTS`, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL`. An empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` value disables OTP sends. Preview uses a non-production sender and an allowlisted recipient configured outside the repository.
 
 Run the initial bootstrap only through the migration connection:
 
