@@ -64,6 +64,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Allowed explicit Local interactive development to use remote Staging bindings when Docker or local PostgreSQL is unavailable; default Local remains isolated.
 - Started M3 - Provisioned Authentication and Organization Bootstrap for provisioned passwordless identity, Organization bootstrap, and session revocation.
 - Deferred Google sign-in from M3 to the unscheduled backlog because email-code authentication meets current Operator needs.
 - Started M1 - Verified Application Skeleton for the Local and Preview foundation.

@@ -25,6 +25,7 @@ interface HyperdriveBinding {
   binding: string;
   id: string;
   localConnectionString?: string;
+  remote?: boolean;
 }
 
 interface EnvironmentBindings {
@@ -68,6 +69,7 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
     binding: "HYPERDRIVE",
     id: "19a5d9e69d2a4a82b33c5d3f8cf2480f",
     localConnectionString: "postgresql://postgres:postgres@127.0.0.1:5432/tracer",
+    remote: true,
   });
   expect(preview?.id).not.toBe(production?.id);
   expect(staging?.id).not.toBe(production?.id);
@@ -75,4 +77,5 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
   expect(configuration.env?.staging?.services).toBeUndefined();
   expect(configuration.send_email).toEqual([{ name: "EMAIL", remote: true }]);
   expect(configuration.previews?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
+  expect(configuration.env?.staging?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
 });

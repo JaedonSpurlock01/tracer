@@ -300,7 +300,15 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication.
 7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
 
-The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.
+Developers without Docker or local PostgreSQL can explicitly use the shared Staging data path and remote Email Service from PowerShell:
+
+```powershell
+$env:NEXT_DEV_WRANGLER_ENV = "staging"
+corepack pnpm dev
+Remove-Item Env:\NEXT_DEV_WRANGLER_ENV
+```
+
+The default Local mode remains localhost and isolated for developers with local PostgreSQL. The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.
 
 Local setup uses the commands above. The approved GitHub Actions database path uses the protected `Bootstrap Authentication` workflow, which verifies the branch before applying migrations, runtime grants, and idempotent bootstrap in the `tracer` Environment.
 
