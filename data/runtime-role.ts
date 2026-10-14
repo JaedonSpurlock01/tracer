@@ -59,7 +59,9 @@ export async function provisionRuntimeRole(
       public.account,
       public.verification,
       public.member,
-      public.invitation
+      public.invitation,
+      public.twilio_connection,
+      public.twilio_number
     TO ${runtimeRole}
   `);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public."user" TO ${runtimeRole}`);

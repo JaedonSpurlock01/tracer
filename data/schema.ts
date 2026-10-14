@@ -22,6 +22,7 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -165,6 +166,57 @@ export const invitations = pgTable(
   ],
 );
 
+export const twilioConnections = pgTable(
+  "twilio_connection",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .unique(),
+    accountSid: text("account_sid").notNull(),
+    apiKeySid: text("api_key_sid").notNull(),
+    apiKeySecretCiphertext: text("api_key_secret_ciphertext").notNull(),
+    masterKeyVersion: integer("master_key_version").notNull().default(1),
+    accountFriendlyName: text("account_friendly_name"),
+    connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull(),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastFailureDetail: text("last_failure_detail"),
+    numbersSyncedAt: timestamp("numbers_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("twilio_connection_organization_id_idx").on(table.organizationId)],
+);
+
+export const twilioNumbers = pgTable(
+  "twilio_number",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    twilioSid: text("twilio_sid").notNull(),
+    phoneNumber: text("phone_number").notNull(),
+    friendlyName: text("friendly_name").notNull(),
+    voiceCapable: boolean("voice_capable").notNull(),
+    voiceUrl: text("voice_url"),
+    voiceMethod: text("voice_method"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("twilio_number_organization_sid_idx").on(table.organizationId, table.twilioSid),
+    uniqueIndex("twilio_number_active_phone_idx").on(table.organizationId, table.phoneNumber).where(sql`${table.releasedAt} is null`),
+    index("twilio_number_organization_id_idx").on(table.organizationId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -173,4 +225,6 @@ export const schema = {
   verification: verifications,
   member: members,
   invitation: invitations,
+  twilioConnection: twilioConnections,
+  twilioNumber: twilioNumbers,
 };

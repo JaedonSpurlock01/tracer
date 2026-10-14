@@ -1,0 +1,13 @@
+{
+  "incoming_phone_numbers": [
+    {
+      "sid": "PN33333333333333333333333333333333",
+      "phone_number": "+14155552673",
+      "friendly_name": "Sales Line",
+      "capabilities": { "voice": true, "sms": true, "mms": true, "fax": false },
+      "voice_url": "https://example.invalid/twilio/voice/sales",
+      "voice_method": "POST"
+    }
+  ],
+  "next_page_uri": null
+}
