@@ -64,7 +64,7 @@ it("migrates a clean database to the latest authentication and Organization sche
        from information_schema.columns
       where table_schema = 'public'
         and ((table_name = 'organization' and column_name in ('id', 'name', 'slug', 'created_at', 'logo', 'metadata'))
-          or (table_name = 'user' and column_name in ('state', 'timezone'))
+          or (table_name = 'user' and column_name in ('state', 'timezone', 'last_sign_in_at', 'provisioned_by_user_id'))
           or (table_name = 'session' and column_name = 'active_organization_id'))
       order by table_name, ordinal_position`,
   );
@@ -72,6 +72,8 @@ it("migrates a clean database to the latest authentication and Organization sche
     { table_name: "organization", column_name: "created_at" },
     { table_name: "user", column_name: "state" },
     { table_name: "user", column_name: "timezone" },
+    { table_name: "user", column_name: "last_sign_in_at" },
+    { table_name: "user", column_name: "provisioned_by_user_id" },
     { table_name: "session", column_name: "active_organization_id" },
   ]));
 
@@ -85,12 +87,13 @@ it("migrates a clean database to the latest authentication and Organization sche
     `select constraint_name
        from information_schema.table_constraints
       where constraint_type = 'FOREIGN KEY'
-        and constraint_name in ('session_active_organization_id_organization_id_fk', 'member_organization_id_organization_id_fk', 'member_user_id_user_id_fk')`,
+        and constraint_name in ('session_active_organization_id_organization_id_fk', 'member_organization_id_organization_id_fk', 'member_user_id_user_id_fk', 'user_provisioned_by_user_id_fk')`,
   );
   expect(foreignKeys.rows.map(({ constraint_name }) => constraint_name)).toEqual(expect.arrayContaining([
     "session_active_organization_id_organization_id_fk",
     "member_organization_id_organization_id_fk",
     "member_user_id_user_id_fk",
+    "user_provisioned_by_user_id_fk",
   ]));
 }, 30_000);
 
@@ -103,7 +106,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(3);
+  expect(Number(result.rows[0].count)).toBe(4);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {

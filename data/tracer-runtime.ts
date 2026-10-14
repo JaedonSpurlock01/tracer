@@ -1,0 +1,132 @@
+/**
+ * -------------------------------------------------------------------------
+ * @file   tracer-runtime.ts
+ * @brief  Creates the request-scoped Tracer runtime.
+ *
+ * @description
+ *  Resolves Cloudflare bindings, PostgreSQL, transactional email, and Better
+ *  Auth for server routes before closing the request-scoped pool.
+ *
+ * @remarks
+ *  The runtime preserves the explicit non-production E2E email fake while
+ *  keeping production provider requirements enforced.
+ *
+ * @see
+ *  data/tracer-auth.ts
+ *
+ * @author Jaedon Spurlock
+ * -------------------------------------------------------------------------
+ */
+import { drizzle } from "drizzle-orm/node-postgres";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { Pool } from "pg";
+
+import { rememberE2eOtp } from "@/data/e2e-auth-fake";
+import { schema } from "@/data/schema";
+import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
+import {
+  createCloudflareTransactionalEmail,
+  type SendEmail,
+  type TransactionalEmail,
+} from "@/data/transactional-email";
+
+interface AuthBindings {
+  HYPERDRIVE?: { connectionString: string };
+  EMAIL?: SendEmail;
+  AUTH_EMAIL_FROM?: string;
+  AUTH_EMAIL_ALLOWED_RECIPIENTS?: string;
+  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_URL?: string;
+  E2E_AUTH_FAKE?: string;
+  NODE_ENV?: string;
+}
+
+export interface TracerRuntime {
+  auth: TracerAuth;
+  pool: Pool;
+  database: NodePgDatabase<typeof schema>;
+  email: TransactionalEmail;
+  emailFrom: string;
+  allowedRecipients: ReadonlySet<string>;
+  baseURL: string;
+  backgroundTask: (promise: Promise<unknown>) => void;
+}
+
+function requiredBinding(bindings: AuthBindings, name: keyof AuthBindings): string {
+  const value = bindings[name] ?? process.env[String(name)];
+  if (typeof value !== "string" || !value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function allowedRecipients(value: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((recipient) => recipient.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Promise<T>): Promise<T> {
+  const { env, ctx } = await getCloudflareContext({ async: true });
+  const bindings = env as AuthBindings;
+  const fakeEnabled =
+    (bindings.E2E_AUTH_FAKE ?? process.env.E2E_AUTH_FAKE) === "true" &&
+    (bindings.NODE_ENV ?? process.env.NODE_ENV) !== "production";
+  const connectionString = fakeEnabled
+    ? process.env.DATABASE_MIGRATION_URL ?? bindings.HYPERDRIVE?.connectionString
+    : bindings.HYPERDRIVE?.connectionString ?? process.env.DATABASE_MIGRATION_URL;
+  if (!connectionString) {
+    throw new Error("HYPERDRIVE is required");
+  }
+  const pool = new Pool({ connectionString, max: 1 });
+
+  try {
+    if (!bindings.EMAIL && !fakeEnabled) {
+      throw new Error("EMAIL is required");
+    }
+    const database = drizzle(pool, { schema });
+    const providerEmail: TransactionalEmail = bindings.EMAIL
+      ? createCloudflareTransactionalEmail(bindings.EMAIL)
+      : {
+          async send() {
+            return { messageId: "e2e-fake" };
+          },
+        };
+    const email = fakeEnabled
+      ? {
+          async send(message: Parameters<typeof providerEmail.send>[0]) {
+            rememberE2eOtp(message.text);
+            return providerEmail.send(message);
+          },
+        }
+      : providerEmail;
+    const emailFrom = requiredBinding(bindings, "AUTH_EMAIL_FROM");
+    const baseURL = requiredBinding(bindings, "BETTER_AUTH_URL");
+    const allowed = allowedRecipients(bindings.AUTH_EMAIL_ALLOWED_RECIPIENTS ?? process.env.AUTH_EMAIL_ALLOWED_RECIPIENTS);
+    const auth = createTracerAuth({
+      database,
+      email,
+      emailFrom,
+      allowedRecipients: allowed,
+      secret: requiredBinding(bindings, "BETTER_AUTH_SECRET"),
+      baseURL,
+      backgroundTask: (promise) => ctx.waitUntil(promise),
+    });
+    return await run({
+      auth,
+      pool,
+      database,
+      email,
+      emailFrom,
+      allowedRecipients: allowed,
+      baseURL,
+      backgroundTask: (promise) => ctx.waitUntil(promise),
+    });
+  } finally {
+    await pool.end();
+  }
+}

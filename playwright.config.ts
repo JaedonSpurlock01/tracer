@@ -7,8 +7,8 @@
  *  Prepares Playwright for the six journeys defined in the testing contract.
  *
  * @remarks
- *  The web server timeout covers a cold migrate, bootstrap, and Next.js start
- *  on slower local machines.
+ *  The web server timeout covers a cold migrate, bootstrap, Next.js start, and
+ *  the first compile of the authenticated shell on slower local machines.
  *
  * @see
  *  README.md
@@ -20,13 +20,14 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  expect: { timeout: 15_000 },
   use: {
     baseURL: "http://127.0.0.1:3000",
   },
   webServer: {
     command: "corepack pnpm db:migrate && corepack pnpm auth:bootstrap --email operator@example.com --name \"Example Operator\" --timezone America/Chicago && corepack pnpm dev",
     url: "http://127.0.0.1:3000",
-    timeout: 180_000,
+    timeout: 420_000,
     reuseExistingServer: !process.env.CI,
     env: {
       E2E_AUTH_FAKE: "true",

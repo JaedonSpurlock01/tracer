@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None
-- **Next milestone:** M4 - Operator Administration and Application Shell
+- **Current milestone:** M4 - Operator Administration and Application Shell
+- **Next milestone:** M5 - Organization Integrations and Twilio Connection
 - **Current environment:** Local, Preview, and Staging data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-13
 
-M3 is Complete after the domain, contract, integration, component, and browser suites, typecheck, lint, build, Preview deployment, and local bootstrap plus email-code sign-in and session revocation gates passed. Live Preview Email Service delivery to an allowlisted recipient remains an external check for M4's Preview work. M4 has not started.
+M3 is Complete after the domain, contract, integration, component, and browser suites, typecheck, lint, build, Preview deployment, and local bootstrap plus email-code sign-in and session revocation gates passed. Live Preview Email Service delivery to an allowlisted recipient remains an external check for M4's Preview work. M4 is In Progress.
 
 ## Status model
 
@@ -171,7 +171,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M1 | Verified Application Skeleton | Complete | Local and Preview | M0 |
 | M2 | Data Platform and Environment Isolation | Complete | Local, Preview, and Staging | M1 |
 | M3 | Provisioned Authentication and Organization Bootstrap | Complete | Local and Preview | M2 |
-| M4 | Operator Administration and Application Shell | Not Started | Local and Preview | M3 |
+| M4 | Operator Administration and Application Shell | In Progress | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Not Started | Staging | M4 |
 | M6 | Workspace Setup | Not Started | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Not Started | Preview and Staging | M6 |
@@ -348,10 +348,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M4 - Operator Administration and Application Shell
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Active Operators can manage other Operators through a secure application shell before Workspace and Client Viewer resources exist.
 - **Depends on:** M3
 - **Target environment:** Local and Preview
+- **Execution note:** Only Operator provisioning is available; the Provision User role field exposes Client Viewer as unavailable until M8. The Sidebar renders every global navigation item from DESIGN.md, with guarded placeholder pages for Activity, Calls, Workspaces, and Reports until their milestones deliver them. Last sign-in and provisioning attribution are persisted on the user record. Local domain, contract, integration, component, Worker, typecheck, lint, and build gates passed; the browser journey could not complete reliably on the 2-CPU Local VM because Turbopack first-compile latency exceeded Playwright timeouts, so the browser journey and Preview deployment gates run in GitHub Actions before M4 is marked Complete.
 
 #### Vertical slices
 

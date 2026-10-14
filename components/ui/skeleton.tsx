@@ -16,8 +16,10 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import type { CSSProperties } from "react";
+
 import { cn } from "cn";
 
-export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse bg-muted", className)} aria-hidden="true" />;
+export function Skeleton({ className, style }: { className?: string; style?: CSSProperties }) {
+  return <div className={cn("animate-pulse bg-muted", className)} style={style} aria-hidden="true" />;
 }
