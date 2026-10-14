@@ -221,14 +221,14 @@ export default function AccountSettingsPage() {
   const otherSessions = sessions.filter((value) => value.token !== currentToken);
 
   if (loading) {
-    return <main className="mx-auto flex min-h-screen w-full max-w-5xl gap-6 px-6 py-12"><Skeleton className="h-40 w-44" /><Skeleton className="min-h-96 flex-1" /></main>;
+    return <main className="mx-auto flex w-full max-w-5xl gap-6 px-6 py-12"><Skeleton className="h-40 w-44" /><Skeleton className="min-h-96 flex-1" /></main>;
   }
   if (error || !session) {
-    return <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-4 px-6 py-12"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></main>;
+    return <main className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-12"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></main>;
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-6 py-12 md:flex-row">
+    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-12 md:flex-row">
       <aside className="w-full shrink-0 md:w-44">
         <div className="flex min-w-max flex-row gap-1 overflow-x-auto md:min-w-0 md:flex-col">
           {sections.map((section) => (

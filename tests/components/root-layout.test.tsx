@@ -23,7 +23,7 @@ vi.mock("next/font/google", () => ({
 }));
 
 import RootLayout from "@/app/layout";
-import Home from "@/app/page";
+import Home from "@/app/(app)/page";
 
 describe("root layout", () => {
   it("applies dark mode and semantic theme tokens", () => {
@@ -36,7 +36,7 @@ describe("root layout", () => {
     expect(markup).toContain('<html lang="en" class="dark"');
     expect(markup).toContain("bg-background");
     expect(markup).toContain("text-foreground");
-    expect(markup).toContain("Tracer");
-    expect(markup).toContain("Application skeleton");
+    expect(markup).toContain("Home");
+    expect(markup).toContain("Operational dashboards");
   });
 });

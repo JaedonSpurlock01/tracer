@@ -64,6 +64,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M4 - Operator Administration and Application Shell for the authenticated Sidebar shell, central Operator authorization, and Operator provisioning, disablement, and re-enablement.
 - Started M3 - Provisioned Authentication and Organization Bootstrap for provisioned passwordless identity, Organization bootstrap, and session revocation.
 - Deferred Google sign-in from M3 to the unscheduled backlog because email-code authentication meets current Operator needs.
 - Started M1 - Verified Application Skeleton for the Local and Preview foundation.

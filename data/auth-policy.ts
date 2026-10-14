@@ -18,13 +18,46 @@
  */
 export type UserState = "Provisioned" | "Active" | "Disabled";
 export type MembershipRole = "owner" | "member";
+export type CanonicalRole = "Operator" | "Client Viewer";
 
 export function normalizeIdentityEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-export function toCanonicalRole(role: MembershipRole): "Operator" | "Client Viewer" {
+export function toCanonicalRole(role: MembershipRole): CanonicalRole {
   return role === "owner" ? "Operator" : "Client Viewer";
+}
+
+export function isActiveOperator(
+  identity: { state: UserState; role: MembershipRole } | null | undefined,
+): boolean {
+  return identity?.state === "Active" && identity.role === "owner";
+}
+
+export function isProvisionableRole(role: string): role is "Operator" {
+  return role === "Operator";
+}
+
+export type OperatorStateDecision = { allowed: true } | { allowed: false; reason: "last_active_operator" };
+
+export function decideOperatorStateChange(input: {
+  target: { state: UserState; role: MembershipRole };
+  nextState: "Active" | "Disabled";
+  activeOperatorCount: number;
+}): OperatorStateDecision {
+  if (
+    input.nextState === "Disabled" &&
+    input.target.role === "owner" &&
+    input.target.state === "Active" &&
+    input.activeOperatorCount <= 1
+  ) {
+    return { allowed: false, reason: "last_active_operator" };
+  }
+  return { allowed: true };
+}
+
+export function reenabledState(emailVerified: boolean): UserState {
+  return emailVerified ? "Active" : "Provisioned";
 }
 
 export interface EmailCodeDecision {

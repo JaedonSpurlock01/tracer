@@ -94,7 +94,7 @@ export function createTracerAuth(options: TracerAuthOptions) {
           after: async (session) => {
             await database
               .update(users)
-              .set({ state: "Active", updatedAt: new Date() })
+              .set({ state: "Active", lastSignInAt: new Date(), updatedAt: new Date() })
               .where(eq(users.id, session.userId));
           },
         },
@@ -137,5 +137,7 @@ export function createTracerAuth(options: TracerAuthOptions) {
     ],
   });
 }
+
+export type TracerAuth = ReturnType<typeof createTracerAuth>;
 
 export { safeAuthenticationError };

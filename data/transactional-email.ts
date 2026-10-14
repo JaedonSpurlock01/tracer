@@ -59,6 +59,19 @@ export async function sendSignInCode(
   });
 }
 
+export async function sendAccessCreatedNotice(
+  email: TransactionalEmail,
+  input: { to: string; from: string; signInUrl: string },
+): Promise<void> {
+  await email.send({
+    to: normalizeIdentityEmail(input.to),
+    from: input.from,
+    subject: "Your Tracer access is ready",
+    text: `An Operator created Tracer access for this address. Sign in at ${input.signInUrl} with an email code.`,
+    html: `<p>An Operator created Tracer access for this address.</p><p><a href="${input.signInUrl}">Sign in to Tracer</a> with an email code.</p>`,
+  });
+}
+
 export function isAllowedRecipient(
   recipients: ReadonlySet<string>,
   email: string,

@@ -20,6 +20,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   pgTable,
   text,
@@ -50,12 +51,19 @@ export const users = pgTable(
     image: text(),
     state: text().notNull().default("Provisioned"),
     timezone: text().notNull().default("UTC"),
+    lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
+    provisionedByUserId: text("provisioned_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
   (table) => [
     check("user_state_check", sql`${table.state} in ('Provisioned', 'Active', 'Disabled')`),
     index("user_email_idx").on(table.email),
+    foreignKey({
+      columns: [table.provisionedByUserId],
+      foreignColumns: [table.id],
+      name: "user_provisioned_by_user_id_fk",
+    }).onDelete("set null"),
   ],
 );
 

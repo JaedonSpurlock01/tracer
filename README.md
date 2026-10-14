@@ -298,7 +298,7 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 3. Apply migrations with `pnpm db:migrate` through `DATABASE_MIGRATION_URL`.
 4. Bootstrap the initial Operator with `pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago`.
 5. Configure non-production `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_EMAIL_FROM`, and `AUTH_EMAIL_ALLOWED_RECIPIENTS` outside the repository. The Cloudflare bindings are named `HYPERDRIVE` and `EMAIL`.
-6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev:local` instead of `pnpm dev`; it targets the local `tracer` database on port 5433 with `E2E_AUTH_FAKE=true`, so read the code from `http://127.0.0.1:3000/api/test/auth-otp`. This seam is disabled in production.
+6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev:local` instead of `pnpm dev`; it targets the local `tracer` database on port 5433 with `E2E_AUTH_FAKE=true`, so read the code from `http://127.0.0.1:3000/api/test/auth-otp`. This seam is disabled in production. After signing in, Operators manage other Operators at `http://127.0.0.1:3000/users`.
 7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
 
 The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.
@@ -437,7 +437,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 
 | Domain | Required behavior coverage | Primary layer |
 | --- | --- | --- |
-| Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; identity normalization and admission in `tests/domain/auth-policy.test.ts`; transactional email mapping in `tests/contracts/transactional-email.test.ts`; bootstrap uniqueness, generic provisioned-only sign-in, disabled sessions, first-sign-in activation, Organization deletion protection, and session revocation are covered in `tests/integration/authentication.test.ts`, with UI behavior in `tests/components/auth-pages.test.tsx` and the browser journey in `tests/e2e/provisioned-email-code-sign-in.spec.ts` | Domain, contract, integration, component, and browser |
+| Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; identity normalization and admission in `tests/domain/auth-policy.test.ts`; transactional email mapping in `tests/contracts/transactional-email.test.ts`; bootstrap uniqueness, generic provisioned-only sign-in, disabled sessions, first-sign-in activation, Organization deletion protection, and session revocation are covered in `tests/integration/authentication.test.ts`, with UI behavior in `tests/components/auth-pages.test.tsx` and the browser journey in `tests/e2e/provisioned-email-code-sign-in.spec.ts`; Operator role policy and last Active Operator protection in `tests/domain/auth-policy.test.ts`; Organization-scoped Operator administration, direct API authorization, provisioning, disablement with session revocation, and re-enablement in `tests/integration/operator-administration.test.ts` | Domain, contract, integration, component, and browser |
 | Workspace access | Direct Access Grants, Organization scope, granted reads, ungranted denials, immediate revocation | Domain, integration, and browser |
 | Workspace lifecycle | Setup Required, Active, Archived, restore to setup, archive history preservation | Domain and integration |
 | Number Assignment | One active assignment, prior Twilio configuration restoration, replacement history, number uniqueness | Domain, integration, and contract |
@@ -448,7 +448,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 | Activity and analytics | Workspace scope, effective classifications, canonical outcomes, timezone boundaries, aggregate definitions | Domain and integration |
 | Reports and exports | Authorized scope, Monday-to-Sunday periods, CSV and PDF parameters, artifact expiry, revoked-download denial | Domain, task, integration, and browser |
 | Background workflows | Idempotency keys, retries, partial failure, stage recovery, concurrency boundaries | Task and integration |
-| User interface | Role-aware navigation, loading, empty, error, expired, and archived states; keyboard-accessible critical flows | Component and browser |
+| User interface | Role-aware navigation and Operator administration dialogs in `tests/components/app-shell.test.tsx`; loading, empty, error, expired, and archived states; keyboard-accessible critical flows | Component and browser |
 
 Code coverage is reported from the beginning as a regression signal. Percentage gates are introduced only after representative code establishes a trustworthy baseline. Coverage never replaces this behavior matrix.
 
@@ -572,8 +572,8 @@ Provider prices change. Validate current Twilio, Cloudflare, Neon, Trigger.dev, 
 
 [docs/IMPLEMENTATION_ROADMAP.md](./docs/IMPLEMENTATION_ROADMAP.md) is the authoritative sequence from ideation through Production. It uses small vertical milestones with explicit dependencies, test-first behaviors, verification gates, environment targets, and exit criteria.
 
-- Current milestone: M1 - Verified Application Skeleton, Blocked
-- Next milestone: M2 - Data Platform and Environment Isolation
+- Current milestone: M4 - Operator Administration and Application Shell, In Progress
+- Next milestone: M5 - Organization Integrations and Twilio Connection
 - At most one milestone may be In Progress.
 - Local, Preview, Staging, and Production are distinct promotion stages.
 - Substantive roadmap and milestone changes are recorded in [docs/CHANGELOG.md](./docs/CHANGELOG.md).
@@ -582,4 +582,4 @@ Do not implement work that is absent from the roadmap. Add or change a milestone
 
 ## Repository status
 
-M1 - Verified Application Skeleton has passed its Local verification gate. Completion is blocked until the `tracer` Cloudflare Worker exists and a trusted pull request passes the Preview deployment and `/health` smoke check.
+M3 - Provisioned Authentication and Organization Bootstrap is Complete. M4 - Operator Administration and Application Shell is In Progress on the `milestone/m4-operator-administration` branch.
