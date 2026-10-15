@@ -33,6 +33,7 @@ export interface Actor {
   organizationId: string;
   name: string;
   email: string;
+  timezone: string;
   state: UserState;
   role: CanonicalRole;
 }
@@ -63,13 +64,19 @@ export async function resolveActor(
     return null;
   }
 
-  const sessionState = (session.user as { state?: UserState }).state;
-  const state = sessionState ?? (await database
-    .select({ state: users.state })
-    .from(users)
-    .where(eq(users.id, session.user.id))
-    .limit(1))[0]?.state;
-  if (!state) {
+  const sessionUser = session.user as { state?: UserState; timezone?: string };
+  let state = sessionUser.state;
+  let timezone = sessionUser.timezone;
+  if (!state || !timezone) {
+    const user = (await database
+      .select({ state: users.state, timezone: users.timezone })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1))[0];
+    state ??= user?.state as UserState | undefined;
+    timezone ??= user?.timezone;
+  }
+  if (!state || !timezone) {
     return null;
   }
 
@@ -78,6 +85,7 @@ export async function resolveActor(
     organizationId: membership.organizationId,
     name: session.user.name,
     email: session.user.email,
+    timezone,
     state: state as UserState,
     role: toCanonicalRole(membership.role as MembershipRole),
   };

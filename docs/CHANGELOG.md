@@ -64,6 +64,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M6 - Workspace Setup for the Workspace and Workspace State domain modules, the Workspaces Data Grid, Setup Required Workspace creation, General settings, and archive and restore without any Twilio mutation.
 - Started M5 - Organization Integrations and Twilio Connection for the encrypted Organization Twilio credential, number inventory synchronization, and the Operator Integrations page with isolated provider health.
 - Scoped M5 number inventory to `+1` numbers without distinguishing United States from Canada, because Twilio's owned-number API does not report a country and a static area-code table or Lookup calls were not justified for the first release.
 - Deferred R2, OpenAI, and Trigger.dev Test Connection actions to their owning milestones; M5 reports only Configured or Not configured for those providers from binding and secret presence.
@@ -98,6 +99,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
 - Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.
+- Completed M6 - Workspace Setup after the domain, integration, component, typecheck, lint, build, and migration idempotence gates passed and the Product Owner accepted Setup Required Workspace creation, General settings, archive, restore, and Resume Setup with no Twilio mutation; migration 0005 and the `workspace` runtime grant still need to be applied to Staging.
 - Completed M5 - Organization Integrations and Twilio Connection after the fast, integration, Worker, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, and the live Twilio connection test and six-number inventory sync succeeded against the shared Staging database.
 - Completed M4 - Operator Administration and Application Shell after the domain, contract, integration, component, and Worker suites, typecheck, lint, and build passed locally and the browser journey and Preview deployment gates passed in GitHub Actions.
 - Completed M3 - Provisioned Authentication and Organization Bootstrap after the domain, contract, integration, component, and browser suites, Preview deployment, and local bootstrap, email-code sign-in, and session revocation gates passed; live Email Service delivery remains an external check.

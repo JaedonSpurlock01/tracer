@@ -20,7 +20,7 @@ Preview intentionally shares the Staging Neon project but uses a separate Hyperd
 Each Neon project has two database roles:
 
 - `tracer_migration` owns the `tracer` database and applies checked-in migrations through a direct connection.
-- `tracer_app` can connect and use only the Better Auth and Organization tables required by runtime authentication plus the `twilio_connection` and `twilio_number` integration tables. It cannot create schema objects, delete users, or read the Drizzle migration journal. The migration role remains responsible for bootstrap and schema changes.
+- `tracer_app` can connect and use only the Better Auth, Organization, and `workspace` tables required by runtime authentication and Workspace management plus the `twilio_connection` and `twilio_number` integration tables. It cannot create schema objects, delete users, or read the Drizzle migration journal. The migration role remains responsible for bootstrap and schema changes.
 
 The `tracer` GitHub Environment stores non-production Cloudflare credentials, `DATABASE_MIGRATION_URL`, `DATABASE_RUNTIME_PASSWORD`, and `DATABASE_SMOKE_TOKEN`. The `Production` GitHub Environment stores separate Production values. Secret values must never be copied into repository files, logs, issues, or documentation.
 

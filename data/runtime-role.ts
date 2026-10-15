@@ -64,6 +64,7 @@ export async function provisionRuntimeRole(
       public.twilio_number
     TO ${runtimeRole}
   `);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.workspace TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public."user" TO ${runtimeRole}`);
   await connection.query(`REVOKE CREATE ON SCHEMA public FROM ${runtimeRole}`);
 }
