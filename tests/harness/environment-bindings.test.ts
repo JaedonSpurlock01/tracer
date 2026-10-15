@@ -75,4 +75,5 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
   expect(configuration.env?.staging?.services).toBeUndefined();
   expect(configuration.send_email).toEqual([{ name: "EMAIL", remote: true }]);
   expect(configuration.previews?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
+  expect(configuration.env?.staging?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
 });

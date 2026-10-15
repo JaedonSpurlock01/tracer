@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M5 - Organization Integrations and Twilio Connection
+- **Current milestone:** None
 - **Next milestone:** M6 - Workspace Setup
-- **Current environment:** Local, Preview, and Staging data paths verified; Production data resources provisioned but not deployed
+- **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-14
 
-M4 is Complete after the domain, contract, integration, component, and Worker suites, typecheck, lint, and build passed locally and the browser journey and Preview deployment gates passed in GitHub Actions before merge to `main`. Live Preview Email Service delivery to an allowlisted recipient remains an external check. M5 is In Progress.
+M5 is Complete after the domain, contract, integration, component, and Worker suites, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, the Staging database received migrations 0001 through 0004 with runtime grants and the initial Operator through the `Bootstrap Authentication` workflow, live Email Service sign-in succeeded for an allowlisted recipient, and the Organization Twilio connection was verified and synchronized six numbers against the shared Staging database. Completing M5 also surfaced that the Staging Worker lacked the `EMAIL` binding and authentication secrets since M3; both are now provisioned. M6 has not started.
 
 ## Status model
 
@@ -172,7 +172,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M2 | Data Platform and Environment Isolation | Complete | Local, Preview, and Staging | M1 |
 | M3 | Provisioned Authentication and Organization Bootstrap | Complete | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Complete | Local and Preview | M3 |
-| M5 | Organization Integrations and Twilio Connection | In Progress | Staging | M4 |
+| M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
 | M6 | Workspace Setup | Not Started | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Not Started | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Not Started | Preview and Staging | M7 |
@@ -394,11 +394,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M5 - Organization Integrations and Twilio Connection
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** An Operator can securely connect and verify the Organization's Twilio account while viewing provider health.
 - **Depends on:** M4
 - **Target environment:** Staging
-- **Execution note:** The Twilio boundary uses direct REST calls through `fetch` behind a small client interface so the official SDK can replace it later without changing domain code. Number inventory accepts only `+1` numbers because Twilio's owned-number API does not return a country; United States and Canada are not distinguished in this release. Disconnect dependency checking is a pure policy fed by an Active Workspace count that stays zero until M6 creates the Workspace table. R2, OpenAI, and Trigger.dev report Configured or Not configured from binding and secret presence only; their Test actions arrive with their own milestones. The Operator enters the Staging Twilio API key through the Integrations page, so the live Staging connection test is an Operator-run gate after the master key secret is deployed.
+- **Execution note:** The Twilio boundary uses direct REST calls through `fetch` behind a small client interface so the official SDK can replace it later without changing domain code. Number inventory accepts only `+1` numbers because Twilio's owned-number API does not return a country; United States and Canada are not distinguished in this release. Disconnect dependency checking is a pure policy fed by an Active Workspace count that stays zero until M6 creates the Workspace table. R2, OpenAI, and Trigger.dev report Configured or Not configured from binding and secret presence only; their Test actions arrive with their own milestones. The Operator entered the Twilio API key through the Integrations page against the shared Staging database; Test Connection and Sync Numbers succeeded and stored six E.164 numbers. Preview and Staging share one `TWILIO_CREDENTIAL_MASTER_KEY` because they share that database. The Staging Worker gained its `EMAIL` binding and authentication secrets during this milestone after live checks showed every database-backed Staging route failing with `EMAIL is required`.
 
 #### Vertical slices
 

@@ -573,7 +573,7 @@ Provider prices change. Validate current Twilio, Cloudflare, Neon, Trigger.dev, 
 
 [docs/IMPLEMENTATION_ROADMAP.md](./docs/IMPLEMENTATION_ROADMAP.md) is the authoritative sequence from ideation through Production. It uses small vertical milestones with explicit dependencies, test-first behaviors, verification gates, environment targets, and exit criteria.
 
-- Current milestone: M5 - Organization Integrations and Twilio Connection, In Progress
+- Current milestone: None
 - Next milestone: M6 - Workspace Setup
 - At most one milestone may be In Progress.
 - Local, Preview, Staging, and Production are distinct promotion stages.
@@ -583,4 +583,4 @@ Do not implement work that is absent from the roadmap. Add or change a milestone
 
 ## Repository status
 
-M4 - Operator Administration and Application Shell is Complete. M5 - Organization Integrations and Twilio Connection is In Progress on the `milestone/m5-organization-integrations` branch.
+M5 - Organization Integrations and Twilio Connection is Complete on the `milestone/m5-organization-integrations` branch and awaits merge. M6 - Workspace Setup has not started.
