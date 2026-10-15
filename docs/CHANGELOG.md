@@ -64,6 +64,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M6 - Workspace Setup for the Workspace and Workspace State domain modules, the Workspaces Data Grid, Setup Required Workspace creation, General settings, and archive and restore without any Twilio mutation.
 - Started M5 - Organization Integrations and Twilio Connection for the encrypted Organization Twilio credential, number inventory synchronization, and the Operator Integrations page with isolated provider health.
 - Scoped M5 number inventory to `+1` numbers without distinguishing United States from Canada, because Twilio's owned-number API does not report a country and a static area-code table or Lookup calls were not justified for the first release.
 - Deferred R2, OpenAI, and Trigger.dev Test Connection actions to their owning milestones; M5 reports only Configured or Not configured for those providers from binding and secret presence.

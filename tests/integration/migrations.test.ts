@@ -46,7 +46,7 @@ it("migrates a clean database to the latest authentication and Organization sche
     `select table_name
        from information_schema.tables
       where table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace')
       order by table_name`,
   );
   expect(result.rows.map(({ table_name }) => table_name)).toEqual([
@@ -59,6 +59,7 @@ it("migrates a clean database to the latest authentication and Organization sche
     "twilio_number",
     "user",
     "verification",
+    "workspace",
   ]);
 
   const columns = await pool.query<{ table_name: string; column_name: string }>(
@@ -85,6 +86,12 @@ it("migrates a clean database to the latest authentication and Organization sche
       where constraint_name = 'user_state_check'`,
   );
   expect(stateConstraint.rows).toEqual([{ constraint_name: "user_state_check" }]);
+  const workspaceStateConstraint = await pool.query<{ constraint_name: string }>(
+    `select constraint_name
+       from information_schema.check_constraints
+      where constraint_name = 'workspace_state_check'`,
+  );
+  expect(workspaceStateConstraint.rows).toEqual([{ constraint_name: "workspace_state_check" }]);
   const foreignKeys = await pool.query<{ constraint_name: string }>(
     `select constraint_name
        from information_schema.table_constraints
@@ -108,7 +115,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(5);
+  expect(Number(result.rows[0].count)).toBe(6);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {
@@ -142,7 +149,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
        from information_schema.role_table_grants
       where grantee = $1
         and table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace')
       order by table_name, privilege_type`,
     [runtimeRole],
   );
@@ -151,6 +158,8 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "session", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "twilio_connection", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "twilio_number", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "workspace", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "workspace", privilege_type: "DELETE" });
   expect(grants.rows).not.toContainEqual({ table_name: "user", privilege_type: "DELETE" });
 
   const runtimeUrl = new URL(container.getConnectionUri());

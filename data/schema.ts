@@ -217,6 +217,40 @@ export const twilioNumbers = pgTable(
   ],
 );
 
+export const workspaces = pgTable(
+  "workspace",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    reportingTimezone: text("reporting_timezone").notNull(),
+    state: text().notNull().default("Setup Required"),
+    destinationNumber: text("destination_number"),
+    recordingEnabled: boolean("recording_enabled").notNull().default(false),
+    analysisEnabled: boolean("analysis_enabled").notNull().default(false),
+    spamGateEnabled: boolean("spam_gate_enabled").notNull().default(false),
+    whisperEnabled: boolean("whisper_enabled").notNull().default(false),
+    whisperMessage: text("whisper_message"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (table) => [
+    check("workspace_state_check", sql`${table.state} in ('Setup Required', 'Active', 'Archived')`),
+    check("workspace_analysis_requires_recording_check", sql`not ${table.analysisEnabled} or ${table.recordingEnabled}`),
+    foreignKey({
+      columns: [table.createdByUserId],
+      foreignColumns: [users.id],
+      name: "workspace_created_by_user_id_fk",
+    }).onDelete("set null"),
+    uniqueIndex("workspace_organization_name_idx").on(table.organizationId, sql`lower(${table.name})`),
+    index("workspace_organization_id_idx").on(table.organizationId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -227,4 +261,5 @@ export const schema = {
   invitation: invitations,
   twilioConnection: twilioConnections,
   twilioNumber: twilioNumbers,
+  workspace: workspaces,
 };

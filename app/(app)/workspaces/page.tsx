@@ -1,22 +1,29 @@
 /**
  * -------------------------------------------------------------------------
  * @file   page.tsx
- * @brief  Renders the authenticated Workspaces placeholder.
+ * @brief  Renders the guarded Operator Workspaces surface.
  *
  * @description
- *  Reserves the Workspaces surface until the Organization integration exists.
+ *  Restricts Workspace management to Active Operators and passes the account
+ *  timezone into the initial Workspace setup form.
  *
  * @remarks
- *  The shell protects this page before the placeholder renders.
+ *  Workspace setup never activates Twilio routing.
  *
  * @see
- *  components/tracer/page-placeholder.tsx
+ *  components/tracer/workspaces-view.tsx
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { PagePlaceholder } from "@/components/tracer/page-placeholder";
+import { notFound } from "next/navigation";
 
-export default function WorkspacesPage() {
-  return <PagePlaceholder title="Workspaces" description="Workspaces arrive after the Organization Twilio connection is configured." />;
+import { resolveRequestActor } from "@/app/(app)/actor";
+import WorkspacesView from "@/components/tracer/workspaces-view";
+import { isActiveOperatorActor } from "@/data/authorization";
+
+export default async function WorkspacesPage() {
+  const actor = await resolveRequestActor();
+  if (!isActiveOperatorActor(actor)) notFound();
+  return <WorkspacesView initialTimezone={actor.timezone} />;
 }

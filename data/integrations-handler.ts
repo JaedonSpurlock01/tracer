@@ -37,7 +37,7 @@ export interface IntegrationsHandlerOptions {
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
-  activeWorkspaceCount: () => Promise<number>;
+  activeWorkspaceCount: (organizationId: string) => Promise<number>;
 }
 
 function response(body: unknown, status = 200): Response {
@@ -85,7 +85,7 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
         organizationId: actor.organizationId,
         twilio: options.twilio,
         masterKey: options.masterKey,
-        activeWorkspaceCount: options.activeWorkspaceCount,
+        activeWorkspaceCount: () => options.activeWorkspaceCount(actor.organizationId),
       });
       const route = new URL(request.url).pathname.replace(/^\/api\/integrations\/?/, "");
       if (request.method === "GET" && route === "") {

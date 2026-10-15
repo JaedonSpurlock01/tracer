@@ -17,6 +17,7 @@
  * -------------------------------------------------------------------------
  */
 import { createIntegrationsHandler } from "@/data/integrations-handler";
+import { createWorkspaces } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 import { createTwilioRestClient } from "@/data/twilio-client";
 
@@ -25,7 +26,7 @@ async function handle(request: Request): Promise<Response> {
     ...runtime,
     configuration: runtime.providerConfiguration,
     twilio: createTwilioRestClient(),
-    activeWorkspaceCount: async () => 0,
+    activeWorkspaceCount: (organizationId) => createWorkspaces(runtime.pool, organizationId).countActive(),
   })(request));
 }
 

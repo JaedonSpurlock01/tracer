@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None
-- **Next milestone:** M6 - Workspace Setup
+- **Current milestone:** M6 - Workspace Setup
+- **Next milestone:** M7 - Call Flow Publication and Workspace Activation
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-14
 
-M5 is Complete after the domain, contract, integration, component, and Worker suites, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, the Staging database received migrations 0001 through 0004 with runtime grants and the initial Operator through the `Bootstrap Authentication` workflow, live Email Service sign-in succeeded for an allowlisted recipient, and the Organization Twilio connection was verified and synchronized six numbers against the shared Staging database. Completing M5 also surfaced that the Staging Worker lacked the `EMAIL` binding and authentication secrets since M3; both are now provisioned. M6 has not started.
+M5 is Complete after the domain, contract, integration, component, and Worker suites, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, the Staging database received migrations 0001 through 0004 with runtime grants and the initial Operator through the `Bootstrap Authentication` workflow, live Email Service sign-in succeeded for an allowlisted recipient, and the Organization Twilio connection was verified and synchronized six numbers against the shared Staging database. Completing M5 also surfaced that the Staging Worker lacked the `EMAIL` binding and authentication secrets since M3; both are now provisioned. M6 is In Progress on the `milestone/m6-workspace-setup` branch.
 
 ## Status model
 
@@ -173,7 +173,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M3 | Provisioned Authentication and Organization Bootstrap | Complete | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Complete | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
-| M6 | Workspace Setup | Not Started | Preview and Staging | M5 |
+| M6 | Workspace Setup | In Progress | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Not Started | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Not Started | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
@@ -437,10 +437,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M6 - Workspace Setup
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** An Operator can create and manage a Setup Required Workspace without activating Twilio routing prematurely.
 - **Depends on:** M5
 - **Target environment:** Preview and Staging
+- **Execution note:** Workspace names are unique per Organization case-insensitively across every state. The Create Workspace Dialog renders all four wizard steps but only Basics is editable; Number, Routing, and Review stay disabled until M7, and Resume Setup reopens the Dialog on the disabled Number step. The Workspaces Data Grid is server-backed with Organization-scoped search, Workspace State filtering, and pagination; number, metric, and health columns render placeholders until their milestones. Migration 0005 creates the `workspace` table with the M7 routing settings columns already present so M7 avoids a second schema change, and the runtime role receives SELECT, INSERT, and UPDATE but never DELETE on it; rerun `db:grant-runtime` on Staging after applying it. The Workspace service has no Twilio dependency, and the Integrations disconnect check now reads the real Active Workspace count.
 
 #### Vertical slices
 
