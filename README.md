@@ -298,7 +298,7 @@ Enable the pinned package manager with `corepack enable`. If Windows prevents Co
 3. Apply migrations with `pnpm db:migrate` through `DATABASE_MIGRATION_URL`.
 4. Bootstrap the initial Operator with `pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago`.
 5. Configure non-production `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AUTH_EMAIL_FROM`, and `AUTH_EMAIL_ALLOWED_RECIPIENTS` outside the repository. The Cloudflare bindings are named `HYPERDRIVE` and `EMAIL`.
-6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev:local` instead of `pnpm dev`; it targets the local `tracer` database on port 5433 with `E2E_AUTH_FAKE=true`, so read the code from `http://127.0.0.1:3000/api/test/auth-otp`. This seam is disabled in production. After signing in, Operators manage other Operators at `http://127.0.0.1:3000/users`.
+6. Open `http://127.0.0.1:3000/sign-in` for passwordless email-code authentication. Without a Cloudflare `EMAIL` binding, run `pnpm dev:local` instead of `pnpm dev`; it targets the local `tracer` database on port 5433 with `E2E_AUTH_FAKE=true`, so read the code from `http://127.0.0.1:3000/api/test/auth-otp`. This seam is disabled in production. After signing in, Operators manage other Operators at `http://127.0.0.1:3000/users` and connect the Organization Twilio account at `http://127.0.0.1:3000/integrations`. `dev:local` supplies a placeholder `TWILIO_CREDENTIAL_MASTER_KEY`; every deployed environment needs its own base64-encoded 32-byte value as a Cloudflare secret.
 7. Request `http://127.0.0.1:3000/health` for the typed `{ "status": "ok" }` health response.
 
 The Preview recipient allowlist is application-enforced. Empty or missing `AUTH_EMAIL_ALLOWED_RECIPIENTS` disables sends. Never commit values for authentication secrets or email configuration.
@@ -438,6 +438,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 | Domain | Required behavior coverage | Primary layer |
 | --- | --- | --- |
 | Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; identity normalization and admission in `tests/domain/auth-policy.test.ts`; transactional email mapping in `tests/contracts/transactional-email.test.ts`; bootstrap uniqueness, generic provisioned-only sign-in, disabled sessions, first-sign-in activation, Organization deletion protection, and session revocation are covered in `tests/integration/authentication.test.ts`, with UI behavior in `tests/components/auth-pages.test.tsx` and the browser journey in `tests/e2e/provisioned-email-code-sign-in.spec.ts`; Operator role policy and last Active Operator protection in `tests/domain/auth-policy.test.ts`; Organization-scoped Operator administration, direct API authorization, provisioning, disablement with session revocation, and re-enablement in `tests/integration/operator-administration.test.ts` | Domain, contract, integration, component, and browser |
+| Organization integrations | Credential encryption round trip and tamper rejection in `tests/domain/credential-encryption.test.ts`; E.164 normalization in `tests/domain/phone-number.test.ts`; disconnect dependency policy and Twilio SID validation in `tests/domain/integrations-policy.test.ts`; provider health states in `tests/domain/provider-health.test.ts`; Twilio REST authorization, payload mapping, pagination, and secret-free errors in `tests/contracts/twilio-client.test.ts`; Organization-scoped connect, verified rotation, failure recording, inventory sync and release, blocked disconnect, and Hyperdrive and Email Service tests in `tests/integration/integrations.test.ts`; Integrations page states and secret-free rendering in `tests/components/integrations-view.test.tsx` | Domain, contract, integration, and component |
 | Workspace access | Direct Access Grants, Organization scope, granted reads, ungranted denials, immediate revocation | Domain, integration, and browser |
 | Workspace lifecycle | Setup Required, Active, Archived, restore to setup, archive history preservation | Domain and integration |
 | Number Assignment | One active assignment, prior Twilio configuration restoration, replacement history, number uniqueness | Domain, integration, and contract |
@@ -515,8 +516,8 @@ An agent must not claim completion while a required check is failing. Pre-existi
 - R2 buckets are private.
 - Media and generated files require authenticated, authorized access.
 - Download URLs are short-lived and do not bypass current authorization.
-- Twilio API key secrets are encrypted as Organization credentials.
-- The Twilio encryption master key is a Cloudflare deployment secret.
+- Twilio API key secrets are encrypted as Organization credentials with AES-256-GCM; the rationale is recorded in [ADR 0005](./docs/adr/0005-encrypt-organization-twilio-credentials.md).
+- The Twilio encryption master key is the `TWILIO_CREDENTIAL_MASTER_KEY` Cloudflare deployment secret.
 - R2, Hyperdrive, OpenAI, Trigger.dev, and Email Service credentials remain deployment secrets or bindings.
 - Secrets, verification codes, Transcript content, and Recording URLs are never logged.
 - Disabling a user revokes active sessions.
@@ -572,8 +573,8 @@ Provider prices change. Validate current Twilio, Cloudflare, Neon, Trigger.dev, 
 
 [docs/IMPLEMENTATION_ROADMAP.md](./docs/IMPLEMENTATION_ROADMAP.md) is the authoritative sequence from ideation through Production. It uses small vertical milestones with explicit dependencies, test-first behaviors, verification gates, environment targets, and exit criteria.
 
-- Current milestone: M4 - Operator Administration and Application Shell, In Progress
-- Next milestone: M5 - Organization Integrations and Twilio Connection
+- Current milestone: M5 - Organization Integrations and Twilio Connection, In Progress
+- Next milestone: M6 - Workspace Setup
 - At most one milestone may be In Progress.
 - Local, Preview, Staging, and Production are distinct promotion stages.
 - Substantive roadmap and milestone changes are recorded in [docs/CHANGELOG.md](./docs/CHANGELOG.md).
@@ -582,4 +583,4 @@ Do not implement work that is absent from the roadmap. Add or change a milestone
 
 ## Repository status
 
-M3 - Provisioned Authentication and Organization Bootstrap is Complete. M4 - Operator Administration and Application Shell is In Progress on the `milestone/m4-operator-administration` branch.
+M4 - Operator Administration and Application Shell is Complete. M5 - Organization Integrations and Twilio Connection is In Progress on the `milestone/m5-organization-integrations` branch.

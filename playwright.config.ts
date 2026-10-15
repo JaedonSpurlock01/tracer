@@ -37,6 +37,7 @@ export default defineConfig({
       AUTH_EMAIL_ALLOWED_RECIPIENTS: "operator@example.com",
       BETTER_AUTH_SECRET: "e2e-only-secret-that-is-not-a-credential",
       BETTER_AUTH_URL: "http://127.0.0.1:3000",
+      TWILIO_CREDENTIAL_MASTER_KEY: "bG9jYWwtZGV2LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU=",
     },
   },
 });

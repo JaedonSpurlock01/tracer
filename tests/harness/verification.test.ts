@@ -31,6 +31,10 @@ const playwrightConfiguration = readFileSync(
   new URL("../../playwright.config.ts", import.meta.url),
   "utf8",
 );
+const packageConfiguration = readFileSync(
+  new URL("../../package.json", import.meta.url),
+  "utf8",
+);
 
 describe("verification harness", () => {
   it("executes fast test assertions", () => {
@@ -40,6 +44,8 @@ describe("verification harness", () => {
   it("runs the E2E web server in development with the explicit auth fake", () => {
     expect(playwrightConfiguration).toContain('E2E_AUTH_FAKE: "true"');
     expect(playwrightConfiguration).toContain('NODE_ENV: "development"');
+    expect(playwrightConfiguration).toContain("TWILIO_CREDENTIAL_MASTER_KEY");
+    expect(packageConfiguration).toContain("TWILIO_CREDENTIAL_MASTER_KEY");
   });
 
   it("selects the credential-free OpenNext platform config for E2E", () => {

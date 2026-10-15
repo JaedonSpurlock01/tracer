@@ -1,0 +1,21 @@
+{
+  "incoming_phone_numbers": [
+    {
+      "sid": "PN11111111111111111111111111111111",
+      "phone_number": "+14155552671",
+      "friendly_name": "Support Line",
+      "capabilities": { "voice": true, "sms": true, "mms": true, "fax": false },
+      "voice_url": "https://example.invalid/twilio/voice/support",
+      "voice_method": "POST"
+    },
+    {
+      "sid": "PN22222222222222222222222222222222",
+      "phone_number": "+14155552672",
+      "friendly_name": null,
+      "capabilities": { "voice": false, "sms": true, "mms": false, "fax": false },
+      "voice_url": null,
+      "voice_method": null
+    }
+  ],
+  "next_page_uri": "/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/IncomingPhoneNumbers.json?PageSize=1000&Page=1"
+}

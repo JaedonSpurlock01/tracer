@@ -25,6 +25,7 @@ import { Pool } from "pg";
 import { rememberE2eOtp } from "@/data/e2e-auth-fake";
 import { schema } from "@/data/schema";
 import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
+import { type ProviderConfiguration } from "@/data/provider-health";
 import {
   createCloudflareTransactionalEmail,
   type SendEmail,
@@ -34,6 +35,10 @@ import {
 interface AuthBindings {
   HYPERDRIVE?: { connectionString: string };
   EMAIL?: SendEmail;
+  TWILIO_CREDENTIAL_MASTER_KEY?: string;
+  R2?: unknown;
+  OPENAI_API_KEY?: string;
+  TRIGGER_SECRET_KEY?: string;
   AUTH_EMAIL_FROM?: string;
   AUTH_EMAIL_ALLOWED_RECIPIENTS?: string;
   BETTER_AUTH_SECRET?: string;
@@ -49,6 +54,8 @@ export interface TracerRuntime {
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
+  masterKey: string | undefined;
+  providerConfiguration: ProviderConfiguration;
   baseURL: string;
   backgroundTask: (promise: Promise<unknown>) => void;
 }
@@ -107,6 +114,17 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
     const emailFrom = requiredBinding(bindings, "AUTH_EMAIL_FROM");
     const baseURL = requiredBinding(bindings, "BETTER_AUTH_URL");
     const allowed = allowedRecipients(bindings.AUTH_EMAIL_ALLOWED_RECIPIENTS ?? process.env.AUTH_EMAIL_ALLOWED_RECIPIENTS);
+    const masterKey = bindings.TWILIO_CREDENTIAL_MASTER_KEY ?? process.env.TWILIO_CREDENTIAL_MASTER_KEY;
+    const providerConfiguration: ProviderConfiguration = {
+      twilioMasterKey: Boolean(masterKey),
+      hyperdrive: Boolean(connectionString),
+      email: Boolean(bindings.EMAIL) || fakeEnabled,
+      emailFrom,
+      emailAllowlistCount: allowed.size,
+      r2: Boolean(bindings.R2),
+      openai: Boolean(bindings.OPENAI_API_KEY ?? process.env.OPENAI_API_KEY),
+      triggerdev: Boolean(bindings.TRIGGER_SECRET_KEY ?? process.env.TRIGGER_SECRET_KEY),
+    };
     const auth = createTracerAuth({
       database,
       email,
@@ -123,6 +141,8 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       email,
       emailFrom,
       allowedRecipients: allowed,
+      masterKey,
+      providerConfiguration,
       baseURL,
       backgroundTask: (promise) => ctx.waitUntil(promise),
     });

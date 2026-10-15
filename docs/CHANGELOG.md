@@ -64,6 +64,9 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M5 - Organization Integrations and Twilio Connection for the encrypted Organization Twilio credential, number inventory synchronization, and the Operator Integrations page with isolated provider health.
+- Scoped M5 number inventory to `+1` numbers without distinguishing United States from Canada, because Twilio's owned-number API does not report a country and a static area-code table or Lookup calls were not justified for the first release.
+- Deferred R2, OpenAI, and Trigger.dev Test Connection actions to their owning milestones; M5 reports only Configured or Not configured for those providers from binding and secret presence.
 - Started M4 - Operator Administration and Application Shell for the authenticated Sidebar shell, central Operator authorization, and Operator provisioning, disablement, and re-enablement.
 - Started M3 - Provisioned Authentication and Organization Bootstrap for provisioned passwordless identity, Organization bootstrap, and session revocation.
 - Deferred Google sign-in from M3 to the unscheduled backlog because email-code authentication meets current Operator needs.
@@ -78,8 +81,13 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Required at most one roadmap milestone to be In Progress at a time.
 - Required agents to update the roadmap and Changelog when substantive project state changes.
 
+### Security
+
+- Encrypted the Organization Twilio API key secret with AES-256-GCM under the `TWILIO_CREDENTIAL_MASTER_KEY` deployment secret, verified credentials before storage or rotation, and excluded secret material from every application response; see ADR 0005.
+
 ### Deployment
 
+- Provisioned distinct `TWILIO_CREDENTIAL_MASTER_KEY` secrets for the `tracer` Worker, the `tracer-staging` Worker, and the Previews Base configuration so M5's Staging Twilio connection gate can run; the `tracer` Worker was created as an empty secret holder and remains undeployed.
 - Promoted M2's isolated Staging data path after direct migration and protected Hyperdrive read/write smoke checks passed.
 
 ### Completed
@@ -87,4 +95,5 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
 - Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.
+- Completed M4 - Operator Administration and Application Shell after the domain, contract, integration, component, and Worker suites, typecheck, lint, and build passed locally and the browser journey and Preview deployment gates passed in GitHub Actions.
 - Completed M3 - Provisioned Authentication and Organization Bootstrap after the domain, contract, integration, component, and browser suites, Preview deployment, and local bootstrap, email-code sign-in, and session revocation gates passed; live Email Service delivery remains an external check.
