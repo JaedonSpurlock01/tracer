@@ -87,7 +87,10 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Deployment
 
-- Provisioned distinct `TWILIO_CREDENTIAL_MASTER_KEY` secrets for the `tracer` Worker, the `tracer-staging` Worker, and the Previews Base configuration so M5's Staging Twilio connection gate can run; the `tracer` Worker was created as an empty secret holder and remains undeployed.
+- Provisioned `TWILIO_CREDENTIAL_MASTER_KEY` for the `tracer` Worker, the `tracer-staging` Worker, and the Previews Base configuration; Preview and Staging share one value because they share the Staging database. The `tracer` Worker was created as an empty secret holder and remains undeployed.
+- Applied migrations 0001 through 0004, runtime grants, and the initial Operator bootstrap to the Staging database through the `Bootstrap Authentication` workflow; Staging had carried only the M2 schema until this point.
+- Added the `EMAIL` send binding to the `staging` Wrangler environment and provisioned the Staging and Preview authentication secrets after live checks showed every database-backed Staging route failing with `EMAIL is required`; Wrangler environments do not inherit top-level bindings or secrets.
+- Deployed `tracer-staging` with the corrected bindings and verified anonymous route guards, generic OTP responses, and the Integrations API boundary live.
 - Promoted M2's isolated Staging data path after direct migration and protected Hyperdrive read/write smoke checks passed.
 
 ### Completed
@@ -95,5 +98,6 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
 - Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.
+- Completed M5 - Organization Integrations and Twilio Connection after the fast, integration, Worker, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, and the live Twilio connection test and six-number inventory sync succeeded against the shared Staging database.
 - Completed M4 - Operator Administration and Application Shell after the domain, contract, integration, component, and Worker suites, typecheck, lint, and build passed locally and the browser journey and Preview deployment gates passed in GitHub Actions.
 - Completed M3 - Provisioned Authentication and Organization Bootstrap after the domain, contract, integration, component, and browser suites, Preview deployment, and local bootstrap, email-code sign-in, and session revocation gates passed; live Email Service delivery remains an external check.

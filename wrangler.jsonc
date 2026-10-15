@@ -47,6 +47,12 @@
   "env": {
     "staging": {
       "name": "tracer-staging",
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "remote": true
+        }
+      ],
       "hyperdrive": [
         {
           "binding": "HYPERDRIVE",
