@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { createIntegrations, IntegrationsError } from "@/data/integrations";
 import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
@@ -65,6 +66,12 @@ const fakeTwilio: TwilioClient = {
       throw new TwilioClientError("authentication_failed", 401);
     }
     return incoming;
+  },
+  async fetchIncomingPhoneNumber() {
+    throw new Error("not implemented");
+  },
+  async updateIncomingPhoneNumberVoice() {
+    throw new Error("not implemented");
   },
 };
 
@@ -245,6 +252,34 @@ describe.sequential("Organization integrations", () => {
     expect(duplicate.response.status).toBe(409);
   });
 
+  it("runs provider operations with decrypted credentials and records seam failures", async () => {
+    const integrations = createIntegrations({
+      pool: pool!,
+      organizationId,
+      twilio: fakeTwilio,
+      masterKey,
+      activeWorkspaceCount: async () => 0,
+    });
+
+    await expect(integrations.withTwilioCredential(async (credential) => ({ accountSid: credential.accountSid, secret: credential.apiKeySecret }))).resolves.toEqual({ accountSid, secret: firstSecret });
+    unavailable = true;
+    await expect(integrations.withTwilioCredential(async () => {
+      throw new TwilioClientError("unavailable", null);
+    })).rejects.toMatchObject({ code: "provider_unavailable" });
+    unavailable = false;
+    await expect(integrations.getTwilioConnection()).resolves.toMatchObject({ lastFailureDetail: expect.any(String) });
+
+    const disconnected = createIntegrations({
+      pool: pool!,
+      organizationId: "organization-without-connection",
+      twilio: fakeTwilio,
+      masterKey,
+      activeWorkspaceCount: async () => 0,
+    });
+    await expect(disconnected.withTwilioCredential(async () => "unreachable")).rejects.toBeInstanceOf(IntegrationsError);
+    await expect(disconnected.withTwilioCredential(async () => "unreachable")).rejects.toMatchObject({ code: "not_connected" });
+  });
+
   it("records test failures without discarding the last success", async () => {
     const cookie = await signIn("operator@example.com");
     const before = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
@@ -286,9 +321,9 @@ describe.sequential("Organization integrations", () => {
   it("synchronizes supported incoming numbers and releases missing numbers", async () => {
     const cookie = await signIn("operator@example.com");
     incoming = [
-      { sid: "PN11111111111111111111111111111111", phoneNumber: "+1 (415) 555-2671", friendlyName: "First", voiceCapable: true, voiceUrl: "https://example.invalid/first", voiceMethod: "POST" },
-      { sid: "PN22222222222222222222222222222222", phoneNumber: "4155552672", friendlyName: "Second", voiceCapable: false, voiceUrl: null, voiceMethod: null },
-      { sid: "PN33333333333333333333333333333333", phoneNumber: "+442071234567", friendlyName: "Skipped", voiceCapable: true, voiceUrl: null, voiceMethod: null },
+      { sid: "PN11111111111111111111111111111111", phoneNumber: "+1 (415) 555-2671", friendlyName: "First", voiceCapable: true, voiceUrl: "https://example.invalid/first", voiceMethod: "POST", voiceFallbackUrl: null, voiceFallbackMethod: null, statusCallback: null, statusCallbackMethod: null },
+      { sid: "PN22222222222222222222222222222222", phoneNumber: "4155552672", friendlyName: "Second", voiceCapable: false, voiceUrl: null, voiceMethod: null, voiceFallbackUrl: null, voiceFallbackMethod: null, statusCallback: null, statusCallbackMethod: null },
+      { sid: "PN33333333333333333333333333333333", phoneNumber: "+442071234567", friendlyName: "Skipped", voiceCapable: true, voiceUrl: null, voiceMethod: null, voiceFallbackUrl: null, voiceFallbackMethod: null, statusCallback: null, statusCallbackMethod: null },
     ];
     const first = await json(new Request("http://localhost:3000/api/integrations/twilio/sync-numbers", { method: "POST", headers: { cookie } }));
     expect(first.response.status).toBe(200);
@@ -297,7 +332,7 @@ describe.sequential("Organization integrations", () => {
     incoming = [incoming[0]];
     await json(new Request("http://localhost:3000/api/integrations/twilio/sync-numbers", { method: "POST", headers: { cookie } }));
     expect((await json(new Request("http://localhost:3000/api/integrations/twilio/numbers", { headers: { cookie } }))).body.numbers).toEqual(expect.arrayContaining([expect.objectContaining({ phoneNumber: "+14155552672", releasedAt: expect.any(String) })]));
-    incoming = [incoming[0], { sid: "PN22222222222222222222222222222222", phoneNumber: "4155552672", friendlyName: "Second", voiceCapable: false, voiceUrl: null, voiceMethod: null }];
+    incoming = [incoming[0], { sid: "PN22222222222222222222222222222222", phoneNumber: "4155552672", friendlyName: "Second", voiceCapable: false, voiceUrl: null, voiceMethod: null, voiceFallbackUrl: null, voiceFallbackMethod: null, statusCallback: null, statusCallbackMethod: null }];
     const restored = await json(new Request("http://localhost:3000/api/integrations/twilio/sync-numbers", { method: "POST", headers: { cookie } }));
     expect(restored.body.numbers).toEqual(expect.arrayContaining([expect.objectContaining({ phoneNumber: "+14155552672", releasedAt: null })]));
     const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));

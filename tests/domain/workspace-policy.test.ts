@@ -54,15 +54,15 @@ describe("Workspace policy", () => {
   });
 
   it("describes incomplete setup requirements", () => {
-    expect(describeSetupChecklist({ destinationNumber: null })).toEqual([
+    expect(describeSetupChecklist({ destinationNumber: null, trackingNumber: null, publishedFlowVersion: null })).toEqual([
       { label: "Tracking Number", complete: false },
       { label: "Destination Number", complete: false },
       { label: "Published Call Flow", complete: false },
     ]);
-    expect(describeSetupChecklist({ destinationNumber: "+14155550100" })).toEqual([
-      { label: "Tracking Number", complete: false },
+    expect(describeSetupChecklist({ destinationNumber: "+14155550100", trackingNumber: "+14155550101", publishedFlowVersion: { version: 1, publishedAt: "2026-01-01T00:00:00.000Z" } })).toEqual([
+      { label: "Tracking Number", complete: true },
       { label: "Destination Number", complete: true },
-      { label: "Published Call Flow", complete: false },
+      { label: "Published Call Flow", complete: true },
     ]);
   });
 });

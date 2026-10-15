@@ -21,6 +21,7 @@ import { notFound } from "next/navigation";
 import { resolveRequestActor } from "@/app/(app)/actor";
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
 import { isActiveOperatorActor } from "@/data/authorization";
+import { createWorkspaceRoutingFromRuntime } from "@/data/workspace-routing-runtime";
 import { createWorkspaces } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
@@ -28,7 +29,13 @@ export default async function WorkspacePage({ params }: { params: Promise<{ id: 
   const actor = await resolveRequestActor();
   if (!isActiveOperatorActor(actor)) notFound();
   const { id } = await params;
-  const workspace = await withTracerRuntime(({ pool }) => createWorkspaces(pool, actor.organizationId).find(id));
-  if (!workspace) notFound();
-  return <WorkspaceOverview workspace={workspace} />;
+  const data = await withTracerRuntime(async (runtime) => {
+    const workspaces = createWorkspaces(runtime.pool, actor.organizationId);
+    const workspace = await workspaces.find(id);
+    if (!workspace) return null;
+    const routing = createWorkspaceRoutingFromRuntime(runtime, actor.organizationId);
+    return { workspace, flow: await routing.getFlow(id) };
+  });
+  if (!data) notFound();
+  return <WorkspaceOverview workspace={data.workspace} flow={data.flow} />;
 }

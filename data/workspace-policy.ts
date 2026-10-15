@@ -42,10 +42,14 @@ export function decideRestore(state: WorkspaceState): WorkspaceTransitionDecisio
     : { allowed: false, reason: "state_unchanged" };
 }
 
-export function describeSetupChecklist(record: { destinationNumber: string | null }): Array<{ label: string; complete: boolean }> {
+export function describeSetupChecklist(record: {
+  destinationNumber: string | null;
+  trackingNumber: string | null;
+  publishedFlowVersion: { version: number; publishedAt: string } | null;
+}): Array<{ label: string; complete: boolean }> {
   return [
-    { label: "Tracking Number", complete: false },
+    { label: "Tracking Number", complete: Boolean(record.trackingNumber) },
     { label: "Destination Number", complete: Boolean(record.destinationNumber) },
-    { label: "Published Call Flow", complete: false },
+    { label: "Published Call Flow", complete: Boolean(record.publishedFlowVersion) },
   ];
 }

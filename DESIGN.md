@@ -544,7 +544,8 @@ If the Workspace record is created but external configuration does not complete,
 - Tracer never releases a Twilio number.
 - Tracer restores the voice configuration captured when the number was attached.
 - Number replacement ends the current Number Assignment and starts a new one without deleting Workspace history.
-- Restoration or new attachment failure moves the Workspace to Setup Required and provides recovery instructions.
+- New attachment failure leaves the Workspace Setup Required with no Number Assignment and provides a Retry path.
+- Restoration failure during archive aborts the archive: the Workspace stays Active with its Number Assignment intact, and the Operator sees the provider error with Retry. Tracer never ends an assignment while Twilio still points at it.
 
 ### States
 

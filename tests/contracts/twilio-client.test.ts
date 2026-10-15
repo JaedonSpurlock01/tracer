@@ -18,6 +18,7 @@
  */
 import account from "./fixtures/twilio/account.json";
 import authenticationError from "./fixtures/twilio/authentication-error.json";
+import incomingPhoneNumber from "./fixtures/twilio/incoming-phone-number.json";
 import pageOne from "./fixtures/twilio/incoming-phone-numbers-page-1.json";
 import pageTwo from "./fixtures/twilio/incoming-phone-numbers-page-2.json";
 import { describe, expect, it, vi } from "vitest";
@@ -56,9 +57,57 @@ describe("Twilio REST client", () => {
     const client = createTwilioRestClient({ fetch, baseUrl: "https://twilio.test" });
 
     await expect(client.listIncomingPhoneNumbers(credential)).resolves.toEqual([
-      expect.objectContaining({ sid: pageOne.incoming_phone_numbers[0].sid, voiceCapable: true }),
+      expect.objectContaining({ sid: pageOne.incoming_phone_numbers[0].sid, voiceCapable: true, voiceFallbackUrl: pageOne.incoming_phone_numbers[0].voice_fallback_url, statusCallback: pageOne.incoming_phone_numbers[0].status_callback }),
       expect.objectContaining({ sid: pageOne.incoming_phone_numbers[1].sid, friendlyName: "", voiceCapable: false }),
     ]);
+  });
+
+  it("fetches one incoming phone number with its complete voice configuration", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(incomingPhoneNumber));
+    const client = createTwilioRestClient({ fetch, baseUrl: "https://twilio.test" });
+
+    await expect(client.fetchIncomingPhoneNumber(credential, incomingPhoneNumber.sid)).resolves.toEqual({
+      sid: incomingPhoneNumber.sid,
+      phoneNumber: incomingPhoneNumber.phone_number,
+      friendlyName: incomingPhoneNumber.friendly_name,
+      voiceCapable: true,
+      voiceUrl: incomingPhoneNumber.voice_url,
+      voiceMethod: incomingPhoneNumber.voice_method,
+      voiceFallbackUrl: incomingPhoneNumber.voice_fallback_url,
+      voiceFallbackMethod: incomingPhoneNumber.voice_fallback_method,
+      statusCallback: incomingPhoneNumber.status_callback,
+      statusCallbackMethod: incomingPhoneNumber.status_callback_method,
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      `https://twilio.test/2010-04-01/Accounts/${credential.accountSid}/IncomingPhoneNumbers/${incomingPhoneNumber.sid}.json`,
+      { headers: { Authorization: `Basic ${btoa(`${credential.apiKeySid}:${credential.apiKeySecret}`)}` } },
+    );
+  });
+
+  it("updates incoming phone voice settings with an exact form body", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(incomingPhoneNumber));
+    const client = createTwilioRestClient({ fetch, baseUrl: "https://twilio.test" });
+    const configuration = {
+      voiceUrl: "https://example.invalid/new-voice",
+      voiceMethod: "POST",
+      voiceFallbackUrl: null,
+      voiceFallbackMethod: null,
+      statusCallback: "https://example.invalid/status",
+      statusCallbackMethod: "POST",
+    } as const;
+
+    await expect(client.updateIncomingPhoneNumberVoice(credential, incomingPhoneNumber.sid, configuration)).resolves.toMatchObject({ sid: incomingPhoneNumber.sid });
+    expect(fetch).toHaveBeenCalledWith(
+      `https://twilio.test/2010-04-01/Accounts/${credential.accountSid}/IncomingPhoneNumbers/${incomingPhoneNumber.sid}.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${btoa(`${credential.apiKeySid}:${credential.apiKeySecret}`)}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "VoiceUrl=https%3A%2F%2Fexample.invalid%2Fnew-voice&VoiceMethod=POST&VoiceFallbackUrl=&VoiceFallbackMethod=&StatusCallback=https%3A%2F%2Fexample.invalid%2Fstatus&StatusCallbackMethod=POST",
+      },
+    );
   });
 
   it("follows incoming number pagination and concatenates pages", async () => {
@@ -93,6 +142,14 @@ describe("Twilio REST client", () => {
     expect(error.status).toBe(401);
     expect(error.message).not.toContain(credential.apiKeySecret);
     expect(error.message).not.toContain("Basic");
+  });
+
+  it("maps non-success responses to request_failed without credential material", async () => {
+    const fetch = vi.fn().mockResolvedValue(response({ message: "not found" }, 404));
+    const client = createTwilioRestClient({ fetch, baseUrl: "https://twilio.test" });
+
+    await expect(client.fetchIncomingPhoneNumber(credential, incomingPhoneNumber.sid)).rejects.toMatchObject({ code: "request_failed", status: 404 });
+    await expect(client.fetchIncomingPhoneNumber(credential, incomingPhoneNumber.sid)).rejects.not.toThrow(credential.apiKeySecret);
   });
 
   it("maps rejected fetches to unavailable", async () => {

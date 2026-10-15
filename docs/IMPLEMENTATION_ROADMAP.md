@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None
-- **Next milestone:** M7 - Call Flow Publication and Workspace Activation
+- **Current milestone:** M7 - Call Flow Publication and Workspace Activation
+- **Next milestone:** M8 - Workspace Access Grants
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-14
 
-M6 is Complete after the domain, integration, component, typecheck, lint, build, and migration idempotence gates passed locally on the `milestone/m6-workspace-setup` branch and the Product Owner accepted the Workspace create, edit, archive, restore, and Resume Setup behavior; the branch Preview and CI checks run from the pushed branch before merge to `main`. Migration 0005 and the `workspace` runtime grant must be applied to Staging through the approved GitHub workflow before M7 relies on them. M7 has not started.
+M6 is Complete and merged to `main`. M7 is In Progress on the `milestone/m7-call-flow-activation` branch and delivers the Number Assignment, Call Flow, and Flow Version domain modules, the completed Create Workspace wizard, the graph validator, the React Flow editor, and the Twilio attachment and restoration boundaries. Migration 0005 and the `workspace` runtime grant must be applied to Staging through the approved GitHub workflow before M7's Staging gate runs.
 
 ## Status model
 
@@ -174,7 +174,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M4 | Operator Administration and Application Shell | Complete | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
 | M6 | Workspace Setup | Complete | Preview and Staging | M5 |
-| M7 | Call Flow Publication and Workspace Activation | Not Started | Preview and Staging | M6 |
+| M7 | Call Flow Publication and Workspace Activation | In Progress | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Not Started | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
@@ -484,10 +484,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M7 - Call Flow Publication and Workspace Activation
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** An Operator can finish setup, publish a valid initial Call Flow, activate one Tracking Number safely, and manage the resulting active Workspace lifecycle.
 - **Depends on:** M6
 - **Target environment:** Preview and Staging
+- **Execution note:** Migration 0006 adds `number_assignment`, `call_flow_draft`, and `flow_version`; the runtime role receives no DELETE on assignments or versions, so published versions are immutable at the database boundary. Call Flow graphs are stored as JSON and validated by the pure `data/call-flow.ts` validator; the wizard generates the constrained initial graph and the React Flow editor supports the full node catalog. Activation runs in one transaction under the Workspace advisory lock: the Twilio voice configuration is snapshotted and persisted before the number is pointed at `${BETTER_AUTH_URL}/api/twilio/voice/{assignmentId}`, and a Twilio failure rolls everything back so the Workspace stays Setup Required. Archiving an Active Workspace restores the snapshot first and aborts, keeping the Workspace Active, if restoration fails; DESIGN.md was corrected accordingly. After publication the Destination Number, spam gate, and whisper settings are derived from the published graph, and enabling recording is refused until the published version contains a Recording Disclosure. Tracking Number replacement stays deferred until the first persisted Call. Browser journeys run against the in-memory `E2E_TWILIO_FAKE` Twilio boundary; the live Staging attach, activate, archive, and restore check on the dedicated test number is a separate gate the Product Owner triggers after migrations 0005 and 0006 reach Staging.
 
 #### Vertical slices
 

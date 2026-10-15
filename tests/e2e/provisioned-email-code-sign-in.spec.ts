@@ -19,19 +19,10 @@
  */
 import { expect, test } from "@playwright/test";
 
-test("provisioned identity signs in with an email code", async ({ page, request }) => {
-  await page.goto("/sign-in");
-  await page.getByLabel("Email address").fill("operator@example.com");
-  await page.getByRole("button", { name: "Send sign-in code" }).click();
-  await expect(page).toHaveURL(/\/verify-email$/);
+import { signInAsOperator } from "./helpers";
 
-  const otpResponse = await request.get("/api/test/auth-otp");
-  expect(otpResponse.ok()).toBeTruthy();
-  const { code } = (await otpResponse.json()) as { code: string | null };
-  expect(code).toMatch(/^\d{6}$/);
-  await page.getByLabel("Verification code").fill(code!);
-  await page.getByRole("button", { name: "Verify" }).click();
-  await expect(page).toHaveURL(/\/account\/settings$/);
+test("provisioned identity signs in with an email code", async ({ page, request }) => {
+  await signInAsOperator(page, request);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible();
   await page.goto("/users");
   await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
