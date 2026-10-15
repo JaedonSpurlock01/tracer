@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M6 - Workspace Setup
+- **Current milestone:** None
 - **Next milestone:** M7 - Call Flow Publication and Workspace Activation
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-14
 
-M5 is Complete after the domain, contract, integration, component, and Worker suites, typecheck, lint, build, and migration idempotence gates passed, the browser journey passed in GitHub Actions, the Staging database received migrations 0001 through 0004 with runtime grants and the initial Operator through the `Bootstrap Authentication` workflow, live Email Service sign-in succeeded for an allowlisted recipient, and the Organization Twilio connection was verified and synchronized six numbers against the shared Staging database. Completing M5 also surfaced that the Staging Worker lacked the `EMAIL` binding and authentication secrets since M3; both are now provisioned. M6 is In Progress on the `milestone/m6-workspace-setup` branch.
+M6 is Complete after the domain, integration, component, typecheck, lint, build, and migration idempotence gates passed locally on the `milestone/m6-workspace-setup` branch and the Product Owner accepted the Workspace create, edit, archive, restore, and Resume Setup behavior; the branch Preview and CI checks run from the pushed branch before merge to `main`. Migration 0005 and the `workspace` runtime grant must be applied to Staging through the approved GitHub workflow before M7 relies on them. M7 has not started.
 
 ## Status model
 
@@ -173,7 +173,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M3 | Provisioned Authentication and Organization Bootstrap | Complete | Local and Preview | M2 |
 | M4 | Operator Administration and Application Shell | Complete | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
-| M6 | Workspace Setup | In Progress | Preview and Staging | M5 |
+| M6 | Workspace Setup | Complete | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Not Started | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Not Started | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
@@ -437,7 +437,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M6 - Workspace Setup
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** An Operator can create and manage a Setup Required Workspace without activating Twilio routing prematurely.
 - **Depends on:** M5
 - **Target environment:** Preview and Staging
