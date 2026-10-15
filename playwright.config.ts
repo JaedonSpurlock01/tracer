@@ -20,17 +20,20 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  workers: 1,
   expect: { timeout: 15_000 },
   use: {
     baseURL: "http://127.0.0.1:3000",
   },
   webServer: {
-    command: "corepack pnpm db:migrate && corepack pnpm auth:bootstrap --email operator@example.com --name \"Example Operator\" --timezone America/Chicago && corepack pnpm dev",
+    command:
+      'corepack pnpm db:migrate && corepack pnpm auth:bootstrap --email operator@example.com --name "Example Operator" --timezone America/Chicago && corepack pnpm dev',
     url: "http://127.0.0.1:3000",
     timeout: 420_000,
     reuseExistingServer: !process.env.CI,
     env: {
       E2E_AUTH_FAKE: "true",
+      E2E_TWILIO_FAKE: "true",
       NODE_ENV: "development",
       DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
       AUTH_EMAIL_FROM: "auth@example.com",

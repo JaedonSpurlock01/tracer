@@ -1,0 +1,12 @@
+{
+  "sid": "PN11111111111111111111111111111111",
+  "phone_number": "+14155552671",
+  "friendly_name": "Support Line",
+  "capabilities": { "voice": true, "sms": true, "mms": true, "fax": false },
+  "voice_url": "https://example.invalid/twilio/voice/support",
+  "voice_method": "POST",
+  "voice_fallback_url": "https://example.invalid/twilio/voice/fallback",
+  "voice_fallback_method": "POST",
+  "status_callback": "https://example.invalid/twilio/status",
+  "status_callback_method": "POST"
+}

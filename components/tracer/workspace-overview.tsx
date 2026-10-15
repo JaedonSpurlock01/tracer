@@ -1,17 +1,17 @@
 /**
  * -------------------------------------------------------------------------
  * @file   workspace-overview.tsx
- * @brief  Renders the Workspace Overview stub.
+ * @brief  Renders the Workspace Overview and routing health.
  *
  * @description
- *  Displays Workspace identity, lifecycle state, placeholders, and setup
- *  requirements before Call Flow publication exists.
+ *  Displays Workspace identity, routing metadata, setup requirements, and the
+ *  published Call Flow summary for Operators.
  *
  * @remarks
- *  Tracking and Destination Number placeholders are intentionally explicit.
+ *  Provider health and inbound Call metrics remain deferred to later milestones.
  *
  * @see
- *  data/workspace-policy.ts
+ *  data/workspace-routing.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -21,8 +21,14 @@ import Link from "next/link";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import { summarizeCallFlow, type CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceRecord } from "@/data/workspaces";
 import { describeSetupChecklist } from "@/data/workspace-policy";
+
+interface WorkspaceOverviewProps {
+  workspace: WorkspaceRecord;
+  flow?: { published: { version: number; graph: CallFlowGraph } | null };
+}
 
 function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "success-light" | "destructive-light" {
   if (state === "Active") return "success-light";
@@ -30,8 +36,9 @@ function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "succe
   return "primary-light";
 }
 
-export default function WorkspaceOverview({ workspace }: { workspace: WorkspaceRecord }) {
+export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverviewProps) {
   const checklist = describeSetupChecklist(workspace);
+  const published = flow?.published ?? null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -48,14 +55,10 @@ export default function WorkspaceOverview({ workspace }: { workspace: WorkspaceR
             Workspace Settings
           </Button>
           {workspace.state === "Setup Required" ? (
-            <Button render={<Link href={`/workspaces?resume=${workspace.id}`} />}>
-              Resume Setup
-            </Button>
+            <Button render={<Link href={`/workspaces?resume=${workspace.id}`} />}>Resume Setup</Button>
           ) : null}
           {workspace.state === "Archived" ? (
-            <Button render={<Link href={`/workspaces/${workspace.id}/settings#danger`} />}>
-              Restore
-            </Button>
+            <Button render={<Link href={`/workspaces/${workspace.id}/settings#danger`} />}>Restore</Button>
           ) : null}
         </div>
       </div>
@@ -63,11 +66,11 @@ export default function WorkspaceOverview({ workspace }: { workspace: WorkspaceR
         <FramePanel className="grid gap-5 sm:grid-cols-3">
           <div>
             <p className="text-sm text-muted-foreground">Tracking Number</p>
-            <p>-</p>
+            <p>{workspace.trackingNumber ?? "-"}</p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Destination Number</p>
-            <p>-</p>
+            <p>{workspace.destinationNumber ?? "-"}</p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Reporting timezone</p>
@@ -75,14 +78,46 @@ export default function WorkspaceOverview({ workspace }: { workspace: WorkspaceR
           </div>
         </FramePanel>
       </Frame>
+      <Frame>
+        <FramePanel>
+          <h2 className="font-semibold">Routing health</h2>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <p>Tracking Number: {workspace.trackingNumber ?? "-"}</p>
+            <p>Assignment start: {workspace.numberAssignmentStartedAt ?? "-"}</p>
+            <p>Destination Number: {workspace.destinationNumber ?? "-"}</p>
+            <p>Recording: {workspace.recordingEnabled ? "Enabled" : "Disabled"}</p>
+            <p>Spam gate: {workspace.spamGateEnabled ? "Enabled" : "Disabled"}</p>
+            <p>Whisper: {workspace.whisperEnabled ? workspace.whisperMessage || "Enabled" : "Disabled"}</p>
+            <p>Call Flow published: {workspace.publishedFlowVersion?.publishedAt ?? "-"}</p>
+            <p>Twilio webhook health and last inbound Call: Available in a later milestone</p>
+          </div>
+        </FramePanel>
+      </Frame>
+      <Frame>
+        <FramePanel>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Call Flow</h2>
+            <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/flow`} />}>
+              Edit Flow
+            </Button>
+          </div>
+          {published ? (
+            <ol className="mt-4 list-decimal pl-5 text-sm">
+              {summarizeCallFlow(published.graph).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">No published Call Flow.</p>
+          )}
+        </FramePanel>
+      </Frame>
       {workspace.state === "Setup Required" ? (
         <Frame>
           <FramePanel className="flex flex-col gap-4">
             <div>
               <h2 className="font-semibold">Setup Required</h2>
-              <p className="text-sm text-muted-foreground">
-                Finish these requirements before the Workspace can become Active.
-              </p>
+              <p className="text-sm text-muted-foreground">Finish these requirements before the Workspace can become Active.</p>
             </div>
             <ul className="grid gap-2">
               {checklist.map((item) => (

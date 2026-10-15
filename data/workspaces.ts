@@ -36,6 +36,10 @@ export interface WorkspaceRecord {
   reportingTimezone: string;
   state: WorkspaceState;
   destinationNumber: string | null;
+  trackingNumber: string | null;
+  numberAssignmentStartedAt: string | null;
+  publishedFlowVersion: { version: number; publishedAt: string } | null;
+  hasDraft: boolean;
   recordingEnabled: boolean;
   analysisEnabled: boolean;
   spamGateEnabled: boolean;
@@ -87,6 +91,11 @@ type WorkspaceRow = {
   reporting_timezone: string;
   state: WorkspaceState;
   destination_number: string | null;
+  tracking_number: string | null;
+  number_assignment_started_at: Date | null;
+  published_flow_version: number | null;
+  published_flow_published_at: Date | null;
+  has_draft: boolean;
   recording_enabled: boolean;
   analysis_enabled: boolean;
   spam_gate_enabled: boolean;
@@ -101,11 +110,22 @@ type WorkspaceRow = {
 
 const recordQuery = `
   select w.id, w.name, w.reporting_timezone, w.state, w.destination_number,
+         na.phone_number as tracking_number, na.started_at as number_assignment_started_at,
+         fv.version as published_flow_version, fv.published_at as published_flow_published_at,
+         exists (select 1 from call_flow_draft d where d.workspace_id = w.id and d.organization_id = w.organization_id) as has_draft,
          w.recording_enabled, w.analysis_enabled, w.spam_gate_enabled,
          w.whisper_enabled, w.whisper_message, w.created_by_user_id as created_by_id,
          u.name as created_by_name, w.created_at, w.updated_at, w.archived_at
     from workspace w
     left join "user" u on u.id = w.created_by_user_id
+    left join number_assignment na on na.workspace_id = w.id and na.organization_id = w.organization_id and na.ended_at is null
+    left join lateral (
+      select version, published_at
+        from flow_version
+       where workspace_id = w.id and organization_id = w.organization_id
+       order by version desc
+       limit 1
+    ) fv on true
    where w.organization_id = $1
 `;
 
@@ -116,6 +136,12 @@ function toRecord(row: WorkspaceRow): WorkspaceRecord {
     reportingTimezone: row.reporting_timezone,
     state: row.state,
     destinationNumber: row.destination_number,
+    trackingNumber: row.tracking_number,
+    numberAssignmentStartedAt: row.number_assignment_started_at?.toISOString() ?? null,
+    publishedFlowVersion: row.published_flow_version === null || row.published_flow_published_at === null
+      ? null
+      : { version: Number(row.published_flow_version), publishedAt: row.published_flow_published_at.toISOString() },
+    hasDraft: row.has_draft,
     recordingEnabled: row.recording_enabled,
     analysisEnabled: row.analysis_enabled,
     spamGateEnabled: row.spam_gate_enabled,

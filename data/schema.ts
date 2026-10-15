@@ -23,6 +23,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -251,6 +252,82 @@ export const workspaces = pgTable(
   ],
 );
 
+export const numberAssignments = pgTable(
+  "number_assignment",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    twilioNumberId: text("twilio_number_id")
+      .notNull()
+      .references(() => twilioNumbers.id, { onDelete: "restrict" }),
+    phoneNumber: text("phone_number").notNull(),
+    priorVoiceUrl: text("prior_voice_url"),
+    priorVoiceMethod: text("prior_voice_method"),
+    priorVoiceFallbackUrl: text("prior_voice_fallback_url"),
+    priorVoiceFallbackMethod: text("prior_voice_fallback_method"),
+    priorStatusCallbackUrl: text("prior_status_callback_url"),
+    priorStatusCallbackMethod: text("prior_status_callback_method"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    endedReason: text("ended_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("number_assignment_ended_reason_check", sql`${table.endedReason} is null or ${table.endedReason} in ('archived', 'replaced', 'activation_failed')`),
+    uniqueIndex("number_assignment_active_number_idx").on(table.twilioNumberId).where(sql`${table.endedAt} is null`),
+    uniqueIndex("number_assignment_active_workspace_idx").on(table.workspaceId).where(sql`${table.endedAt} is null`),
+    index("number_assignment_organization_id_idx").on(table.organizationId),
+    index("number_assignment_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export const callFlowDrafts = pgTable(
+  "call_flow_draft",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .unique()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    graph: jsonb().notNull(),
+    basedOnVersion: integer("based_on_version"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("call_flow_draft_organization_id_idx").on(table.organizationId)],
+);
+
+export const flowVersions = pgTable(
+  "flow_version",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    version: integer().notNull(),
+    graph: jsonb().notNull(),
+    publishedByUserId: text("published_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("flow_version_workspace_version_idx").on(table.workspaceId, table.version),
+    index("flow_version_organization_id_idx").on(table.organizationId),
+    index("flow_version_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -262,4 +339,7 @@ export const schema = {
   twilioConnection: twilioConnections,
   twilioNumber: twilioNumbers,
   workspace: workspaces,
+  numberAssignment: numberAssignments,
+  callFlowDraft: callFlowDrafts,
+  flowVersion: flowVersions,
 };

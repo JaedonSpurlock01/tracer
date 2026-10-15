@@ -64,6 +64,10 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M7 - Call Flow Publication and Workspace Activation for the Number Assignment, Call Flow, and Flow Version domain modules, the completed Create Workspace wizard, the graph validator, the React Flow editor, and the Twilio attachment and restoration boundaries.
+- Changed the archive restoration failure rule: a failed Twilio restoration now aborts the archive and keeps the Workspace Active instead of moving it to Setup Required, because ending the Number Assignment while Twilio still routes to Tracer would leave inbound Calls unowned.
+- Made the published Flow Version the source of truth for the Destination Number, spam gate, and whisper settings after publication, and refused enabling recording until the published version contains a Recording Disclosure, so Workspace settings and the live graph cannot disagree.
+- Added the non-production `E2E_TWILIO_FAKE` seam so the approved browser journeys exercise activation and publication without a live Twilio account.
 - Started M6 - Workspace Setup for the Workspace and Workspace State domain modules, the Workspaces Data Grid, Setup Required Workspace creation, General settings, and archive and restore without any Twilio mutation.
 - Started M5 - Organization Integrations and Twilio Connection for the encrypted Organization Twilio credential, number inventory synchronization, and the Operator Integrations page with isolated provider health.
 - Scoped M5 number inventory to `+1` numbers without distinguishing United States from Canada, because Twilio's owned-number API does not report a country and a static area-code table or Lookup calls were not justified for the first release.

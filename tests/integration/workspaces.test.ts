@@ -22,9 +22,11 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
+import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
+import { type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import { createWorkspaces } from "@/data/workspaces";
 
@@ -36,6 +38,13 @@ let secondOrganizationId = "";
 let viewerId = "";
 const messages: { to: string; subject: string; text: string; html: string }[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
+const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const fakeTwilio: TwilioClient = {
+  async fetchAccount() { throw new Error("not implemented"); },
+  async listIncomingPhoneNumbers() { throw new Error("not implemented"); },
+  async fetchIncomingPhoneNumber() { throw new Error("not implemented"); },
+  async updateIncomingPhoneNumberVoice() { throw new Error("not implemented"); },
+};
 
 const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
@@ -49,7 +58,14 @@ const auth = () => createTracerAuth({
 });
 
 function handler() {
-  return createWorkspacesHandler({ auth: auth(), database: database(), pool: pool! });
+  return createWorkspacesHandler({
+    auth: auth(),
+    database: database(),
+    pool: pool!,
+    twilio: fakeTwilio,
+    integrations: (organizationId) => createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    baseURL: "http://localhost:3000",
+  });
 }
 
 async function signIn(email: string): Promise<string> {
@@ -136,7 +152,45 @@ describe.sequential("Workspaces", () => {
     expect(invalidTimezone.response.status).toBe(400);
     const created = await json(new Request("http://localhost:3000/api/workspaces", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: " Phoenix ", reportingTimezone: "America/Chicago" }) }));
     expect(created.response.status).toBe(201);
-    expect(created.body.workspace).toMatchObject({ name: "Phoenix", state: "Setup Required", destinationNumber: null, recordingEnabled: false, analysisEnabled: false, spamGateEnabled: false, whisperEnabled: false });
+    expect(created.body.workspace).toMatchObject({ name: "Phoenix", state: "Setup Required", destinationNumber: null, trackingNumber: null, numberAssignmentStartedAt: null, publishedFlowVersion: null, hasDraft: false, recordingEnabled: false, analysisEnabled: false, spamGateEnabled: false, whisperEnabled: false });
+  });
+
+  it("returns active number and latest published flow metadata", async () => {
+    const cookie = await signIn("first@example.com");
+    const created = await json(new Request("http://localhost:3000/api/workspaces", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Flow Metadata", reportingTimezone: "UTC" }) }));
+    const id = (created.body.workspace as { id: string }).id;
+    const startedAt = "2026-01-02T03:04:05.000Z";
+    const publishedAt = "2026-01-03T04:05:06.000Z";
+    await pool!.query(
+      `insert into number_assignment
+         (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
+       values ('metadata-assignment-id', $1, $2, 'first-number-1', '+14155550101', $3, $3)`,
+      [firstOrganizationId, id, startedAt],
+    );
+    await pool!.query(
+      `insert into flow_version
+         (id, organization_id, workspace_id, version, graph, published_at)
+       values
+         ('metadata-flow-v1', $1, $2, 1, '{"version":1,"nodes":[],"edges":[]}', $3),
+         ('metadata-flow-v2', $1, $2, 2, '{"version":1,"nodes":[],"edges":[]}', $4)`,
+      [firstOrganizationId, id, publishedAt, "2026-01-04T05:06:07.000Z"],
+    );
+    await pool!.query(
+      `insert into call_flow_draft
+         (id, organization_id, workspace_id, graph, created_at, updated_at)
+       values ('metadata-draft-id', $1, $2, '{"version":1,"nodes":[],"edges":[]}', now(), now())`,
+      [firstOrganizationId, id],
+    );
+
+    await expect(createWorkspaces(pool!, firstOrganizationId).find(id)).resolves.toMatchObject({
+      trackingNumber: "+14155550101",
+      numberAssignmentStartedAt: startedAt,
+      publishedFlowVersion: { version: 2, publishedAt: "2026-01-04T05:06:07.000Z" },
+      hasDraft: true,
+    });
+    await expect(createWorkspaces(pool!, firstOrganizationId).list({ search: "Flow Metadata" })).resolves.toMatchObject({
+      workspaces: [expect.objectContaining({ id, hasDraft: true })],
+    });
   });
 
   it("rejects duplicate names case-insensitively", async () => {
@@ -155,7 +209,7 @@ describe.sequential("Workspaces", () => {
     expect(listed.response.status).toBe(200);
     expect((listed.body.workspaces as Array<{ name: string }>).map((value) => value.name)).toEqual(["Alpha"]);
     expect(listed.body.total).toBe(1);
-    expect(listed.body.counts).toMatchObject({ setupRequired: 4, active: 0, archived: 0 });
+    expect(listed.body.counts).toMatchObject({ setupRequired: 5, active: 0, archived: 0 });
   });
 
   it("updates, archives, restores, and reports active count without provider changes", async () => {

@@ -36,6 +36,10 @@ export interface TwilioIncomingPhoneNumber {
   voiceCapable: boolean;
   voiceUrl: string | null;
   voiceMethod: string | null;
+  voiceFallbackUrl: string | null;
+  voiceFallbackMethod: string | null;
+  statusCallback: string | null;
+  statusCallbackMethod: string | null;
 }
 
 export type TwilioClientErrorCode = "authentication_failed" | "request_failed" | "unavailable";
@@ -51,9 +55,20 @@ export class TwilioClientError extends Error {
   }
 }
 
+export interface TwilioVoiceConfiguration {
+  voiceUrl: string | null;
+  voiceMethod: string | null;
+  voiceFallbackUrl: string | null;
+  voiceFallbackMethod: string | null;
+  statusCallback: string | null;
+  statusCallbackMethod: string | null;
+}
+
 export interface TwilioClient {
   fetchAccount(credential: TwilioCredential): Promise<TwilioAccountSummary>;
   listIncomingPhoneNumbers(credential: TwilioCredential): Promise<TwilioIncomingPhoneNumber[]>;
+  fetchIncomingPhoneNumber(credential: TwilioCredential, sid: string): Promise<TwilioIncomingPhoneNumber>;
+  updateIncomingPhoneNumberVoice(credential: TwilioCredential, sid: string, configuration: TwilioVoiceConfiguration): Promise<TwilioIncomingPhoneNumber>;
 }
 
 export interface TwilioIncomingPhoneNumberPayload {
@@ -63,6 +78,10 @@ export interface TwilioIncomingPhoneNumberPayload {
   capabilities?: { voice?: boolean };
   voice_url?: string | null;
   voice_method?: string | null;
+  voice_fallback_url?: string | null;
+  voice_fallback_method?: string | null;
+  status_callback?: string | null;
+  status_callback_method?: string | null;
 }
 
 export function mapIncomingPhoneNumber(payload: TwilioIncomingPhoneNumberPayload): TwilioIncomingPhoneNumber {
@@ -73,6 +92,10 @@ export function mapIncomingPhoneNumber(payload: TwilioIncomingPhoneNumberPayload
     voiceCapable: payload.capabilities?.voice === true,
     voiceUrl: payload.voice_url ?? null,
     voiceMethod: payload.voice_method ?? null,
+    voiceFallbackUrl: payload.voice_fallback_url ?? null,
+    voiceFallbackMethod: payload.voice_fallback_method ?? null,
+    statusCallback: payload.status_callback ?? null,
+    statusCallbackMethod: payload.status_callback_method ?? null,
   };
 }
 
@@ -100,12 +123,19 @@ export function createTwilioRestClient(options: { fetch?: typeof fetch; baseUrl?
   const request = options.fetch ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "https://api.twilio.com";
 
-  async function get<T>(path: string, credential: TwilioCredential): Promise<T> {
+  async function send<T>(method: "GET" | "POST", path: string, credential: TwilioCredential, body?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { Authorization: authorization(credential) };
+    const init: RequestInit = { headers };
+    if (method !== "GET") {
+      init.method = method;
+    }
+    if (body) {
+      headers["content-type"] = "application/x-www-form-urlencoded";
+      init.body = new URLSearchParams(body).toString();
+    }
     let response: Response;
     try {
-      response = await request(requestUrl(baseUrl, path), {
-        headers: { Authorization: authorization(credential) },
-      });
+      response = await request(requestUrl(baseUrl, path), init);
     } catch {
       throw new TwilioClientError("unavailable", null);
     }
@@ -124,7 +154,7 @@ export function createTwilioRestClient(options: { fetch?: typeof fetch; baseUrl?
 
   return {
     async fetchAccount(credential) {
-      const account = await get<TwilioAccountPayload>(`/2010-04-01/Accounts/${credential.accountSid}.json`, credential);
+      const account = await send<TwilioAccountPayload>("GET", `/2010-04-01/Accounts/${credential.accountSid}.json`, credential);
       return {
         sid: account.sid ?? "",
         friendlyName: account.friendly_name ?? "",
@@ -137,11 +167,28 @@ export function createTwilioRestClient(options: { fetch?: typeof fetch; baseUrl?
       const numbers: TwilioIncomingPhoneNumber[] = [];
       let path: string | null = `/2010-04-01/Accounts/${credential.accountSid}/IncomingPhoneNumbers.json?PageSize=1000`;
       while (path) {
-        const page: TwilioIncomingPhoneNumbersResponse = await get<TwilioIncomingPhoneNumbersResponse>(path, credential);
+        const page: TwilioIncomingPhoneNumbersResponse = await send<TwilioIncomingPhoneNumbersResponse>("GET", path, credential);
         numbers.push(...(page.incoming_phone_numbers ?? []).map(mapIncomingPhoneNumber));
         path = page.next_page_uri ?? null;
       }
       return numbers;
+    },
+
+    async fetchIncomingPhoneNumber(credential, sid) {
+      const payload = await send<TwilioIncomingPhoneNumberPayload>("GET", `/2010-04-01/Accounts/${credential.accountSid}/IncomingPhoneNumbers/${sid}.json`, credential);
+      return mapIncomingPhoneNumber(payload);
+    },
+
+    async updateIncomingPhoneNumberVoice(credential, sid, configuration) {
+      const payload = await send<TwilioIncomingPhoneNumberPayload>("POST", `/2010-04-01/Accounts/${credential.accountSid}/IncomingPhoneNumbers/${sid}.json`, credential, {
+        VoiceUrl: configuration.voiceUrl ?? "",
+        VoiceMethod: configuration.voiceMethod ?? "",
+        VoiceFallbackUrl: configuration.voiceFallbackUrl ?? "",
+        VoiceFallbackMethod: configuration.voiceFallbackMethod ?? "",
+        StatusCallback: configuration.statusCallback ?? "",
+        StatusCallbackMethod: configuration.statusCallbackMethod ?? "",
+      });
+      return mapIncomingPhoneNumber(payload);
     },
   };
 }

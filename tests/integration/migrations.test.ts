@@ -46,13 +46,16 @@ it("migrates a clean database to the latest authentication and Organization sche
     `select table_name
        from information_schema.tables
       where table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version')
       order by table_name`,
   );
   expect(result.rows.map(({ table_name }) => table_name)).toEqual([
     "account",
+    "call_flow_draft",
+    "flow_version",
     "invitation",
     "member",
+    "number_assignment",
     "organization",
     "session",
     "twilio_connection",
@@ -115,7 +118,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(6);
+  expect(Number(result.rows[0].count)).toBe(7);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {
@@ -149,7 +152,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
        from information_schema.role_table_grants
       where grantee = $1
         and table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version')
       order by table_name, privilege_type`,
     [runtimeRole],
   );
@@ -160,6 +163,15 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "twilio_number", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "workspace", privilege_type: "UPDATE" });
   expect(grants.rows).not.toContainEqual({ table_name: "workspace", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "number_assignment", privilege_type: "SELECT" });
+  expect(grants.rows).toContainEqual({ table_name: "number_assignment", privilege_type: "INSERT" });
+  expect(grants.rows).toContainEqual({ table_name: "number_assignment", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "number_assignment", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "flow_version", privilege_type: "SELECT" });
+  expect(grants.rows).toContainEqual({ table_name: "flow_version", privilege_type: "INSERT" });
+  expect(grants.rows).toContainEqual({ table_name: "flow_version", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "flow_version", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "call_flow_draft", privilege_type: "DELETE" });
   expect(grants.rows).not.toContainEqual({ table_name: "user", privilege_type: "DELETE" });
 
   const runtimeUrl = new URL(container.getConnectionUri());

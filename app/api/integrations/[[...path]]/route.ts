@@ -19,15 +19,17 @@
 import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { createWorkspaces } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
-import { createTwilioRestClient } from "@/data/twilio-client";
+import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
 
 async function handle(request: Request): Promise<Response> {
-  return withTracerRuntime((runtime) => createIntegrationsHandler({
-    ...runtime,
-    configuration: runtime.providerConfiguration,
-    twilio: createTwilioRestClient(),
-    activeWorkspaceCount: (organizationId) => createWorkspaces(runtime.pool, organizationId).countActive(),
-  })(request));
+  return withTracerRuntime((runtime) =>
+    createIntegrationsHandler({
+      ...runtime,
+      configuration: runtime.providerConfiguration,
+      twilio: createRuntimeTwilioClient(),
+      activeWorkspaceCount: (organizationId) => createWorkspaces(runtime.pool, organizationId).countActive(),
+    })(request),
+  );
 }
 
 export const GET = handle;

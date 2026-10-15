@@ -23,12 +23,7 @@ import type { Pool, PoolClient } from "pg";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
-import {
-  TwilioClientError,
-  type TwilioClient,
-  type TwilioCredential,
-  type TwilioIncomingPhoneNumber,
-} from "@/data/twilio-client";
+import { TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 
 export interface TwilioConnectionRecord {
   accountSid: string;
@@ -86,7 +81,17 @@ export interface IntegrationsOptions {
 
 export interface Integrations {
   getTwilioConnection(): Promise<TwilioConnectionRecord | null>;
-  connectTwilio(input: { accountSid: string; apiKeySid: string; apiKeySecret: string; actorUserId: string }): Promise<TwilioConnectionRecord>;
+  withTwilioCredential<T>(
+    operation: (credential: TwilioCredential) => Promise<T>,
+    context?: { client?: Pool | PoolClient; deferFailureRecording?: boolean },
+  ): Promise<T>;
+  recordTwilioFailure(error: unknown): Promise<IntegrationsError>;
+  connectTwilio(input: {
+    accountSid: string;
+    apiKeySid: string;
+    apiKeySecret: string;
+    actorUserId: string;
+  }): Promise<TwilioConnectionRecord>;
   testTwilio(): Promise<TwilioConnectionRecord>;
   rotateTwilioKey(input: { apiKeySid: string; apiKeySecret: string }): Promise<TwilioConnectionRecord>;
   disconnectTwilio(): Promise<void>;
@@ -246,7 +251,31 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
 
   return {
     async getTwilioConnection() {
-      return selectConnection(options.pool).then((row) => row ? toConnectionRecord(row) : null);
+      return selectConnection(options.pool).then((row) => (row ? toConnectionRecord(row) : null));
+    },
+
+    async withTwilioCredential<T>(
+      operation: (credential: TwilioCredential) => Promise<T>,
+      context?: { client?: Pool | PoolClient; deferFailureRecording?: boolean },
+    ) {
+      const row = await selectConnection(context?.client ?? options.pool);
+      if (!row) throw new IntegrationsError("not_connected");
+      const credential = await decryptConnection(row);
+      try {
+        return await operation(credential);
+      } catch (error) {
+        if (!(error instanceof TwilioClientError)) throw error;
+        if (context?.deferFailureRecording) throw error;
+        const failure = providerFailure(error);
+        await recordFailure(failure);
+        throw failure;
+      }
+    },
+
+    async recordTwilioFailure(error) {
+      const failure = error instanceof IntegrationsError ? error : providerFailure(error);
+      await recordFailure(failure);
+      return failure;
     },
 
     async connectTwilio(input) {
@@ -380,7 +409,17 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
                voice_capable = excluded.voice_capable, voice_url = excluded.voice_url,
                voice_method = excluded.voice_method, last_seen_at = excluded.last_seen_at,
                released_at = null, updated_at = excluded.updated_at`,
-            [randomUUID(), options.organizationId, number.sid, number.phoneNumber, number.friendlyName, number.voiceCapable, number.voiceUrl, number.voiceMethod, syncedAt],
+            [
+              randomUUID(),
+              options.organizationId,
+              number.sid,
+              number.phoneNumber,
+              number.friendlyName,
+              number.voiceCapable,
+              number.voiceUrl,
+              number.voiceMethod,
+              syncedAt,
+            ],
           );
         }
         await client.query(
@@ -389,10 +428,10 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
             where organization_id = $1 and released_at is null and not (twilio_sid = any($3::text[]))`,
           [options.organizationId, syncedAt, normalized.map((number) => number.sid)],
         );
-        await client.query(
-          `update twilio_connection set numbers_synced_at = $2, updated_at = $2 where organization_id = $1`,
-          [options.organizationId, syncedAt],
-        );
+        await client.query(`update twilio_connection set numbers_synced_at = $2, updated_at = $2 where organization_id = $1`, [
+          options.organizationId,
+          syncedAt,
+        ]);
         const numbers = await client.query<NumberRow>(
           `select id, twilio_sid, phone_number, friendly_name, voice_capable, voice_url,
                   voice_method, first_seen_at, last_seen_at, released_at
