@@ -896,6 +896,8 @@ Safeguards:
 
 - Never disable or demote the last Active Operator
 - Converting an Operator to Client Viewer requires at least one Access Grant
+- Removing a Client Viewer's last remaining Access Grant is refused; disable the user to end all access
+- New Access Grants target only Active Workspaces
 - Converting a Client Viewer to Operator preserves grants for possible later demotion but global Operator access takes precedence
 - Disabling a user immediately invalidates active sessions
 - Access Grant removal immediately blocks new page loads and generated-file downloads for that Workspace
@@ -1147,7 +1149,7 @@ Recording may be enabled while automatic analysis is disabled. Analysis cannot b
 - Remove Access action
 - Link to provision a new Client Viewer
 
-Access Grants are explicit per Workspace. Removing a grant immediately blocks page access and generated-file downloads for that Workspace. Operators have global access and do not appear as Access Grants.
+Access Grants are explicit per Workspace. Removing a grant immediately blocks page access and generated-file downloads for that Workspace. Operators have global access and do not appear as Access Grants. Existing grants keep read-only access after archive and authorize nothing while a restored Workspace is Setup Required.
 
 ### Danger
 

@@ -64,6 +64,8 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M8 - Workspace Access Grants for Access Grant persistence, Client Viewer provisioning and access instructions, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
+- Restricted new Access Grants to Active Workspaces, kept existing grants as read-only access to Archived Workspaces and as dormant authorization after a restore to Setup Required, and refused removing a Client Viewer's last Access Grant so a Client Viewer always holds at least one grant.
 - Started M7 - Call Flow Publication and Workspace Activation for the Number Assignment, Call Flow, and Flow Version domain modules, the completed Create Workspace wizard, the graph validator, the React Flow editor, and the Twilio attachment and restoration boundaries.
 - Changed the archive restoration failure rule: a failed Twilio restoration now aborts the archive and keeps the Workspace Active instead of moving it to Setup Required, because ending the Number Assignment while Twilio still routes to Tracer would leave inbound Calls unowned.
 - Made the published Flow Version the source of truth for the Destination Number, spam gate, and whisper settings after publication, and refused enabling recording until the published version contains a Recording Disclosure, so Workspace settings and the live graph cannot disagree.
@@ -100,6 +102,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Completed
 
+- Completed M7 - Call Flow Publication and Workspace Activation after the domain, contract, integration, component, and Workspace and Flow browser gates passed and the Product Owner confirmed the live Staging attach, activate, archive, and restore check on the dedicated test number.
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.
 - Completed M2 - Data Platform and Environment Isolation after the full verification, least-privilege, Preview, and live Staging gates passed.

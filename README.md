@@ -573,8 +573,8 @@ Provider prices change. Validate current Twilio, Cloudflare, Neon, Trigger.dev, 
 
 [docs/IMPLEMENTATION_ROADMAP.md](./docs/IMPLEMENTATION_ROADMAP.md) is the authoritative sequence from ideation through Production. It uses small vertical milestones with explicit dependencies, test-first behaviors, verification gates, environment targets, and exit criteria.
 
-- Current milestone: M7 - Call Flow Publication and Workspace Activation
-- Next milestone: M8 - Workspace Access Grants
+- Current milestone: M8 - Workspace Access Grants
+- Next milestone: M9 - Minimal Inbound Call Tracer Bullet
 - At most one milestone may be In Progress.
 - Local, Preview, Staging, and Production are distinct promotion stages.
 - Substantive roadmap and milestone changes are recorded in [docs/CHANGELOG.md](./docs/CHANGELOG.md).
