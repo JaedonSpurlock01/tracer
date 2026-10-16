@@ -374,6 +374,7 @@ export const calls = pgTable(
     state: text().notNull().default("In Progress"),
     outcome: text(),
     outcomeReason: text("outcome_reason"),
+    forwardNodeId: text("forward_node_id"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
@@ -384,7 +385,7 @@ export const calls = pgTable(
   (table) => [
     check("call_state_check", sql`${table.state} in ('In Progress', 'Completed')`),
     check("call_outcome_check", sql`${table.outcome} is null or ${table.outcome} in ('Answered', 'Voicemail', 'Missed', 'Abandoned', 'Blocked', 'Failed')`),
-    check("call_completed_outcome_check", sql`(${table.state} = 'Completed') = (${table.outcome} is not null)`),
+    check("call_completed_outcome_check", sql`${table.state} <> 'Completed' or ${table.outcome} is not null`),
     uniqueIndex("call_organization_call_sid_idx").on(table.organizationId, table.twilioCallSid),
     index("call_organization_id_idx").on(table.organizationId),
     index("call_workspace_id_idx").on(table.workspaceId),

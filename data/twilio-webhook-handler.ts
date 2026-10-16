@@ -35,8 +35,8 @@ export interface TwilioWebhookHandlerOptions {
 
 const voiceRoute = /^\/api\/twilio\/voice\/([^/]+)$/;
 
-function twiml(body: string): Response {
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`, {
+function twiml(document: string): Response {
+  return new Response(document, {
     status: 200,
     headers: { "content-type": "text/xml; charset=utf-8" },
   });
@@ -80,8 +80,12 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
     if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${path}`, params, signature }))) {
       return forbidden();
     }
-    const result = await createInboundCalls({ pool: options.pool }).receiveVoiceWebhook(voice[1], params);
+    const assignmentId = voice[1];
+    const result = await createInboundCalls({ pool: options.pool }).receiveVoiceWebhook(assignmentId, params, {
+      forwardAction: (nodeId) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
+      forwardStatus: (nodeId) => `${baseURL}/api/twilio/forward-status/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
+    });
     if (result.kind !== "call") return forbidden();
-    return twiml("");
+    return twiml(result.twiml);
   };
 }

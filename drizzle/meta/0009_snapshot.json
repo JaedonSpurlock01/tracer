@@ -1,5 +1,5 @@
 {
-  "id": "5ecc6463-2d3e-48f4-9ea4-b16e8c418b4f",
+  "id": "adda29c9-9621-45f2-9171-e0e50b199a8e",
   "prevId": "fa3a4eac-b5e3-4d72-8deb-73a94613e8d6",
   "version": "7",
   "dialect": "postgresql",
@@ -496,6 +496,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "forward_node_id": {
+          "name": "forward_node_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp with time zone",
@@ -654,7 +660,7 @@
         },
         "call_completed_outcome_check": {
           "name": "call_completed_outcome_check",
-          "value": "(\"call\".\"state\" = 'Completed') = (\"call\".\"outcome\" is not null)"
+          "value": "\"call\".\"state\" <> 'Completed' or \"call\".\"outcome\" is not null"
         }
       },
       "isRLSEnabled": false

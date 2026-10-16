@@ -126,11 +126,19 @@ describe.sequential("Twilio voice webhook", () => {
     expect(unknownAssignment.status).toBe(403);
   });
 
-  it("accepts a validly signed request with TwiML", async () => {
+  it("answers a signed Incoming Call with Forward Call TwiML from the pinned Flow Version", async () => {
     const params = voiceParams();
     const response = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/xml");
+    expect(await response.text()).toBe(
+      '<?xml version="1.0" encoding="UTF-8"?><Response>' +
+        `<Dial action="${baseURL}/api/twilio/forward/${assignmentId}?node=forward" method="POST" timeout="30">` +
+        `<Number statusCallback="${baseURL}/api/twilio/forward-status/${assignmentId}?node=forward" statusCallbackEvent="answered completed" statusCallbackMethod="POST">${destinationNumber}</Number>` +
+        "</Dial></Response>",
+    );
+    const call = await pool!.query("select forward_node_id, outcome from call where twilio_call_sid = $1", [params.CallSid]);
+    expect(call.rows).toEqual([{ forward_node_id: "forward", outcome: null }]);
   });
 
   it("creates one In Progress Call pinned to the published Flow Version", async () => {

@@ -10,6 +10,7 @@ CREATE TABLE "call" (
 	"state" text DEFAULT 'In Progress' NOT NULL,
 	"outcome" text,
 	"outcome_reason" text,
+	"forward_node_id" text,
 	"started_at" timestamp with time zone NOT NULL,
 	"answered_at" timestamp with time zone,
 	"ended_at" timestamp with time zone,
@@ -18,7 +19,7 @@ CREATE TABLE "call" (
 	"updated_at" timestamp with time zone NOT NULL,
 	CONSTRAINT "call_state_check" CHECK ("call"."state" in ('In Progress', 'Completed')),
 	CONSTRAINT "call_outcome_check" CHECK ("call"."outcome" is null or "call"."outcome" in ('Answered', 'Voicemail', 'Missed', 'Abandoned', 'Blocked', 'Failed')),
-	CONSTRAINT "call_completed_outcome_check" CHECK (("call"."state" = 'Completed') = ("call"."outcome" is not null))
+	CONSTRAINT "call_completed_outcome_check" CHECK ("call"."state" <> 'Completed' or "call"."outcome" is not null)
 );
 --> statement-breakpoint
 CREATE TABLE "provider_event" (

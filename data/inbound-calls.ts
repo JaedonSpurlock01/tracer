@@ -26,6 +26,9 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
+import { parseCallFlowGraph } from "@/data/call-flow";
+import { renderCallStart, type VoiceUrls } from "@/data/voice-response";
+
 export interface CallRecord {
   id: string;
   organizationId: string;
@@ -35,10 +38,10 @@ export interface CallRecord {
   state: "In Progress" | "Completed";
 }
 
-export type VoiceWebhookResult = { kind: "call"; call: CallRecord } | { kind: "unknown_assignment" };
+export type VoiceWebhookResult = { kind: "call"; call: CallRecord; twiml: string } | { kind: "unknown_assignment" };
 
 export interface InboundCalls {
-  receiveVoiceWebhook(assignmentId: string, params: Readonly<Record<string, string>>): Promise<VoiceWebhookResult>;
+  receiveVoiceWebhook(assignmentId: string, params: Readonly<Record<string, string>>, urls: VoiceUrls): Promise<VoiceWebhookResult>;
 }
 
 const payloadFields = [
@@ -92,7 +95,7 @@ function toCallRecord(row: CallRow): CallRecord {
 
 export function createInboundCalls(options: { pool: Pool }): InboundCalls {
   return {
-    async receiveVoiceWebhook(assignmentId, params) {
+    async receiveVoiceWebhook(assignmentId, params, urls) {
       return withTransaction(options.pool, async (client) => {
         const assignment = (
           await client.query<AssignmentRow>("select organization_id, workspace_id, phone_number from number_assignment where id = $1", [assignmentId])
@@ -124,7 +127,21 @@ export function createInboundCalls(options: { pool: Pool }): InboundCalls {
            on conflict (organization_id, idempotency_key) do nothing`,
           [randomUUID(), assignment.organization_id, assignmentId, call.id, `${params.CallSid}:voice`, JSON.stringify(eventPayload(params)), now],
         );
-        return { kind: "call", call: toCallRecord(call) };
+        const version = (await client.query<{ graph: unknown }>("select graph from flow_version where id = $1", [call.flow_version_id])).rows[0];
+        const graph = parseCallFlowGraph(version?.graph);
+        const step = graph
+          ? renderCallStart(graph, urls)
+          : { twiml: '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', forwardNodeId: null, outcome: { outcome: "Failed" as const, reason: "flow_unreadable" } };
+        await client.query(
+          `update call
+              set forward_node_id = coalesce(forward_node_id, $2),
+                  outcome = coalesce(outcome, $3),
+                  outcome_reason = coalesce(outcome_reason, $4),
+                  updated_at = $5
+            where id = $1`,
+          [call.id, step.forwardNodeId, step.outcome?.outcome ?? null, step.outcome?.reason ?? null, now],
+        );
+        return { kind: "call", call: toCallRecord(call), twiml: step.twiml };
       });
     },
   };
