@@ -65,7 +65,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 ### Changed
 
 - Started M9 - Minimal Inbound Call Tracer Bullet for signed Twilio voice and status webhooks, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
-- Added an encrypted Twilio Auth Token to the Organization Twilio connection because Twilio signs webhooks with the Auth Token and the M5 API key credential cannot validate them.
+- Added an encrypted Twilio Auth Token to the Organization Twilio connection because Twilio signs webhooks with the Auth Token and the M5 API key credential cannot validate them, and refused Workspace activation until that Auth Token is configured so no live Tracking Number routes Calls Tracer cannot authenticate.
 - Ended M9 Calls that reach a step deferred to M10 as Failed instead of skipping the step, rejected voice webhooks for inactive Number Assignments without creating a Call, and made Replace Number available for any Active Workspace rather than only after the first Call.
 - Started M8 - Workspace Access Grants for Access Grant persistence, Client Viewer provisioning and access instructions, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
 - Restricted new Access Grants to Active Workspaces, kept existing grants as read-only access to Archived Workspaces and as dormant authorization after a restore to Setup Required, and refused removing a Client Viewer's last Access Grant so a Client Viewer always holds at least one grant.

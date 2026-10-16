@@ -37,7 +37,7 @@ type IntegrationResponse = {
   twilio: TwilioConnectionRecord | null;
 };
 
-type Action = "test" | "sync" | "rotate" | "disconnect" | "hyperdrive" | "email" | null;
+type Action = "test" | "sync" | "rotate" | "authToken" | "disconnect" | "hyperdrive" | "email" | null;
 
 type FormValues = {
   accountSid: string;
@@ -122,6 +122,8 @@ export default function IntegrationsView() {
   const [providerMessages, setProviderMessages] = useState<Record<string, string>>({});
   const [connectOpen, setConnectOpen] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
+  const [authTokenOpen, setAuthTokenOpen] = useState(false);
+  const [authToken, setAuthToken] = useState("");
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [form, setForm] = useState<FormValues>(emptyForm);
   const [formError, setFormError] = useState("");
@@ -210,6 +212,33 @@ export default function IntegrationsView() {
     setTwilioAction(null);
   }
 
+  async function saveAuthToken(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setTwilioAction("authToken");
+    const response = await fetch("/api/integrations/twilio/auth-token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ authToken }),
+    }).catch(() => null);
+    if (!response) {
+      setFormError("Connection failed.");
+      setTwilioAction(null);
+      return;
+    }
+    const body = await responseBody(response);
+    if (!response.ok) {
+      setFormError(response.status === 400 ? "Enter the Twilio Auth Token." : providerError(response.status, body.detail, "Connection failed."));
+      setTwilioAction(null);
+      return;
+    }
+    setAuthTokenOpen(false);
+    setAuthToken("");
+    await reload();
+    setStatus("Twilio Auth Token saved.");
+    setTwilioAction(null);
+  }
+
   async function testTwilio() {
     setTwilioAction("test");
     setTwilioError("");
@@ -288,6 +317,12 @@ export default function IntegrationsView() {
     setRotateOpen(true);
   }
 
+  function openAuthToken() {
+    setFormError("");
+    setAuthToken("");
+    setAuthTokenOpen(true);
+  }
+
   const readyCount = providers.filter((provider) => provider.state === "connected" || provider.state === "configured").length;
   const twilioProvider = providers.find((provider) => provider.id === "twilio");
   const canConnect = !twilio && twilioProvider?.note === "No Organization Twilio credential is connected";
@@ -326,7 +361,7 @@ export default function IntegrationsView() {
                 </div>
                 <ProviderDetails provider={provider} />
                 {isTwilio ? (
-                  twilio ? <TwilioConnected connection={twilio} numbers={numbers} action={twilioAction} error={twilioError} retry={twilioRetry} onTest={() => void testTwilio()} onSync={() => void syncTwilio()} onRotate={openRotate} onDisconnect={() => setDisconnectOpen(true)} />
+                  twilio ? <TwilioConnected connection={twilio} numbers={numbers} action={twilioAction} error={twilioError} retry={twilioRetry} onTest={() => void testTwilio()} onSync={() => void syncTwilio()} onRotate={openRotate} onSetAuthToken={openAuthToken} onDisconnect={() => setDisconnectOpen(true)} />
                     : canConnect ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null
                 ) : provider.id === "hyperdrive" && provider.testable ? (
                   <ProviderAction id="hyperdrive" action={providerAction} message={providerMessages.hyperdrive} error={providerErrors.hyperdrive} onClick={() => void testProvider("hyperdrive")} />
@@ -362,6 +397,16 @@ export default function IntegrationsView() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={authTokenOpen} onOpenChange={setAuthTokenOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Set Twilio Auth Token</DialogTitle><DialogDescription>Tracer verifies Twilio webhook signatures with the account Auth Token. It is verified, encrypted, and never displayed again.</DialogDescription></DialogHeader>
+          <form className="flex flex-col gap-4" onSubmit={(event) => void saveAuthToken(event)}>
+            <Field data-invalid={Boolean(formError)}><FieldLabel htmlFor="twilio-auth-token">Auth Token</FieldLabel><Input id="twilio-auth-token" type="password" autoComplete="off" value={authToken} onChange={(event) => setAuthToken(event.target.value)} required />{formError ? <FieldError>{formError}</FieldError> : null}</Field>
+            <DialogFooter><Button type="submit" disabled={twilioAction === "authToken"}>{twilioAction === "authToken" ? <><Spinner /> Saving...</> : "Save Auth Token"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect Twilio?</AlertDialogTitle><AlertDialogDescription>The encrypted credential and synced number inventory are removed.</AlertDialogDescription></AlertDialogHeader>
@@ -377,7 +422,7 @@ function ProviderAction({ id, action, message, error, onClick }: { id: "hyperdri
   return <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" disabled={action === id} onClick={onClick}>{action === id ? <><Spinner /> Testing...</> : id === "email" ? "Send Test Email" : "Test Connection"}</Button>{message ? <p>{message}</p> : null}{error ? <><p role="alert">{error}</p><Button type="button" variant="outline" onClick={onClick}>Retry</Button></> : null}</div>;
 }
 
-function TwilioConnected({ connection, numbers, action, error, retry, onTest, onSync, onRotate, onDisconnect }: { connection: TwilioConnectionRecord; numbers: TwilioNumberRecord[]; action: Action; error: string; retry: boolean; onTest: () => void; onSync: () => void; onRotate: () => void; onDisconnect: () => void }) {
+function TwilioConnected({ connection, numbers, action, error, retry, onTest, onSync, onRotate, onSetAuthToken, onDisconnect }: { connection: TwilioConnectionRecord; numbers: TwilioNumberRecord[]; action: Action; error: string; retry: boolean; onTest: () => void; onSync: () => void; onRotate: () => void; onSetAuthToken: () => void; onDisconnect: () => void }) {
   const busy = action !== null;
   const progress = actionText(action);
   return <div className="flex flex-col gap-4">
@@ -388,6 +433,7 @@ function TwilioConnected({ connection, numbers, action, error, retry, onTest, on
       <div><dt className="text-muted-foreground">Connected by</dt><dd>{connection.connectedBy?.name ?? "Unknown"}</dd></div>
       <div><dt className="text-muted-foreground">Connected at</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
       <div><dt className="text-muted-foreground">Last verified</dt><dd>{formatDate(connection.lastVerifiedAt)}</dd></div>
+      <div><dt className="text-muted-foreground">Webhook Auth Token</dt><dd><Badge variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge></dd></div>
     </dl>
     <p className="text-sm"><span>{connection.numberCount} eligible numbers</span>. Last synced {formatDate(connection.numbersSyncedAt)}.</p>
     <dl className="grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Active Number Assignments</dt><dd>Available after Workspace activation</dd></div><div><dt className="text-muted-foreground">Webhook health</dt><dd>Available after call routing</dd></div></dl>
@@ -396,6 +442,7 @@ function TwilioConnected({ connection, numbers, action, error, retry, onTest, on
       <Button type="button" disabled={busy} onClick={onTest}>{action === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
       <Button type="button" variant="outline" disabled={busy} onClick={onSync}>{action === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
       <Button type="button" variant="outline" disabled={busy} onClick={onRotate}>{action === "rotate" ? <><Spinner /> Rotating...</> : "Rotate Key"}</Button>
+      <Button type="button" variant="outline" disabled={busy} onClick={onSetAuthToken}>Set Auth Token</Button>
       <Button type="button" variant="destructive" disabled={busy} onClick={onDisconnect}>Disconnect</Button>
     </div>
     <div className="overflow-x-auto">

@@ -1,0 +1,1 @@
+ALTER TABLE "twilio_connection" ADD COLUMN "auth_token_ciphertext" text;

@@ -119,7 +119,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(8);
+  expect(Number(result.rows[0].count)).toBe(9);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {

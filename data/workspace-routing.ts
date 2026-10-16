@@ -43,6 +43,7 @@ export type RoutingErrorCode =
   | "not_found"
   | "state_unchanged"
   | "twilio_not_connected"
+  | "twilio_auth_token_missing"
   | "number_unavailable"
   | "draft_required"
   | "draft_invalid"
@@ -519,6 +520,8 @@ export function createWorkspaceRouting(options: {
           if (!graph) throw new RoutingError("draft_required");
           const validation = validateDraft(graph, workspace.recording_enabled);
           if (!validation.valid) throw new RoutingError("draft_invalid", undefined, validation.issues);
+          const connection = await options.integrations.getTwilioConnection(client);
+          if (connection && !connection.authTokenConfigured) throw new RoutingError("twilio_auth_token_missing");
           sid = number.twilio_sid;
           await options.integrations.withTwilioCredential(
             async (credential: TwilioCredential) => {

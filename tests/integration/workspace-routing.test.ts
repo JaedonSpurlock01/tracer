@@ -332,6 +332,39 @@ describe.sequential("Workspace routing", () => {
     expect(afterDiscard.body.draft).toBeNull();
   });
 
+  it("refuses activation until the Twilio Auth Token is configured", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Missing Auth Token Workspace");
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          destinationNumber: "+14155550101",
+          recordingEnabled: false,
+          analysisEnabled: false,
+          spamGateEnabled: false,
+          whisperEnabled: false,
+          whisperMessage: null,
+        }),
+      }),
+    );
+    updates.length = 0;
+    const refused = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-a" }),
+      }),
+    );
+    expect(refused.response.status).toBe(409);
+    expect(refused.body.error).toBe("twilio_auth_token_missing");
+    expect(updates).toHaveLength(0);
+    expect((await pool!.query("select state from workspace where id = $1", [workspaceId])).rows[0].state).toBe("Setup Required");
+    expect((await pool!.query("select count(*)::int as count from number_assignment where workspace_id = $1", [workspaceId])).rows[0].count).toBe(0);
+    await pool!.query("update twilio_connection set auth_token_ciphertext = $2 where organization_id = $1", [organizationId, await encryptSecret(masterKey, "routing-auth-token")]);
+  });
+
   it("activates a Workspace and snapshots and updates Twilio voice configuration", async () => {
     const cookie = await signIn("operator@example.com");
     const workspaceId = await createWorkspace(cookie, "Activation Workspace");

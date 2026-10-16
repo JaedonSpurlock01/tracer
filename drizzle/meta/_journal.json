@@ -57,6 +57,13 @@
       "when": 1792110025199,
       "tag": "0007_giant_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792112935876,
+      "tag": "0008_yielding_thundra",
+      "breakpoints": true
     }
   ]
 }

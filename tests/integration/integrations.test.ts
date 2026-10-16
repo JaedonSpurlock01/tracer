@@ -37,6 +37,7 @@ const firstKeySid = "SK11111111111111111111111111111111";
 const secondKeySid = "SK22222222222222222222222222222222";
 const firstSecret = "first-synthetic-secret";
 const secondSecret = "second-synthetic-secret";
+const authToken = "synthetic-auth-token";
 const account: TwilioAccountSummary = { sid: accountSid, friendlyName: "Tracer Account", status: "active", type: "Full" };
 
 let container: StartedPostgreSqlContainer | undefined;
@@ -189,6 +190,7 @@ beforeAll(async () => {
   );
   accepted.set(`${firstKeySid}:${firstSecret}`, account);
   accepted.set(`${secondKeySid}:${secondSecret}`, account);
+  accepted.set(`${accountSid}:${authToken}`, account);
 }, 120_000);
 
 afterAll(async () => {
@@ -316,6 +318,32 @@ describe.sequential("Organization integrations", () => {
     expect(afterRotation.rows[0]?.api_key_secret_ciphertext).not.toBe(beforeRotation.rows[0]?.api_key_secret_ciphertext);
     await json(new Request("http://localhost:3000/api/integrations/twilio/test", { method: "POST", headers: { cookie } }));
     expect(credentials.at(-1)?.apiKeySid).toBe(secondKeySid);
+  });
+
+  it("verifies and encrypts the Twilio Auth Token used for webhook signatures", async () => {
+    const cookie = await signIn("operator@example.com");
+    const before = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    expect(before.body.twilio).toMatchObject({ authTokenConfigured: false });
+    const malformed = await json(new Request("http://localhost:3000/api/integrations/twilio/auth-token", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ authToken: "  " }),
+    }));
+    expect(malformed.response.status).toBe(400);
+    const rejected = await json(new Request("http://localhost:3000/api/integrations/twilio/auth-token", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ authToken: "rejected-auth-token" }),
+    }));
+    expect(rejected.response.status).toBe(422);
+    await expect(pool!.query("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ auth_token_ciphertext: null }] });
+
+    const configured = await json(new Request("http://localhost:3000/api/integrations/twilio/auth-token", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ authToken }),
+    }));
+    expect(configured.response.status).toBe(200);
+    expect(configured.body.connection).toMatchObject({ authTokenConfigured: true });
+    expect(JSON.stringify(configured.body)).not.toContain(authToken);
+    expect(credentials.at(-1)).toMatchObject({ accountSid, apiKeySid: accountSid, apiKeySecret: authToken });
+    const stored = await pool!.query<{ auth_token_ciphertext: string }>("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
+    expect(stored.rows[0]?.auth_token_ciphertext).toMatch(/^v1:/);
+    expect(stored.rows[0]?.auth_token_ciphertext).not.toContain(authToken);
   });
 
   it("synchronizes supported incoming numbers and releases missing numbers", async () => {

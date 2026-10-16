@@ -39,6 +39,7 @@ const providers: ProviderHealth[] = [
 const connected: TwilioConnectionRecord = {
   accountSid,
   apiKeySid,
+  authTokenConfigured: true,
   accountFriendlyName: "Tracer Account",
   connectedAt: "2026-10-14T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Example Operator" },
@@ -163,6 +164,29 @@ describe("IntegrationsView", () => {
     expect(await screen.findByText("Twilio connection verified.")).toBeVisible();
     fireEvent.click(within(twilioRegion).getByRole("button", { name: "Test Connection" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Twilio test failed.");
+  });
+
+  it("saves the webhook Auth Token without rendering it", async () => {
+    const authToken = "component-only-auth-token";
+    const connectedProviders = providers.map((provider) => provider.id === "twilio" ? { ...provider, state: "connected" as const, note: null, testable: true, identifier: accountSid } : provider);
+    const missingToken = { ...connected, authTokenConfigured: false };
+    const fetch = fetchStub({
+      ...responseRoutes({ connected: true, providers: connectedProviders }),
+      "GET /api/integrations": [{ body: { providers: connectedProviders, twilio: missingToken } }, { body: { providers: connectedProviders, twilio: connected } }],
+      "GET /api/integrations/twilio/numbers": [{ body: { numbers } }, { body: { numbers } }],
+      "POST /api/integrations/twilio/auth-token": { body: { connection: connected } },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<IntegrationsView />);
+    const twilioRegion = await screen.findByRole("region", { name: "Twilio" });
+    expect(await within(twilioRegion).findByText("Not configured")).toBeVisible();
+    fireEvent.click(within(twilioRegion).getByRole("button", { name: "Set Auth Token" }));
+    fireEvent.change(screen.getByLabelText("Auth Token"), { target: { value: authToken } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Auth Token" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/integrations/twilio/auth-token", expect.objectContaining({ method: "POST", body: JSON.stringify({ authToken }) })));
+    expect(await screen.findByRole("status")).toHaveTextContent("Twilio Auth Token saved.");
+    expect(within(twilioRegion).getByText("Configured")).toBeVisible();
+    expect(document.body.textContent).not.toContain(authToken);
   });
 
   it("reports blocked Twilio disconnects with the active workspace count", async () => {

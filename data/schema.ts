@@ -178,6 +178,7 @@ export const twilioConnections = pgTable(
     accountSid: text("account_sid").notNull(),
     apiKeySid: text("api_key_sid").notNull(),
     apiKeySecretCiphertext: text("api_key_secret_ciphertext").notNull(),
+    authTokenCiphertext: text("auth_token_ciphertext"),
     masterKeyVersion: integer("master_key_version").notNull().default(1),
     accountFriendlyName: text("account_friendly_name"),
     connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),

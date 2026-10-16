@@ -1041,10 +1041,11 @@ Each provider Frame shows:
 - API key SID
 - API key secret entry shown only when connecting or rotating
 - Encrypted Organization credential status
+- Webhook Auth Token status, Configured or Not configured, with a Set Auth Token dialog; Workspace activation requires it because Tracer validates every Twilio webhook signature with it
 - Number inventory sync state and last sync time
 - Active Number Assignment count
 - Recent webhook health
-- Connect, Test Connection, Rotate Key, and Disconnect actions
+- Connect, Test Connection, Rotate Key, Set Auth Token, and Disconnect actions
 - Never purchase or release numbers from Tracer
 
 The API key secret is encrypted with a deployment-held master key and never displayed again. Disconnect is blocked while Active Workspaces depend on the connection.

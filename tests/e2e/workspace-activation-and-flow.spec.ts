@@ -18,7 +18,7 @@
  */
 import { expect, test } from "@playwright/test";
 
-import { signInAsOperator } from "./helpers";
+import { ensureTwilioNumbers, signInAsOperator } from "./helpers";
 
 let workspaceId = "";
 let workspaceName = "";
@@ -27,19 +27,7 @@ test.describe.serial("Workspace activation and Flow publication", () => {
   test("an Operator creates and activates a Workspace through fake provider boundaries", async ({ page, request }) => {
     test.setTimeout(90_000);
     await signInAsOperator(page, request);
-    await page.goto("/integrations");
-    await expect(page.getByRole("button", { name: /^(Connect Twilio|Sync Numbers)$/ }).first()).toBeVisible();
-    const connectButton = page.getByRole("button", { name: "Connect Twilio" });
-    if ((await connectButton.count()) > 0) {
-      await connectButton.click();
-      await page.getByLabel("Account SID").fill(`AC${"a".repeat(32)}`);
-      await page.getByLabel("API Key SID").fill(`SK${"b".repeat(32)}`);
-      await page.getByLabel("API Key Secret").fill("e2e-secret");
-      await page.getByRole("button", { name: "Connect", exact: true }).click();
-      await expect(page.getByRole("button", { name: "Sync Numbers" })).toBeVisible();
-    }
-    await page.getByRole("button", { name: "Sync Numbers" }).click();
-    await expect(page.getByText(/Synced/).first()).toBeVisible();
+    await ensureTwilioNumbers(page);
     workspaceName = `E2E Workspace ${Date.now()}`;
     await page.goto("/workspaces");
     await page.evaluate(async () => {
