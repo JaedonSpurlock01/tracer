@@ -71,6 +71,13 @@
       "when": 1792113797178,
       "tag": "0009_colossal_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792117328128,
+      "tag": "0010_stormy_shatterstar",
+      "breakpoints": true
     }
   ]
 }

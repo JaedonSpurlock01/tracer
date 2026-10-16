@@ -1119,7 +1119,7 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 6. **States:** Section Skeletons, inline validation, save success, and Retry
 7. **Motion:** Installed section control behavior only
 
-Workspace Settings is Operator only. Client Viewers do not see the tab.
+Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
 
 ### General
 
@@ -1137,8 +1137,11 @@ Changing timezone affects future date grouping and report interpretation. Stored
 - Masked prior Twilio voice configuration status
 - Read-only Destination Number with `Edit Flow` link
 - Replace Number action
+- Detach Number action
 
 Replace Number is available for any Active Workspace. Its confirmation dialog selects an unassigned Twilio number, ends the current Number Assignment, starts a new one, attaches Tracer to the new number, and then restores the old number's saved voice configuration, so at least one number always routes to Tracer. Historical Calls retain the number dialed. Any Twilio failure aborts the replacement: the new number's captured configuration is restored, the Workspace stays Active on its current Tracking Number, and the Operator sees the provider error.
+
+Detach Number is available for any Active Workspace when no replacement number is wanted. After confirmation it restores the number's saved voice configuration, ends the Number Assignment as detached, and returns the Workspace to Setup Required with its Calls and Flow Versions intact. The number stays in the Twilio account; Tracer never releases a number from Twilio. Client Viewers lose access until the Workspace is activated on a number again. A Twilio failure aborts the detach and keeps the Workspace Active on its current Tracking Number.
 
 ### Recording and AI
 

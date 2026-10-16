@@ -18,7 +18,7 @@
  */
 import { expect, test } from "@playwright/test";
 
-import { ensureTwilioNumbers, signInAsOperator } from "./helpers";
+import { archiveActiveWorkspaces, createActiveWorkspace, ensureTwilioNumbers, signInAsOperator } from "./helpers";
 
 let workspaceId = "";
 let workspaceName = "";
@@ -89,5 +89,24 @@ test.describe.serial("Workspace activation and Flow publication", () => {
     expect(versions.secondOk).toBeTruthy();
     const firstGraph = (versions.first as { graph: { edges: Array<{ sourceHandle: string }> } }).graph;
     expect(firstGraph.edges.some((edge) => edge.sourceHandle === "missed")).toBeTruthy();
+  });
+
+  test("an Operator moves between Workspace Settings pages and detaches the Tracking Number", async ({ page, request }) => {
+    test.setTimeout(90_000);
+    await signInAsOperator(page, request);
+    await ensureTwilioNumbers(page);
+    await page.goto("/workspaces");
+    await archiveActiveWorkspaces(page, "E2E");
+    const workspaceId = await createActiveWorkspace(page, `E2E Detach ${Date.now()}`);
+    await page.goto(`/workspaces/${workspaceId}/settings`);
+    await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}/settings/general$`));
+    await expect(page.getByLabel("Workspace name")).toBeVisible();
+    await page.getByRole("navigation", { name: "Workspace settings sections" }).getByRole("link", { name: "Number" }).click();
+    await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}/settings/number$`));
+    await expect(page.getByLabel("Workspace name")).toHaveCount(0);
+    await page.getByRole("button", { name: "Detach Number" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Detach Number" }).click();
+    await expect(page.getByText("Tracking Number detached. Activate the Workspace on a number to resume routing.")).toBeVisible();
+    await expect(page.getByText("No Tracking Number")).toBeVisible();
   });
 });

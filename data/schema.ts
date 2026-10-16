@@ -279,7 +279,7 @@ export const numberAssignments = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => [
-    check("number_assignment_ended_reason_check", sql`${table.endedReason} is null or ${table.endedReason} in ('archived', 'replaced', 'activation_failed')`),
+    check("number_assignment_ended_reason_check", sql`${table.endedReason} is null or ${table.endedReason} in ('archived', 'replaced', 'detached', 'activation_failed')`),
     uniqueIndex("number_assignment_active_number_idx").on(table.twilioNumberId).where(sql`${table.endedAt} is null`),
     uniqueIndex("number_assignment_active_workspace_idx").on(table.workspaceId).where(sql`${table.endedAt} is null`),
     index("number_assignment_organization_id_idx").on(table.organizationId),

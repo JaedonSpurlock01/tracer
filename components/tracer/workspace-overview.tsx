@@ -59,7 +59,7 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false }:
             <Button render={<Link href={`/workspaces?resume=${workspace.id}`} />}>Resume Setup</Button>
           ) : null}
           {workspace.state === "Archived" ? (
-            <Button render={<Link href={`/workspaces/${workspace.id}/settings#danger`} />}>Restore</Button>
+            <Button render={<Link href={`/workspaces/${workspace.id}/settings/danger`} />}>Restore</Button>
           ) : null}
         </div>}
       </div>

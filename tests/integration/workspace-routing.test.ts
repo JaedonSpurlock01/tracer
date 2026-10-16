@@ -220,6 +220,8 @@ beforeAll(async () => {
     ["routing-number-l", "PNllllllllllllllllllllllllllllllll", "+14155550112", true],
     ["routing-number-m", "PNmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm", "+14155550113", true],
     ["routing-number-n", "PNnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn", "+14155550114", true],
+    ["routing-number-o", "PNoooooooooooooooooooooooooooooooo", "+14155550115", true],
+    ["routing-number-p", "PNpppppppppppppppppppppppppppppppp", "+14155550116", true],
   ]) {
     await pool.query(
       `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, released_at, first_seen_at, last_seen_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, now(), now(), now(), now())`,
@@ -897,5 +899,66 @@ describe.sequential("Workspace routing", () => {
     );
     expect(notActive.response.status).toBe(409);
     expect(notActive.body.error).toBe("activation_required");
+  });
+
+  it("detaches the Tracking Number, returns the Workspace to Setup Required, and reactivates on another number", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Detach Workspace");
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ destinationNumber: "+14155550101", recordingEnabled: false, analysisEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null }),
+      }),
+    );
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-o" }),
+      }),
+    );
+    updates.length = 0;
+    const detached = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+    expect(detached.response.status).toBe(200);
+    expect(detached.body.workspace).toMatchObject({ state: "Setup Required", trackingNumber: null });
+    expect(updates).toEqual([{ sid: "PNoooooooooooooooooooooooooooooooo", configuration: priorConfiguration }]);
+    expect((await pool!.query("select ended_reason, ended_at is not null as ended from number_assignment where workspace_id = $1", [workspaceId])).rows).toEqual([
+      { ended_reason: "detached", ended: true },
+    ]);
+
+    const reactivated = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-p" }),
+      }),
+    );
+    expect(reactivated.response.status).toBe(200);
+    expect(reactivated.body.workspace).toMatchObject({ state: "Active", trackingNumber: "+14155550116" });
+  });
+
+  it("keeps the Workspace Active when restoring the detached number fails", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = (await pool!.query("select id from workspace where name = 'Detach Workspace'")).rows[0].id as string;
+    failingUpdateSid = "PNpppppppppppppppppppppppppppppppp";
+    try {
+      const failed = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+      expect(failed.response.status).toBe(502);
+    } finally {
+      failingUpdateSid = null;
+    }
+    expect((await pool!.query("select state from workspace where id = $1", [workspaceId])).rows[0].state).toBe("Active");
+    expect((await pool!.query("select twilio_number_id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId])).rows).toEqual([
+      { twilio_number_id: "routing-number-p" },
+    ]);
+  });
+
+  it("refuses to detach a number outside an Active Workspace", async () => {
+    const cookie = await signIn("operator@example.com");
+    const setupWorkspaceId = await createWorkspace(cookie, "Detach Setup Workspace");
+    const refused = await json(new Request(`${baseURL}/api/workspaces/${setupWorkspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+    expect(refused.response.status).toBe(409);
+    expect(refused.body.error).toBe("activation_required");
   });
 });

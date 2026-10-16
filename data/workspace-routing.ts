@@ -106,6 +106,7 @@ export interface WorkspaceRouting {
   discardDraft(workspaceId: string): Promise<void>;
   activate(workspaceId: string, input: { twilioNumberId: string; actorUserId: string }): Promise<WorkspaceRecord>;
   replaceNumber(workspaceId: string, input: { twilioNumberId: string }): Promise<WorkspaceRecord>;
+  detachNumber(workspaceId: string): Promise<WorkspaceRecord>;
   publish(workspaceId: string, actorUserId: string): Promise<WorkspaceRecord>;
   archive(workspaceId: string): Promise<WorkspaceRecord>;
 }
@@ -247,6 +248,20 @@ export function createWorkspaceRouting(options: {
       statusCallback: `${baseURL}/api/twilio/status/${assignmentId}`,
       statusCallbackMethod: "POST",
     };
+  }
+
+  async function findActiveAssignment(client: PoolClient, workspaceId: string): Promise<AssignmentRow | undefined> {
+    const result = await client.query<AssignmentRow>(
+      `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
+              a.prior_voice_fallback_url, a.prior_voice_fallback_method,
+              a.prior_status_callback_url, a.prior_status_callback_method
+         from number_assignment a
+         join twilio_number n on n.id = a.twilio_number_id and n.organization_id = a.organization_id
+        where a.organization_id = $1 and a.workspace_id = $2 and a.ended_at is null
+        limit 1`,
+      [options.organizationId, workspaceId],
+    );
+    return result.rows[0];
   }
 
   async function lockAvailableNumber(client: PoolClient, twilioNumberId: string): Promise<NumberRow> {
@@ -611,18 +626,7 @@ export function createWorkspaceRouting(options: {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
-          const current = (
-            await client.query<AssignmentRow>(
-              `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
-                      a.prior_voice_fallback_url, a.prior_voice_fallback_method,
-                      a.prior_status_callback_url, a.prior_status_callback_method
-                 from number_assignment a
-                 join twilio_number n on n.id = a.twilio_number_id and n.organization_id = a.organization_id
-                where a.organization_id = $1 and a.workspace_id = $2 and a.ended_at is null
-                limit 1`,
-              [options.organizationId, workspaceId],
-            )
-          ).rows[0];
+          const current = await findActiveAssignment(client, workspaceId);
           if (!current) throw new RoutingError("number_unavailable");
           const number = await lockAvailableNumber(client, input.twilioNumberId);
           const connection = await options.integrations.getTwilioConnection(client);
@@ -690,6 +694,41 @@ export function createWorkspaceRouting(options: {
       return result;
     },
 
+    async detachNumber(workspaceId) {
+      try {
+        await withTransaction(options.pool, async (client) => {
+          await lockOrganization(client);
+          const workspace = await findWorkspace(client, workspaceId, true);
+          if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
+          if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
+          const assignment = await findActiveAssignment(client, workspaceId);
+          if (!assignment) throw new RoutingError("number_unavailable");
+          await options.integrations.withTwilioCredential(
+            async (credential) => {
+              await options.twilio.updateIncomingPhoneNumberVoice(credential, assignment.twilio_sid, voiceConfiguration(assignment));
+              const now = new Date();
+              await client.query(
+                "update number_assignment set ended_at = $3, ended_reason = 'detached' where organization_id = $1 and id = $2",
+                [options.organizationId, assignment.id, now],
+              );
+              await client.query(
+                "update workspace set state = 'Setup Required', updated_at = $3 where organization_id = $1 and id = $2",
+                [options.organizationId, workspaceId, now],
+              );
+            },
+            { client, deferFailureRecording: true },
+          );
+        });
+      } catch (error) {
+        if (error instanceof TwilioClientError) throw mapIntegrationsError(await options.integrations.recordTwilioFailure(error));
+        if (error instanceof IntegrationsError) throw mapIntegrationsError(error);
+        throw error;
+      }
+      const result = await options.workspaces.find(workspaceId);
+      if (!result) throw new RoutingError("not_found");
+      return result;
+    },
+
     async publish(workspaceId, actorUserId) {
       await withTransaction(options.pool, async (client) => {
         await lockOrganization(client);
@@ -727,17 +766,7 @@ export function createWorkspaceRouting(options: {
             );
             return;
           }
-          const assignmentResult = await client.query<AssignmentRow>(
-            `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
-                    a.prior_voice_fallback_url, a.prior_voice_fallback_method,
-                    a.prior_status_callback_url, a.prior_status_callback_method
-               from number_assignment a
-               join twilio_number n on n.id = a.twilio_number_id and n.organization_id = a.organization_id
-              where a.organization_id = $1 and a.workspace_id = $2 and a.ended_at is null
-              limit 1`,
-            [options.organizationId, workspaceId],
-          );
-          const assignment = assignmentResult.rows[0];
+          const assignment = await findActiveAssignment(client, workspaceId);
           if (!assignment) throw new RoutingError("number_unavailable");
           await options.integrations.withTwilioCredential(
             async (credential) => {
