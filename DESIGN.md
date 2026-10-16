@@ -68,7 +68,7 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
-- Use the shadcn Sidebar as the application shell. The ReUI workspace-switcher example is the starting composition: [c-sidebar-1](https://reui.io/preview/base/components/c-sidebar-1?ref=mcp).
+- Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher.
 - Prefer Frame-led pages and dense controls.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
 - Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
@@ -90,7 +90,16 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 6. Users, Operator only
 7. Integrations, Operator only
 
-Account Settings is reached from the account menu in the sidebar footer rather than occupying primary navigation.
+### Account menu
+
+The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer orb, the user's name, and the current Organization slug. The menu contains:
+
+1. **Organizations:** the current Organization with its name, slug, and a check, then a disabled New organization action until multiple Organizations are supported
+2. **User:** a DiceBear Gaze avatar seeded by the user id, the name, the email, and an outline role Badge
+3. **Account Settings**
+4. **Sign out**, styled as destructive
+
+The Sidebar has no Workspace switcher; the Workspaces page owns Workspace selection. Account Settings is reached from the account menu rather than occupying primary navigation.
 
 ### Workspace navigation
 

@@ -4,16 +4,22 @@
  * @brief  Renders the role-aware Tracer application Sidebar.
  *
  * @description
- *  Provides global navigation, the Tracer brand lockup, a Workspace switcher
- *  limited to the Workspaces the actor may read, and account actions for
- *  authenticated Operators and Client Viewers.
+ *  Provides global navigation and an account menu at the top of the Sidebar.
+ *  The menu lists the current Organization with a disabled New organization
+ *  action, the signed-in user with a DiceBear avatar, Account Settings, and
+ *  Sign out.
  *
  * @remarks
- *  Operator navigation is hidden for Client Viewers while server guards remain
- *  authoritative for protected routes.
+ *  Workspace selection lives on the Workspaces page, so the Sidebar carries
+ *  no Workspace switcher. The first release has one Organization; New
+ *  organization stays disabled until multiple Organizations are supported.
+ *  Operator navigation is hidden for Client Viewers while server guards
+ *  remain authoritative for protected routes. The avatar is seeded by the
+ *  opaque user id so no email or name is sent to DiceBear.
  *
  * @see
  *  DESIGN.md
+ *  https://www.dicebear.com/styles/gaze/
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -22,20 +28,25 @@
 
 import {
   Activity,
+  Building2,
   Check,
   ChevronsUpDown,
   FileText,
   House,
   LayoutGrid,
+  LogOut,
   Phone,
   Plug,
+  Plus,
+  Settings,
   Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ComponentType } from "react";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/reui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,7 +59,6 @@ import {
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -56,14 +66,9 @@ import {
 } from "@/components/ui/sidebar";
 import { type CanonicalRole } from "@/data/auth-policy";
 
-interface WorkspaceLink {
-  id: string;
-  name: string;
-}
-
 interface AppSidebarProps {
-  actor: { name: string; email: string; role: CanonicalRole };
-  workspaces: WorkspaceLink[];
+  actor: { id: string; name: string; email: string; role: CanonicalRole };
+  organization: { name: string; slug: string };
 }
 
 interface NavigationItem {
@@ -83,6 +88,10 @@ const navigation: NavigationItem[] = [
   { label: "Integrations", href: "/integrations", icon: Plug, operatorOnly: true },
 ];
 
+export function avatarUrl(userId: string): string {
+  return `https://api.dicebear.com/10.x/gaze/svg?seed=${encodeURIComponent(userId)}`;
+}
+
 function initials(name: string): string {
   return name
     .split(" ")
@@ -93,49 +102,8 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-function WorkspaceSwitcher({ workspaces, showAll }: { workspaces: WorkspaceLink[]; showAll: boolean }) {
-  const pathname = usePathname();
-  const currentId = pathname.match(/^\/workspaces\/([^/]+)/)?.[1];
-  const current = workspaces.find((workspace) => workspace.id === currentId);
-
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<SidebarMenuButton className="aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground" />}
-          >
-            <span className="truncate">{current?.name ?? "Select a Workspace"}</span>
-            <ChevronsUpDown className="ml-auto opacity-60" aria-hidden="true" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="bottom" align="start" className="w-56">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-              {workspaces.map((workspace) => (
-                <DropdownMenuItem key={workspace.id} render={<Link href={`/workspaces/${workspace.id}`} />}>
-                  <span className="truncate">{workspace.name}</span>
-                  {workspace.id === currentId ? <Check className="ml-auto size-3.5" aria-hidden="true" /> : null}
-                </DropdownMenuItem>
-              ))}
-              {workspaces.length ? null : <DropdownMenuItem disabled>No Workspaces</DropdownMenuItem>}
-            </DropdownMenuGroup>
-            {showAll ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem render={<Link href="/workspaces" />}>All Workspaces</DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  );
-}
-
-export default function AppSidebar({ actor, workspaces }: AppSidebarProps) {
-  const pathname = usePathname();
+function AccountMenu({ actor, organization }: AppSidebarProps) {
   const router = useRouter();
-  const items = navigation.filter((item) => !item.operatorOnly || actor.role === "Operator");
 
   async function signOut() {
     await fetch("/api/auth/sign-out", { method: "POST" }).catch(() => undefined);
@@ -144,17 +112,71 @@ export default function AppSidebar({ actor, workspaces }: AppSidebarProps) {
   }
 
   return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<SidebarMenuButton size="lg" className="aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground" />}
+          >
+            <span aria-hidden="true" className="size-6 shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,var(--color-chart-1),var(--color-chart-3))]" />
+            <span className="flex min-w-0 flex-col items-start leading-tight">
+              <span className="truncate font-semibold">{actor.name}</span>
+              <span className="truncate font-mono text-xs text-muted-foreground">{organization.slug}</span>
+            </span>
+            <ChevronsUpDown className="ml-auto opacity-60" aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="start" className="w-64">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Organizations</DropdownMenuLabel>
+              <DropdownMenuItem>
+                <Building2 aria-hidden="true" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{organization.name}</span>
+                  <span className="truncate font-mono text-xs text-muted-foreground">{organization.slug}</span>
+                </span>
+                <Check className="ml-auto" aria-hidden="true" />
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <Plus aria-hidden="true" />
+                New organization
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <div className="flex items-center gap-2 px-1.5 py-1.5">
+              <Avatar className="size-8">
+                <AvatarImage src={avatarUrl(actor.id)} alt="" />
+                <AvatarFallback>{initials(actor.name)}</AvatarFallback>
+              </Avatar>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium">{actor.name}</span>
+                <span className="truncate text-xs text-muted-foreground">{actor.email}</span>
+              </span>
+              <Badge variant="outline">{actor.role}</Badge>
+            </div>
+            <DropdownMenuItem render={<Link href="/account/settings" />}>
+              <Settings aria-hidden="true" />
+              Account Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void signOut()}>
+              <LogOut aria-hidden="true" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
+export default function AppSidebar({ actor, organization }: AppSidebarProps) {
+  const pathname = usePathname();
+  const items = navigation.filter((item) => !item.operatorOnly || actor.role === "Operator");
+
+  return (
     <Sidebar variant="inset">
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton render={<Link href="/" />} size="lg">
-              <span aria-hidden="true" className="size-6 rounded-full bg-[radial-gradient(circle_at_30%_30%,var(--color-chart-1),var(--color-chart-3))]" />
-              <span className="font-semibold">Tracer</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <WorkspaceSwitcher workspaces={workspaces} showAll={actor.role === "Operator"} />
+        <AccountMenu actor={actor} organization={organization} />
       </SidebarHeader>
       <SidebarContent>
         <SidebarMenu>
@@ -172,27 +194,6 @@ export default function AppSidebar({ actor, workspaces }: AppSidebarProps) {
           })}
         </SidebarMenu>
       </SidebarContent>
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
-                <Avatar className="size-8">
-                  <AvatarFallback>{initials(actor.name)}</AvatarFallback>
-                </Avatar>
-                <span className="flex min-w-0 flex-col items-start">
-                  <span className="truncate font-medium">{actor.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{actor.email}</span>
-                </span>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="top" className="w-56">
-                <DropdownMenuItem render={<Link href="/account/settings" />}>Account Settings</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void signOut()}>Sign out</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </Sidebar>
   );
 }

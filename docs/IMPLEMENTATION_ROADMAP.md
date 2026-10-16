@@ -605,7 +605,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - **Outcome:** One real Staging inbound call travels through Tracer, forwards to the Destination Number, and persists a canonical Call lifecycle.
 - **Depends on:** M8
 - **Target environment:** Staging
-- **Execution note:** Twilio signs webhooks with the account Auth Token, which the M5 API key credential cannot replace, so the Organization Twilio connection gains an Auth Token encrypted under ADR 0005, entered and verified on the Integrations page before storage. Workspace activation is refused until that Auth Token is configured, because every inbound Call would otherwise fail signature validation. A Call whose pinned Flow Version reaches a step deferred to M10 (Business Hours, Keypad Gate, Whisper, or Voicemail) ends as Failed with a persisted reason rather than skipping the step. A voice webhook for an ended Number Assignment or a non-Active Workspace returns `<Reject/>`, creates no Call, and persists the provider event for diagnosis. Forward Call maps a connected leg to Answered, no-answer or busy to Missed, a caller hang-up before connection to Abandoned, and provider or Tracer errors to Failed. Replace Number is available for any Active Workspace; replacing after a completed Call is only the Staging verification order.
+- **Execution note:** Twilio signs webhooks with the account Auth Token, which the M5 API key credential cannot replace, so the Organization Twilio connection gains an Auth Token encrypted under ADR 0005, entered and verified on the Integrations page before storage. Workspace activation is refused until that Auth Token is configured, because every inbound Call would otherwise fail signature validation. A Call whose pinned Flow Version reaches a step deferred to M10 (Business Hours, Keypad Gate, Whisper, or Voicemail) ends as Failed with a persisted reason rather than skipping the step. A voice webhook for an ended Number Assignment or a non-Active Workspace returns `<Reject/>`, creates no Call, and persists the provider event for diagnosis. Forward Call maps a connected leg to Answered, no-answer or busy to Missed, a caller hang-up before connection to Abandoned, and provider or Tracer errors to Failed. Replace Number is available for any Active Workspace; replacing after a completed Call is only the Staging verification order. At the Product Owner's request, M9 also moves the account menu to the top of the Sidebar with a DiceBear avatar, lists the current Organization with a disabled New organization action, and removes the Sidebar Workspace switcher because the Workspaces page owns Workspace selection.
 
 #### Vertical slices
 
@@ -636,6 +636,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Tracking Number replacement flow in Workspace Settings
 - Contract fixtures for voice and status callbacks
 - Staging smoke script for the dedicated number
+- Sidebar account and Organization menu replacing the Workspace switcher, added at the Product Owner's request
 
 #### Verification gate
 

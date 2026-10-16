@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => pathname.value,
 }));
 
-import AppSidebar from "@/components/tracer/app-sidebar";
+import AppSidebar, { avatarUrl } from "@/components/tracer/app-sidebar";
 import UsersView from "@/components/tracer/users-view";
 import { SidebarProvider } from "@/components/ui/sidebar";
 
@@ -44,6 +44,8 @@ const operator: OperatorRecord = {
   createdAt: "2026-10-01T00:00:00.000Z",
   accessGrants: [],
 };
+
+const organization = { name: "Spurlock Labs", slug: "spurlock-labs" };
 
 const secondOperator: OperatorRecord = {
   ...operator,
@@ -108,7 +110,7 @@ afterEach(() => {
 
 describe("application shell", () => {
   it("shows all navigation links for an Operator and hides Operator links for a Client Viewer", () => {
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
     expect(screen.getByRole("link", { name: "Home" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toBeVisible();
@@ -118,35 +120,36 @@ describe("application shell", () => {
     expect(screen.getByRole("link", { name: "Integrations" })).toBeVisible();
 
     cleanup();
-    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[]} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={viewer} organization={organization} /></SidebarProvider>);
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
   });
 
-  it("switches between the Client Viewer's granted Workspaces only", async () => {
-    pathname.value = "/workspaces/ws-acme";
-    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }, { id: "ws-gamma", name: "Gamma HVAC" }]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Acme Plumbing/ }));
-    expect(await screen.findByRole("menuitem", { name: "Gamma HVAC" })).toHaveAttribute("href", "/workspaces/ws-gamma");
-    expect(screen.getByRole("menuitem", { name: /Acme Plumbing/ })).toHaveAttribute("href", "/workspaces/ws-acme");
-    expect(screen.queryByRole("menuitem", { name: "All Workspaces" })).not.toBeInTheDocument();
-  });
-
-  it("offers Operators every Workspace and the full Workspace list", async () => {
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Select a Workspace/ }));
-    expect(await screen.findByRole("menuitem", { name: "All Workspaces" })).toHaveAttribute("href", "/workspaces");
-    expect(screen.getByRole("menuitem", { name: "Acme Plumbing" })).toHaveAttribute("href", "/workspaces/ws-acme");
-  });
-
-  it("opens the account menu and signs out through Better Auth", async () => {
+  it("opens the account menu from the top of the Sidebar with the current Organization", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ success: true })));
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Example Operator/ }));
-    await screen.findByRole("menuitem", { name: "Account Settings" });
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
+    const trigger = screen.getByRole("button", { name: /Example Operator/ });
+    expect(trigger).toHaveTextContent("spurlock-labs");
+    expect(trigger.compareDocumentPosition(screen.getByRole("link", { name: "Home" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Organizations")).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: /Spurlock Labs/ })).toHaveTextContent("spurlock-labs");
+    expect(screen.getByRole("menuitem", { name: "New organization" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("operator@example.com")).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Account Settings" })).toHaveAttribute("href", "/account/settings");
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/auth/sign-out", { method: "POST" }));
     expect(router.push).toHaveBeenCalledWith("/sign-in");
+  });
+
+  it("leaves Workspace selection to the Workspaces page", () => {
+    render(<SidebarProvider><AppSidebar actor={viewer} organization={organization} /></SidebarProvider>);
+    expect(screen.queryByRole("button", { name: /Select a Workspace/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Workspaces" })).toHaveAttribute("href", "/workspaces");
+  });
+
+  it("uses a DiceBear Gaze avatar seeded by the user id", () => {
+    expect(avatarUrl("operator-1")).toBe("https://api.dicebear.com/10.x/gaze/svg?seed=operator-1");
   });
 
   it("lists users, filters by search text, and clears no-match filters", async () => {
