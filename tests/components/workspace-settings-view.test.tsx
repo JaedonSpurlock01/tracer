@@ -141,6 +141,59 @@ describe("WorkspaceSettingsView", () => {
     );
   });
 
+  describe("Replace Number", () => {
+    const activeWorkspace = { ...workspace, state: "Active" as const, trackingNumber: "+14155550101", destinationNumber: "+14155550199" };
+    const numbers = [
+      { id: "number-current", twilioSid: "PN1", phoneNumber: "+14155550101", friendlyName: "Current", voiceUrl: null, assignedWorkspace: { id: "workspace-1", name: "Phoenix Office" } },
+      { id: "number-free", twilioSid: "PN2", phoneNumber: "+14155550102", friendlyName: "Spare", voiceUrl: null, assignedWorkspace: null },
+    ];
+
+    function routed(replaceResponse: Response) {
+      return vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/users") return new Response(JSON.stringify({ users: [] }), { status: 200 });
+        if (url === "/api/workspaces/numbers") return new Response(JSON.stringify({ numbers }), { status: 200 });
+        if (url === "/api/workspaces/workspace-1/replace-number" && init?.method === "POST") return replaceResponse;
+        throw new Error(`Unexpected route ${url}`);
+      });
+    }
+
+    it("replaces the Tracking Number of an Active Workspace with an unassigned number", async () => {
+      const fetch = routed(new Response(JSON.stringify({ workspace: { ...activeWorkspace, trackingNumber: "+14155550102" } }), { status: 200 }));
+      vi.stubGlobal("fetch", fetch);
+      render(<WorkspaceSettingsView initialWorkspace={activeWorkspace} />);
+      fireEvent.click(screen.getByRole("button", { name: "Replace Number" }));
+      const dialog = await screen.findByRole("dialog", { name: "Replace Tracking Number" });
+      expect(await within(dialog).findByRole("radio", { name: "+14155550101" })).toBeDisabled();
+      fireEvent.click(within(dialog).getByRole("radio", { name: "+14155550102" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Replacement" }));
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          "/api/workspaces/workspace-1/replace-number",
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ twilioNumberId: "number-free" }) }),
+        ),
+      );
+      expect(await screen.findByText("Tracking Number replaced.")).toBeVisible();
+      expect(within(document.getElementById("number")!).getByText("+14155550102")).toBeVisible();
+    });
+
+    it("keeps the current Tracking Number and explains a failed replacement", async () => {
+      vi.stubGlobal("fetch", routed(new Response(JSON.stringify({ error: "provider_unavailable" }), { status: 502 })));
+      render(<WorkspaceSettingsView initialWorkspace={activeWorkspace} />);
+      fireEvent.click(screen.getByRole("button", { name: "Replace Number" }));
+      const dialog = await screen.findByRole("dialog", { name: "Replace Tracking Number" });
+      fireEvent.click(await within(dialog).findByRole("radio", { name: "+14155550102" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Replacement" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Twilio could not complete the replacement. The current Tracking Number is unchanged.");
+      expect(within(document.getElementById("number")!).getByText("+14155550101")).toBeVisible();
+    });
+
+    it("offers replacement only for an Active Workspace", () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ users: [] }), { status: 200 })));
+      render(<WorkspaceSettingsView initialWorkspace={workspace} />);
+      expect(screen.getByRole("button", { name: "Replace Number" })).toBeDisabled();
+    });
+  });
+
   describe("Access", () => {
     const user = {
       email: "client@example.com",

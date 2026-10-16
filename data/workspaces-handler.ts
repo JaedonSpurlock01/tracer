@@ -186,6 +186,11 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         }
         return response({ workspace: await workspaces.update(id, input) });
       }
+      if (request.method === "POST" && subroute === "replace-number") {
+        const body = await readBody(request);
+        if (typeof body.twilioNumberId !== "string") throw new RoutingError("invalid_input");
+        return response({ workspace: await routing.replaceNumber(id, { twilioNumberId: body.twilioNumberId }) });
+      }
       if (request.method === "POST" && subroute === "archive") return response({ workspace: await routing.archive(id) });
       if (request.method === "POST" && subroute === "restore") return response({ workspace: await workspaces.restore(id) });
       return response({ error: "not_found" }, 404);

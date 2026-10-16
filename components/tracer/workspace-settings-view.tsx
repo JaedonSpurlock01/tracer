@@ -34,12 +34,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
+import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
 function timezones(): string[] {
@@ -60,6 +62,10 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
   const [spamGateEnabled, setSpamGateEnabled] = useState(initialWorkspace.spamGateEnabled);
   const [whisperEnabled, setWhisperEnabled] = useState(initialWorkspace.whisperEnabled);
   const [whisperMessage, setWhisperMessage] = useState(initialWorkspace.whisperMessage ?? "");
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replaceNumbers, setReplaceNumbers] = useState<AvailableNumber[]>([]);
+  const [replaceNumberId, setReplaceNumberId] = useState("");
+  const [replaceError, setReplaceError] = useState("");
   const archived = workspace.state === "Archived";
   const published = Boolean(workspace.publishedFlowVersion);
 
@@ -79,6 +85,43 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
       setName(body.workspace.name);
       setTimezone(body.workspace.reportingTimezone);
       setMessage("Workspace settings saved.");
+    }
+    setBusy(false);
+  }
+
+  async function openReplace() {
+    setReplaceOpen(true);
+    setReplaceNumberId("");
+    setReplaceError("");
+    const response = await fetch("/api/workspaces/numbers").catch(() => null);
+    if (!response?.ok) {
+      setReplaceNumbers([]);
+      setReplaceError("Twilio numbers could not be loaded.");
+      return;
+    }
+    const body = (await response.json()) as { numbers: AvailableNumber[] };
+    setReplaceNumbers(body.numbers);
+  }
+
+  async function replaceNumber() {
+    setBusy(true);
+    setReplaceError("");
+    const response = await fetch(`/api/workspaces/${workspace.id}/replace-number`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ twilioNumberId: replaceNumberId }),
+    }).catch(() => null);
+    if (!response?.ok) {
+      setReplaceError(
+        response?.status === 409
+          ? "That number is no longer available. Choose another number."
+          : "Twilio could not complete the replacement. The current Tracking Number is unchanged.",
+      );
+    } else {
+      const body = (await response.json()) as { workspace: WorkspaceRecord };
+      setWorkspace(body.workspace);
+      setReplaceOpen(false);
+      setMessage("Tracking Number replaced.");
     }
     setBusy(false);
   }
@@ -248,10 +291,10 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
                     Edit the Destination Number in the Call Flow
                   </Link>
                 ) : null}
-                <Button type="button" variant="outline" disabled>
+                <Button type="button" variant="outline" disabled={workspace.state !== "Active" || busy} onClick={() => void openReplace()}>
                   Replace Number
                 </Button>
-                <p className="text-xs text-muted-foreground">Available after the first Call is recorded</p>
+                {workspace.state === "Active" ? null : <p className="text-xs text-muted-foreground">Available for an Active Workspace</p>}
               </div>
             </section>
             <section id="recording-and-ai" className="border-t pt-6">
@@ -319,6 +362,41 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
           </div>
         </FramePanel>
       </Frame>
+      <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Replace Tracking Number</DialogTitle>
+            <DialogDescription>
+              Tracer moves the voice webhook to the selected number and restores the current number&apos;s previous Twilio configuration. Call history keeps the number each Call dialed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {replaceNumbers.map((number) => (
+              <label key={number.id} className="flex items-start gap-3 rounded-md border p-3">
+                <input
+                  type="radio"
+                  aria-label={number.phoneNumber}
+                  checked={replaceNumberId === number.id}
+                  disabled={Boolean(number.assignedWorkspace)}
+                  onChange={() => setReplaceNumberId(number.id)}
+                />
+                <span>
+                  <span className="block font-medium">{number.phoneNumber}</span>
+                  {number.friendlyName ? <span className="block text-sm text-muted-foreground">{number.friendlyName}</span> : null}
+                  {number.assignedWorkspace ? <span className="block text-sm text-muted-foreground">Assigned to {number.assignedWorkspace.name}</span> : null}
+                </span>
+              </label>
+            ))}
+          </div>
+          {replaceError ? <p role="alert">{replaceError}</p> : null}
+          <DialogFooter>
+            <Button type="button" disabled={!replaceNumberId || busy} onClick={() => void replaceNumber()}>
+              Confirm Replacement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={confirmArchive} onOpenChange={setConfirmArchive}>
         <AlertDialogContent>
           <AlertDialogHeader>

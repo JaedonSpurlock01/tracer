@@ -545,6 +545,7 @@ If the Workspace record is created but external configuration does not complete,
 - Tracer restores the voice configuration captured when the number was attached.
 - Number replacement ends the current Number Assignment and starts a new one without deleting Workspace history.
 - New attachment failure leaves the Workspace Setup Required with no Number Assignment and provides a Retry path.
+- Any Twilio failure during number replacement aborts the replacement and keeps the current Number Assignment Active, for the same reason.
 - Restoration failure during archive aborts the archive: the Workspace stays Active with its Number Assignment intact, and the Operator sees the provider error with Retry. Tracer never ends an assignment while Twilio still points at it.
 
 ### States
@@ -1128,7 +1129,7 @@ Changing timezone affects future date grouping and report interpretation. Stored
 - Read-only Destination Number with `Edit Flow` link
 - Replace Number action
 
-Replace Number uses a confirmation wizard that selects an unassigned Twilio number, validates it, restores the old number's saved voice configuration, attaches Tracer to the new number, and starts a new Number Assignment. Historical Calls retain the number dialed. Partial failure moves the Workspace to Setup Required with recovery actions.
+Replace Number is available for any Active Workspace. Its confirmation dialog selects an unassigned Twilio number, ends the current Number Assignment, starts a new one, attaches Tracer to the new number, and then restores the old number's saved voice configuration, so at least one number always routes to Tracer. Historical Calls retain the number dialed. Any Twilio failure aborts the replacement: the new number's captured configuration is restored, the Workspace stays Active on its current Tracking Number, and the Operator sees the provider error.
 
 ### Recording and AI
 
@@ -1168,7 +1169,7 @@ Tracer does not permanently delete a Workspace in the first release.
 ### States
 
 - **Setup Required:** Emphasize incomplete number or routing configuration and Resume Setup.
-- **Number replacement failure:** Preserve both assignment records and show the exact recovery stage.
+- **Number replacement failure:** Keep the current Tracking Number and Number Assignment, and explain that the replacement did not complete.
 - **Access removal conflict:** Keep the current list and explain why the grant was not removed.
 - **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore.
 
