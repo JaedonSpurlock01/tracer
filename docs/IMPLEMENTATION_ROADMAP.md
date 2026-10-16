@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M9 - Minimal Inbound Call Tracer Bullet
+- **Current milestone:** None; M10 is planned for the next sprint
 - **Next milestone:** M10 - Complete First-Release Call Routing
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-15
+- **Last roadmap review:** 2026-10-16
 
-M8 is Complete and merged to `main`. M9 is In Progress on the `milestone/m9-inbound-call-tracer` branch and delivers signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. The Product Owner waived M9's live Staging call gate, which M10's Staging verification now carries. No milestone is In Progress; M10 starts in the next sprint.
 
 ## Status model
 
@@ -176,7 +176,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M6 | Workspace Setup | Complete | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Complete | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
-| M9 | Minimal Inbound Call Tracer Bullet | In Progress | Staging | M8 |
+| M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
 | M11 | Durable Recording Transfer | Not Started | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
@@ -601,7 +601,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M9 - Minimal Inbound Call Tracer Bullet
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** One real Staging inbound call travels through Tracer, forwards to the Destination Number, and persists a canonical Call lifecycle.
 - **Depends on:** M8
 - **Target environment:** Staging
@@ -646,6 +646,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - One real Staging call is answered and one non-answer outcome is observed.
 - Duplicate callback replay leaves state unchanged.
 - Staging replaces the test number after a completed Call and verifies historical attribution.
+- The Product Owner waived the three live Staging checks above when closing M9 on 2026-10-16; they move to M10's verification gate. The automated suites passed in the pull request's full-verification and Staging database smoke checks.
 
 #### Exit criteria
 
@@ -690,6 +691,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 - Domain, contract, Worker, and integration suites pass.
 - Staging exercises each branch with non-sensitive test calls.
+- Carried from M9: one real Staging call is answered and one non-answer outcome is observed, `pnpm smoke:staging-call --replay` leaves state unchanged, and Staging replaces the test number after a completed Call and verifies historical attribution.
 - Provider costs from branch smoke checks are recorded.
 
 #### Exit criteria

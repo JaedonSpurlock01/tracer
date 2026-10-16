@@ -64,6 +64,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Moved M9's live Staging call checks into M10's verification gate because the Product Owner closed M9 before they ran; M10 cannot complete until a real answered and non-answer Call, callback replay, and number replacement are verified on Staging.
 - Started M9 - Minimal Inbound Call Tracer Bullet for signed Twilio voice and status webhooks, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
 - Added an encrypted Twilio Auth Token to the Organization Twilio connection because Twilio signs webhooks with the Auth Token and the M5 API key credential cannot validate them, and refused Workspace activation until that Auth Token is configured so no live Tracking Number routes Calls Tracer cannot authenticate.
 - Ended M9 Calls that reach a step deferred to M10 as Failed instead of skipping the step, rejected voice webhooks for inactive Number Assignments without creating a Call, and made Replace Number available for any Active Workspace rather than only after the first Call.
@@ -111,6 +112,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Completed
 
+- Completed M9 - Minimal Inbound Call Tracer Bullet after the domain, contract, integration, component, browser, typecheck, lint, build, and Staging database smoke gates passed with migrations 0008 through 0010 applied to Staging. The Product Owner waived the live Staging call gate (an answered and a non-answer call, signed callback replay, and number replacement with historical attribution); it moves to M10's Staging verification.
 - Completed M8 - Workspace Access Grants after the domain, contract, integration, component, and Access Grant browser gates passed in a full-verification run on `main`, including direct-route, API denial, and revocation from an existing session, and migration 0007 with its `access_grant` runtime grants was confirmed in the Staging database.
 - Completed M7 - Call Flow Publication and Workspace Activation after the domain, contract, integration, component, and Workspace and Flow browser gates passed and the Product Owner confirmed the live Staging attach, activate, archive, and restore check on the dedicated test number.
 - Completed M0 - Planning and Governance Baseline.
