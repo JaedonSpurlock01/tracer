@@ -37,7 +37,7 @@ export default defineConfig({
       NODE_ENV: "development",
       DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
       AUTH_EMAIL_FROM: "auth@example.com",
-      AUTH_EMAIL_ALLOWED_RECIPIENTS: "operator@example.com",
+      AUTH_EMAIL_ALLOWED_RECIPIENTS: "operator@example.com,client@example.com",
       BETTER_AUTH_SECRET: "e2e-only-secret-that-is-not-a-credential",
       BETTER_AUTH_URL: "http://127.0.0.1:3000",
       TWILIO_CREDENTIAL_MASTER_KEY: "bG9jYWwtZGV2LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU=",

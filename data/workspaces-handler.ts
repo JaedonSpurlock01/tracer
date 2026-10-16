@@ -20,13 +20,14 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
-import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
+import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import type { Integrations } from "@/data/integrations";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
 import type { TwilioClient } from "@/data/twilio-client";
 import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
+import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { workspaceStates, type WorkspaceState } from "@/data/workspace-policy";
 
 export interface WorkspacesHandlerOptions {
@@ -107,7 +108,28 @@ function routingInput(body: Record<string, unknown>): RoutingSettingsInput {
 export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveOperator(options.auth, options.database, request.headers);
+      const actor = await requireActiveActor(options.auth, options.database, request.headers);
+      const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
+      if (request.method === "GET" && (route === "" || (route !== "numbers" && /^[^/]+$/.test(route)))) {
+        const readable = createReadableWorkspaces(options.pool, actor);
+        if (route !== "") {
+          const workspace = await readable.find(route);
+          if (!workspace) throw new WorkspacesError("not_found");
+          return response({ workspace });
+        }
+        const url = new URL(request.url);
+        const state = url.searchParams.get("state") ?? "All";
+        if (state !== "All" && !workspaceStates.includes(state as WorkspaceState)) throw new WorkspacesError("invalid_input");
+        return response(
+          await readable.list({
+            search: url.searchParams.get("search") ?? undefined,
+            state: state as WorkspaceState | "All",
+            page: parsePositiveInteger(url.searchParams.get("page")),
+            pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
+          }),
+        );
+      }
+      if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
       const workspaces: Workspaces = createWorkspaces(options.pool, actor.organizationId);
       const routing = createWorkspaceRouting({
         pool: options.pool,
@@ -117,20 +139,6 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         workspaces,
         baseURL: options.baseURL,
       });
-      const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
-      if (request.method === "GET" && route === "") {
-        const url = new URL(request.url);
-        const state = url.searchParams.get("state") ?? "All";
-        if (state !== "All" && !workspaceStates.includes(state as WorkspaceState)) throw new WorkspacesError("invalid_input");
-        return response(
-          await workspaces.list({
-            search: url.searchParams.get("search") ?? undefined,
-            state: state as WorkspaceState | "All",
-            page: parsePositiveInteger(url.searchParams.get("page")),
-            pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
-          }),
-        );
-      }
       if (request.method === "POST" && route === "") {
         const body = await readBody(request);
         if (typeof body.name !== "string" || typeof body.reportingTimezone !== "string") throw new WorkspacesError("invalid_input");
@@ -164,11 +172,6 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         const body = await readBody(request);
         if (typeof body.twilioNumberId !== "string") throw new RoutingError("invalid_input");
         return response({ workspace: await routing.activate(id, { twilioNumberId: body.twilioNumberId, actorUserId: actor.userId }) });
-      }
-      if (request.method === "GET" && subroute === "") {
-        const workspace = await workspaces.find(id);
-        if (!workspace) throw new WorkspacesError("not_found");
-        return response({ workspace });
       }
       if (request.method === "PATCH" && subroute === "") {
         const body = await readBody(request);

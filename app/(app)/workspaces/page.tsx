@@ -1,11 +1,11 @@
 /**
  * -------------------------------------------------------------------------
  * @file   page.tsx
- * @brief  Renders the guarded Operator Workspaces surface.
+ * @brief  Renders the guarded Workspaces surface.
  *
  * @description
- *  Restricts Workspace management to Active Operators and passes the account
- *  timezone into the initial Workspace setup form.
+ *  Shows Operators the managed Workspace list with setup actions and shows
+ *  Client Viewers a read-only list of their granted Workspaces.
  *
  * @remarks
  *  Workspace setup never activates Twilio routing.
@@ -20,10 +20,10 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import WorkspacesView from "@/components/tracer/workspaces-view";
-import { isActiveOperatorActor } from "@/data/authorization";
+import { canManageWorkspaces } from "@/data/workspace-authorization";
 
 export default async function WorkspacesPage() {
   const actor = await resolveRequestActor();
-  if (!isActiveOperatorActor(actor)) notFound();
-  return <WorkspacesView initialTimezone={actor.timezone} />;
+  if (actor?.state !== "Active") notFound();
+  return <WorkspacesView initialTimezone={actor.timezone} readOnly={!canManageWorkspaces(actor)} />;
 }

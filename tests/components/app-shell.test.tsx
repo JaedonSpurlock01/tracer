@@ -42,6 +42,7 @@ const operator: OperatorRecord = {
   lastSignInAt: "2026-10-14T00:00:00.000Z",
   provisionedBy: null,
   createdAt: "2026-10-01T00:00:00.000Z",
+  accessGrants: [],
 };
 
 const secondOperator: OperatorRecord = {
@@ -59,7 +60,30 @@ const viewer: OperatorRecord = {
   email: "viewer@example.com",
   role: "Client Viewer",
   provisionedBy: { id: operator.id, name: operator.name },
+  accessGrants: [{ workspaceId: "ws-acme", workspaceName: "Acme Plumbing" }],
 };
+
+const activeWorkspaces = {
+  workspaces: [
+    { id: "ws-acme", name: "Acme Plumbing", state: "Active" },
+    { id: "ws-gamma", name: "Gamma HVAC", state: "Active" },
+  ],
+  total: 2,
+};
+
+async function chooseOption(name: string) {
+  const option = await screen.findByRole("option", { name });
+  option.focus();
+  fireEvent.keyDown(option, { key: "Enter" });
+}
+
+function routedFetch(routes: Record<string, unknown>, fallback: unknown = { users: [] }) {
+  return vi.fn((url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? "GET"} ${url}`;
+    const route = Object.keys(routes).find((candidate) => key.startsWith(candidate));
+    return response(route ? routes[route] : fallback);
+  });
+}
 
 function response(value: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), { status }));
@@ -84,7 +108,7 @@ afterEach(() => {
 
 describe("application shell", () => {
   it("shows all navigation links for an Operator and hides Operator links for a Client Viewer", () => {
-    render(<SidebarProvider><AppSidebar actor={operator} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
     expect(screen.getByRole("link", { name: "Home" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toBeVisible();
@@ -94,14 +118,30 @@ describe("application shell", () => {
     expect(screen.getByRole("link", { name: "Integrations" })).toBeVisible();
 
     cleanup();
-    render(<SidebarProvider><AppSidebar actor={viewer} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[]} /></SidebarProvider>);
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
   });
 
+  it("switches between the Client Viewer's granted Workspaces only", async () => {
+    pathname.value = "/workspaces/ws-acme";
+    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }, { id: "ws-gamma", name: "Gamma HVAC" }]} /></SidebarProvider>);
+    fireEvent.click(screen.getByRole("button", { name: /Acme Plumbing/ }));
+    expect(await screen.findByRole("menuitem", { name: "Gamma HVAC" })).toHaveAttribute("href", "/workspaces/ws-gamma");
+    expect(screen.getByRole("menuitem", { name: /Acme Plumbing/ })).toHaveAttribute("href", "/workspaces/ws-acme");
+    expect(screen.queryByRole("menuitem", { name: "All Workspaces" })).not.toBeInTheDocument();
+  });
+
+  it("offers Operators every Workspace and the full Workspace list", async () => {
+    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }]} /></SidebarProvider>);
+    fireEvent.click(screen.getByRole("button", { name: /Select a Workspace/ }));
+    expect(await screen.findByRole("menuitem", { name: "All Workspaces" })).toHaveAttribute("href", "/workspaces");
+    expect(screen.getByRole("menuitem", { name: "Acme Plumbing" })).toHaveAttribute("href", "/workspaces/ws-acme");
+  });
+
   it("opens the account menu and signs out through Better Auth", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ success: true })));
-    render(<SidebarProvider><AppSidebar actor={operator} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
     fireEvent.click(screen.getByRole("button", { name: /Example Operator/ }));
     await screen.findByRole("menuitem", { name: "Account Settings" });
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
@@ -119,7 +159,7 @@ describe("application shell", () => {
     expect(await screen.findByRole("button", { name: "Manage Example Operator" })).toBeVisible();
   });
 
-  it("provisions an Operator with delivery feedback and disables Client Viewer", async () => {
+  it("provisions an Operator with delivery feedback", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(response({ users: [operator] }))
       .mockResolvedValueOnce(response({ user: { ...secondOperator, state: "Provisioned" }, delivery: "failed" }, 201))
@@ -129,8 +169,6 @@ describe("application shell", () => {
     render(<UsersView currentUserId={operator.id} />);
     await screen.findByText("Example Operator");
     fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
-    fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
-    expect(screen.getByRole("option", { name: /Client Viewer/ })).toHaveAttribute("aria-disabled", "true");
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "second@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Access email could not be delivered.");
@@ -147,7 +185,7 @@ describe("application shell", () => {
     render(<UsersView currentUserId={operator.id} />);
     await screen.findByRole("button", { name: "Manage Example Operator" });
     fireEvent.click(screen.getByRole("button", { name: "Manage Example Operator" }));
-    expect(screen.getByText("The last Active Operator cannot be disabled.")).toBeVisible();
+    expect(screen.getByText("The last Active Operator cannot be disabled or made a Client Viewer.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Disable" })).toBeDisabled();
   });
 
@@ -163,5 +201,95 @@ describe("application shell", () => {
       "/api/users/operator-2/state",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ state: "Disabled" }) }),
     ));
+  });
+
+  it("shows each Client Viewer's granted Workspaces", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ users: [operator, viewer] })));
+    render(<UsersView currentUserId={operator.id} />);
+    expect(await screen.findByText("All Workspaces")).toBeVisible();
+    expect(screen.getByText("Acme Plumbing")).toBeVisible();
+  });
+
+  it("requires Workspace Access before provisioning a Client Viewer", async () => {
+    const fetch = routedFetch({
+      "GET /api/workspaces": activeWorkspaces,
+      "POST /api/users": { user: { ...viewer, id: "viewer-2", email: "client@example.com", state: "Provisioned" }, delivery: "sent" },
+      "GET /api/users": { users: [operator] },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<UsersView currentUserId={operator.id} />);
+    await screen.findByText("Example Operator");
+    fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
+    await chooseOption("Client Viewer");
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "client@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Provision" }));
+    expect(await screen.findByText("Select at least one Workspace.")).toBeVisible();
+    expect(fetch).not.toHaveBeenCalledWith("/api/users", expect.objectContaining({ method: "POST" }));
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Acme Plumbing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Provision" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ email: "client@example.com", name: "", role: "Client Viewer", sendEmail: true, workspaceIds: ["ws-acme"] }),
+    })));
+    expect(await screen.findByText("Client Viewer provisioned.")).toBeVisible();
+  });
+
+  it("adds Access Grants and keeps a Client Viewer's last grant", async () => {
+    const fetch = routedFetch({
+      "GET /api/workspaces": activeWorkspaces,
+      "POST /api/users/viewer-1/access-grants": { user: viewer },
+      "GET /api/users": { users: [operator, viewer] },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<UsersView currentUserId={operator.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
+    expect(screen.getByRole("button", { name: "Remove Acme Plumbing" })).toBeDisabled();
+    expect(screen.getByText("A Client Viewer must keep at least one Access Grant.")).toBeVisible();
+    fireEvent.click(screen.getByRole("combobox", { name: "Add Workspace Access" }));
+    expect(await screen.findByRole("option", { name: "Gamma HVAC" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Acme Plumbing" })).not.toBeInTheDocument();
+    await chooseOption("Gamma HVAC");
+    fireEvent.click(screen.getByRole("button", { name: "Add Access" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users/viewer-1/access-grants", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ workspaceId: "ws-gamma" }),
+    })));
+  });
+
+  it("removes a non-final Access Grant", async () => {
+    const twoGrants = { ...viewer, accessGrants: [...viewer.accessGrants, { workspaceId: "ws-gamma", workspaceName: "Gamma HVAC" }] };
+    const fetch = routedFetch({
+      "GET /api/workspaces": activeWorkspaces,
+      "DELETE /api/users/viewer-1/access-grants/ws-gamma": { user: viewer },
+      "GET /api/users": { users: [operator, twoGrants] },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<UsersView currentUserId={operator.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Gamma HVAC" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users/viewer-1/access-grants/ws-gamma", expect.objectContaining({ method: "DELETE" })));
+  });
+
+  it("changes roles without demoting the last Active Operator", async () => {
+    const fetch = routedFetch({
+      "GET /api/workspaces": activeWorkspaces,
+      "POST /api/users/viewer-1/role": { user: { ...viewer, role: "Operator" } },
+      "GET /api/users": { users: [operator, viewer] },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<UsersView currentUserId={operator.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Example Operator" }));
+    expect(screen.getByRole("button", { name: "Make Client Viewer" })).toBeDisabled();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Manage Client Viewer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Make Operator" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users/viewer-1/role", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ role: "Operator" }),
+    })));
   });
 });

@@ -138,10 +138,14 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); await container?.stop(); });
 
 describe.sequential("Workspaces", () => {
-  it("requires an Active Operator", async () => {
+  it("requires authentication and limits ungranted Client Viewers to an empty read scope", async () => {
     expect((await json(new Request("http://localhost:3000/api/workspaces"))).response.status).toBe(401);
     const cookie = await signIn("viewer@example.com");
-    expect((await json(new Request("http://localhost:3000/api/workspaces", { headers: { cookie } }))).response.status).toBe(403);
+    const list = await json(new Request("http://localhost:3000/api/workspaces", { headers: { cookie } }));
+    expect(list.response.status).toBe(200);
+    expect(list.body).toMatchObject({ workspaces: [], total: 0, counts: { setupRequired: 0, active: 0, archived: 0 } });
+    const create = await json(new Request("http://localhost:3000/api/workspaces", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Viewer", reportingTimezone: "UTC" }) }));
+    expect(create.response.status).toBe(403);
   });
 
   it("creates Setup Required Workspaces and validates public inputs", async () => {

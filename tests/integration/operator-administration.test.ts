@@ -4,8 +4,9 @@
  * @brief  Verifies Operator administration through the authenticated handler.
  *
  * @description
- *  Exercises Organization-scoped Operator provisioning, access delivery,
- *  state protection, and session revocation through PostgreSQL.
+ *  Exercises Organization-scoped Operator and Client Viewer provisioning,
+ *  Access Grants, access delivery, state protection, and session revocation
+ *  through PostgreSQL.
  *
  * @remarks
  *  The suite uses one PostgreSQL container and real Better Auth sessions.
@@ -35,6 +36,11 @@ let otherUserId = "";
 let viewerId = "";
 let secondId = "";
 let thirdId = "";
+let activeWorkspaceId = "";
+let setupWorkspaceId = "";
+let secondActiveWorkspaceId = "";
+let archivedWorkspaceId = "";
+let clientId = "";
 const messages: { to: string; subject: string; text: string; html: string }[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 
@@ -66,7 +72,7 @@ const handler = () => createOperatorAdministrationHandler({
     },
   },
   emailFrom: "auth@example.com",
-  allowedRecipients: new Set(["operator@example.com", "second@example.com", "viewer@example.com"]),
+  allowedRecipients: new Set(["operator@example.com", "second@example.com", "viewer@example.com", "client@example.com"]),
   signInUrl: "http://localhost:3000/sign-in",
 });
 
@@ -126,6 +132,18 @@ beforeAll(async () => {
             ('viewer-membership-id', $2, $3, 'member', now())`,
     [otherUserId, organizationId, viewerId],
   );
+  activeWorkspaceId = "active-workspace-id";
+  setupWorkspaceId = "setup-workspace-id";
+  secondActiveWorkspaceId = "second-active-workspace-id";
+  archivedWorkspaceId = "archived-workspace-id";
+  await pool.query(
+    `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
+     values ($1, $5, 'Acme Plumbing', 'UTC', 'Active', now(), now()),
+            ($2, $5, 'Beta Roofing', 'UTC', 'Setup Required', now(), now()),
+            ($3, $5, 'Gamma HVAC', 'UTC', 'Active', now(), now()),
+            ($4, $5, 'Delta Electric', 'UTC', 'Archived', now(), now())`,
+    [activeWorkspaceId, setupWorkspaceId, secondActiveWorkspaceId, archivedWorkspaceId, organizationId],
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -154,12 +172,12 @@ describe.sequential("Operator administration", () => {
     expect(result.body.users).not.toEqual(expect.arrayContaining([expect.objectContaining({ email: "other@example.com" })]));
   });
 
-  it("provisions only Operators and delivers access notices", async () => {
+  it("provisions Operators and delivers access notices", async () => {
     const cookie = await signIn("operator@example.com");
     const unavailable = await json(new Request("http://localhost:3000/api/users", {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ email: "viewer2@example.com", role: "Client Viewer" }),
+      body: JSON.stringify({ email: "admin2@example.com", role: "Administrator" }),
     }));
     expect(unavailable.response.status).toBe(400);
     expect(unavailable.body).toEqual({ error: "role_unavailable" });
@@ -194,6 +212,166 @@ describe.sequential("Operator administration", () => {
     expect(skipped.response.status).toBe(201);
     expect(skipped.body.delivery).toBe("skipped");
     thirdId = (skipped.body.user as { id: string }).id;
+  });
+
+  it("refuses Client Viewer provisioning without an Access Grant to an Active Workspace", async () => {
+    const cookie = await signIn("operator@example.com");
+    const missing = await json(new Request("http://localhost:3000/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ email: "client@example.com", role: "Client Viewer" }),
+    }));
+    expect(missing.response.status).toBe(400);
+    expect(missing.body).toEqual({ error: "access_grant_required" });
+
+    const setupRequired = await json(new Request("http://localhost:3000/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ email: "client@example.com", role: "Client Viewer", workspaceIds: [activeWorkspaceId, setupWorkspaceId] }),
+    }));
+    expect(setupRequired.response.status).toBe(409);
+    expect(setupRequired.body).toEqual({ error: "workspace_not_grantable" });
+    await expect(pool!.query(`select count(*) from "user" where email = 'client@example.com'`)).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(pool!.query("select count(*) from access_grant")).resolves.toMatchObject({ rows: [{ count: "0" }] });
+  });
+
+  it("provisions a Client Viewer and the initial Access Grant together", async () => {
+    const cookie = await signIn("operator@example.com");
+    const provisioned = await json(new Request("http://localhost:3000/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ email: "client@example.com", role: "Client Viewer", workspaceIds: [activeWorkspaceId, activeWorkspaceId] }),
+    }));
+    expect(provisioned.response.status).toBe(201);
+    expect(provisioned.body.delivery).toBe("sent");
+    expect(provisioned.body.user).toMatchObject({
+      email: "client@example.com",
+      role: "Client Viewer",
+      state: "Provisioned",
+      accessGrants: [{ workspaceId: activeWorkspaceId, workspaceName: "Acme Plumbing" }],
+    });
+    clientId = (provisioned.body.user as { id: string }).id;
+    const accessMessage = messages.at(-1)!;
+    expect(accessMessage.to).toBe("client@example.com");
+    expect(accessMessage.text).toContain("Acme Plumbing");
+    expect(accessMessage.text).toContain("http://localhost:3000/sign-in");
+    expect(`${accessMessage.text} ${accessMessage.html}`).not.toMatch(/\d{6}/);
+  });
+
+  it("adds Access Grants idempotently and only for Client Viewers on Active Workspaces", async () => {
+    const cookie = await signIn("operator@example.com");
+    const grant = (userId: string, workspaceId: string) => json(new Request(`http://localhost:3000/api/users/${userId}/access-grants`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId }),
+    }));
+
+    const added = await grant(clientId, secondActiveWorkspaceId);
+    expect(added.response.status).toBe(200);
+    expect((added.body.user as { accessGrants: unknown[] }).accessGrants).toEqual([
+      { workspaceId: activeWorkspaceId, workspaceName: "Acme Plumbing" },
+      { workspaceId: secondActiveWorkspaceId, workspaceName: "Gamma HVAC" },
+    ]);
+
+    const duplicate = await grant(clientId, secondActiveWorkspaceId);
+    expect(duplicate.response.status).toBe(200);
+    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "2" }] });
+
+    const archived = await grant(clientId, archivedWorkspaceId);
+    expect(archived.response.status).toBe(409);
+    expect(archived.body).toEqual({ error: "workspace_not_grantable" });
+
+    const setupRequired = await grant(clientId, setupWorkspaceId);
+    expect(setupRequired.response.status).toBe(409);
+    expect(setupRequired.body).toEqual({ error: "workspace_not_grantable" });
+
+    const operator = await grant(secondId, activeWorkspaceId);
+    expect(operator.response.status).toBe(409);
+    expect(operator.body).toEqual({ error: "not_client_viewer" });
+
+    const outsideOrganization = await grant(otherUserId, activeWorkspaceId);
+    expect(outsideOrganization.response.status).toBe(404);
+  });
+
+  it("removes Access Grants but never a Client Viewer's last grant", async () => {
+    const cookie = await signIn("operator@example.com");
+    const revoke = (userId: string, workspaceId: string) => json(new Request(`http://localhost:3000/api/users/${userId}/access-grants/${workspaceId}`, {
+      method: "DELETE",
+      headers: { cookie },
+    }));
+
+    const removed = await revoke(clientId, secondActiveWorkspaceId);
+    expect(removed.response.status).toBe(200);
+    expect((removed.body.user as { accessGrants: unknown[] }).accessGrants).toEqual([
+      { workspaceId: activeWorkspaceId, workspaceName: "Acme Plumbing" },
+    ]);
+
+    const missing = await revoke(clientId, secondActiveWorkspaceId);
+    expect(missing.response.status).toBe(404);
+
+    const last = await revoke(clientId, activeWorkspaceId);
+    expect(last.response.status).toBe(409);
+    expect(last.body).toEqual({ error: "last_access_grant" });
+    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "1" }] });
+  });
+
+  it("demotes an Operator to Client Viewer only with an Access Grant", async () => {
+    const cookie = await signIn("operator@example.com");
+    const changeRole = (body: Record<string, unknown>) => json(new Request(`http://localhost:3000/api/users/${thirdId}/role`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+
+    const missing = await changeRole({ role: "Client Viewer" });
+    expect(missing.response.status).toBe(400);
+    expect(missing.body).toEqual({ error: "access_grant_required" });
+
+    const setupRequired = await changeRole({ role: "Client Viewer", workspaceIds: [setupWorkspaceId] });
+    expect(setupRequired.response.status).toBe(409);
+    expect(setupRequired.body).toEqual({ error: "workspace_not_grantable" });
+    await expect(pool!.query("select role from member where user_id = $1", [thirdId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
+
+    const demoted = await changeRole({ role: "Client Viewer", workspaceIds: [secondActiveWorkspaceId] });
+    expect(demoted.response.status).toBe(200);
+    expect(demoted.body.user).toMatchObject({
+      role: "Client Viewer",
+      accessGrants: [{ workspaceId: secondActiveWorkspaceId, workspaceName: "Gamma HVAC" }],
+    });
+  });
+
+  it("promotes a Client Viewer while preserving Access Grants for later demotion", async () => {
+    const cookie = await signIn("operator@example.com");
+    const changeRole = (role: string) => json(new Request(`http://localhost:3000/api/users/${thirdId}/role`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ role }),
+    }));
+
+    const promoted = await changeRole("Operator");
+    expect(promoted.response.status).toBe(200);
+    expect(promoted.body.user).toMatchObject({ role: "Operator", accessGrants: [{ workspaceId: secondActiveWorkspaceId }] });
+
+    const unchanged = await changeRole("Operator");
+    expect(unchanged.response.status).toBe(409);
+    expect(unchanged.body).toEqual({ error: "state_unchanged" });
+
+    const demotedAgain = await changeRole("Client Viewer");
+    expect(demotedAgain.response.status).toBe(200);
+    expect(demotedAgain.body.user).toMatchObject({ role: "Client Viewer" });
+  });
+
+  it("refuses demoting the last Active Operator without granting anything", async () => {
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request(`http://localhost:3000/api/users/${operatorId}/role`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ role: "Client Viewer", workspaceIds: [activeWorkspaceId] }),
+    }));
+    expect(result.response.status).toBe(409);
+    expect(result.body).toEqual({ error: "last_active_operator" });
+    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(pool!.query("select role from member where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
   });
 
   it("protects the last Active Operator from disablement", async () => {

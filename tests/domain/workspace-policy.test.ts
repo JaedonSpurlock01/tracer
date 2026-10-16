@@ -19,6 +19,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  accessGrantAuthorizesRead,
+  canReceiveAccessGrant,
   decideArchive,
   decideRestore,
   describeSetupChecklist,
@@ -64,5 +66,17 @@ describe("Workspace policy", () => {
       { label: "Destination Number", complete: true },
       { label: "Published Call Flow", complete: true },
     ]);
+  });
+
+  it("accepts new Access Grants only for Active Workspaces", () => {
+    expect(canReceiveAccessGrant("Active")).toBe(true);
+    expect(canReceiveAccessGrant("Setup Required")).toBe(false);
+    expect(canReceiveAccessGrant("Archived")).toBe(false);
+  });
+
+  it("lets existing Access Grants read Active and Archived Workspaces only", () => {
+    expect(accessGrantAuthorizesRead("Active")).toBe(true);
+    expect(accessGrantAuthorizesRead("Archived")).toBe(true);
+    expect(accessGrantAuthorizesRead("Setup Required")).toBe(false);
   });
 });

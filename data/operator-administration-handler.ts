@@ -25,6 +25,7 @@ import {
   createOperatorAdministration,
   OperatorAdministrationError,
   type OperatorAdministration,
+  type OperatorRecord,
 } from "@/data/operator-administration";
 import { isAllowedRecipient, sendAccessCreatedNotice, type TransactionalEmail } from "@/data/transactional-email";
 import type { TracerAuth } from "@/data/tracer-auth";
@@ -48,7 +49,7 @@ function errorResponse(error: unknown): Response {
     return response({ error: error.status === 401 ? "unauthenticated" : "forbidden" }, error.status);
   }
   if (error instanceof OperatorAdministrationError) {
-    const status = error.code === "invalid_input" || error.code === "role_unavailable"
+    const status = error.code === "invalid_input" || error.code === "role_unavailable" || error.code === "access_grant_required"
       ? 400
       : error.code === "not_found"
         ? 404
@@ -66,19 +67,24 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
+function isWorkspaceIdList(value: unknown): value is string[] | undefined {
+  return value === undefined || (Array.isArray(value) && value.every((id) => typeof id === "string"));
+}
+
 async function deliver(
   options: OperatorAdministrationHandlerOptions,
-  email: string,
+  user: OperatorRecord,
   sendEmail: boolean,
 ): Promise<"sent" | "failed" | "skipped"> {
-  if (!sendEmail || !isAllowedRecipient(options.allowedRecipients, email)) {
+  if (!sendEmail || !isAllowedRecipient(options.allowedRecipients, user.email)) {
     return "skipped";
   }
   try {
     await sendAccessCreatedNotice(options.email, {
-      to: email,
+      to: user.email,
       from: options.emailFrom,
       signInUrl: options.signInUrl,
+      workspaceNames: user.role === "Client Viewer" ? user.accessGrants.map((grant) => grant.workspaceName) : [],
     });
     return "sent";
   } catch {
@@ -100,16 +106,17 @@ export function createOperatorAdministrationHandler(
       }
       if (request.method === "POST" && route === "") {
         const body = await readBody(request);
-        if (typeof body.email !== "string" || typeof body.role !== "string") {
+        if (typeof body.email !== "string" || typeof body.role !== "string" || !isWorkspaceIdList(body.workspaceIds)) {
           throw new OperatorAdministrationError("invalid_input");
         }
         const user = await administration.provision({
           email: body.email,
           name: typeof body.name === "string" ? body.name : undefined,
           role: body.role,
+          workspaceIds: body.workspaceIds,
           actorUserId: actor.userId,
         });
-        const delivery = await deliver(options, user.email, body.sendEmail !== false);
+        const delivery = await deliver(options, user, body.sendEmail !== false);
         return response({ user, delivery }, 201);
       }
 
@@ -122,6 +129,44 @@ export function createOperatorAdministrationHandler(
         return response({ user: await administration.setState(stateMatch[1], body.state) });
       }
 
+      const roleMatch = route.match(/^([^/]+)\/role$/);
+      if (request.method === "POST" && roleMatch) {
+        const body = await readBody(request);
+        if (typeof body.role !== "string" || !isWorkspaceIdList(body.workspaceIds)) {
+          throw new OperatorAdministrationError("invalid_input");
+        }
+        return response({
+          user: await administration.setRole({
+            userId: roleMatch[1],
+            role: body.role,
+            workspaceIds: body.workspaceIds,
+            actorUserId: actor.userId,
+          }),
+        });
+      }
+
+      const grantsMatch = route.match(/^([^/]+)\/access-grants$/);
+      if (request.method === "POST" && grantsMatch) {
+        const body = await readBody(request);
+        if (typeof body.workspaceId !== "string") {
+          throw new OperatorAdministrationError("invalid_input");
+        }
+        return response({
+          user: await administration.addAccessGrant({
+            userId: grantsMatch[1],
+            workspaceId: body.workspaceId,
+            actorUserId: actor.userId,
+          }),
+        });
+      }
+
+      const grantMatch = route.match(/^([^/]+)\/access-grants\/([^/]+)$/);
+      if (request.method === "DELETE" && grantMatch) {
+        return response({
+          user: await administration.removeAccessGrant({ userId: grantMatch[1], workspaceId: grantMatch[2] }),
+        });
+      }
+
       const resendMatch = route.match(/^([^/]+)\/resend-access$/);
       if (request.method === "POST" && resendMatch) {
         const user = await administration.find(resendMatch[1]);
@@ -131,7 +176,7 @@ export function createOperatorAdministrationHandler(
         if (user.state !== "Provisioned") {
           throw new OperatorAdministrationError("state_unchanged");
         }
-        return response({ delivery: await deliver(options, user.email, true) });
+        return response({ delivery: await deliver(options, user, true) });
       }
 
       return response({ error: "not_found" }, 404);

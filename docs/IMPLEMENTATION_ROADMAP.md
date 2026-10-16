@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M7 - Call Flow Publication and Workspace Activation
-- **Next milestone:** M8 - Workspace Access Grants
+- **Current milestone:** M8 - Workspace Access Grants
+- **Next milestone:** M9 - Minimal Inbound Call Tracer Bullet
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-14
+- **Last roadmap review:** 2026-10-15
 
-M6 is Complete and merged to `main`. M7 is In Progress on the `milestone/m7-call-flow-activation` branch and delivers the Number Assignment, Call Flow, and Flow Version domain modules, the completed Create Workspace wizard, the graph validator, the React Flow editor, and the Twilio attachment and restoration boundaries. Migration 0005 and the `workspace` runtime grant must be applied to Staging through the approved GitHub workflow before M7's Staging gate runs.
+M7 is Complete and merged to `main`. M8 is In Progress on the `milestone/m8-workspace-access-grants` branch and delivers Access Grant persistence, Client Viewer provisioning, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
 
 ## Status model
 
@@ -174,8 +174,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M4 | Operator Administration and Application Shell | Complete | Local and Preview | M3 |
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
 | M6 | Workspace Setup | Complete | Preview and Staging | M5 |
-| M7 | Call Flow Publication and Workspace Activation | In Progress | Preview and Staging | M6 |
-| M8 | Workspace Access Grants | Not Started | Preview and Staging | M7 |
+| M7 | Call Flow Publication and Workspace Activation | Complete | Preview and Staging | M6 |
+| M8 | Workspace Access Grants | In Progress | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
 | M11 | Durable Recording Transfer | Not Started | Staging | M10 |
@@ -484,7 +484,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M7 - Call Flow Publication and Workspace Activation
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** An Operator can finish setup, publish a valid initial Call Flow, activate one Tracking Number safely, and manage the resulting active Workspace lifecycle.
 - **Depends on:** M6
 - **Target environment:** Preview and Staging
@@ -548,10 +548,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M8 - Workspace Access Grants
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** An Operator can grant a Client Viewer explicit read access to an Active Workspace without exposing any ungranted Workspace.
 - **Depends on:** M7
 - **Target environment:** Preview and Staging
+- **Execution note:** New Access Grants may target only Active Workspaces. Existing grants survive archive and keep read-only access to the Archived Workspace; they also survive a restore to Setup Required but authorize nothing until the Workspace is Active again. A Client Viewer always holds at least one Access Grant: provisioning and Operator demotion require one, and removing the last remaining grant is refused, so an Operator disables the user to end all access. Until M15 delivers the scoped Home dashboard, a multi-Workspace Client Viewer lands on the Workspaces list filtered to their grants; a one-Workspace Client Viewer lands on that Workspace Overview. Migration 0007 adds `access_grant`; the runtime role receives SELECT, INSERT, and DELETE but no UPDATE. Migration 0007 and the refreshed runtime grants must reach Staging through the approved GitHub workflow before M8's Staging check runs.
 
 #### Vertical slices
 

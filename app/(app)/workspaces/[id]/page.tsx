@@ -4,11 +4,12 @@
  * @brief  Renders the guarded Workspace Overview route.
  *
  * @description
- *  Resolves one Organization Workspace for an Active Operator and renders the
- *  setup-aware overview stub.
+ *  Resolves one Workspace the actor may read and renders the setup-aware
+ *  overview. Client Viewers see a read-only Overview of granted Workspaces.
  *
  * @remarks
- *  Organization scoping remains enforced by the Workspace service.
+ *  Organization and Access Grant scoping are enforced by the central
+ *  Workspace authorization policy, so ungranted Workspaces return not found.
  *
  * @see
  *  components/tracer/workspace-overview.tsx
@@ -20,22 +21,26 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
-import { isActiveOperatorActor } from "@/data/authorization";
+import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { createWorkspaceRoutingFromRuntime } from "@/data/workspace-routing-runtime";
-import { createWorkspaces } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
 export default async function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const actor = await resolveRequestActor();
-  if (!isActiveOperatorActor(actor)) notFound();
+  if (actor?.state !== "Active") notFound();
   const { id } = await params;
   const data = await withTracerRuntime(async (runtime) => {
-    const workspaces = createWorkspaces(runtime.pool, actor.organizationId);
-    const workspace = await workspaces.find(id);
+    const workspace = await createReadableWorkspaces(runtime.pool, actor).find(id);
     if (!workspace) return null;
     const routing = createWorkspaceRoutingFromRuntime(runtime, actor.organizationId);
     return { workspace, flow: await routing.getFlow(id) };
   });
   if (!data) notFound();
-  return <WorkspaceOverview workspace={data.workspace} flow={data.flow} />;
+  return (
+    <WorkspaceOverview
+      workspace={data.workspace}
+      flow={{ published: data.flow.published }}
+      readOnly={!canManageWorkspaces(actor)}
+    />
+  );
 }
