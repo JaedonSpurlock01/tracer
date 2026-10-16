@@ -64,6 +64,13 @@
       "when": 1792112935876,
       "tag": "0008_yielding_thundra",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792113452070,
+      "tag": "0009_aspiring_starjammers",
+      "breakpoints": true
     }
   ]
 }

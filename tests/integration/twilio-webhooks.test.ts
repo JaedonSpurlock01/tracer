@@ -132,4 +132,47 @@ describe.sequential("Twilio voice webhook", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/xml");
   });
+
+  it("creates one In Progress Call pinned to the published Flow Version", async () => {
+    const callSid = "CA00000000000000000000000000000002";
+    const params = voiceParams(callSid);
+    const response = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
+    expect(response.status).toBe(200);
+    const calls = await pool!.query(
+      `select workspace_id, number_assignment_id, flow_version_id, tracking_number, caller_number, state, outcome
+         from call where twilio_call_sid = $1`,
+      [callSid],
+    );
+    expect(calls.rows).toEqual([
+      {
+        workspace_id: "webhook-workspace",
+        number_assignment_id: assignmentId,
+        flow_version_id: "webhook-flow-version-1",
+        tracking_number: trackingNumber,
+        caller_number: "+14155550123",
+        state: "In Progress",
+        outcome: null,
+      },
+    ]);
+    const events = await pool!.query(
+      `select e.kind, e.disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1`,
+      [callSid],
+    );
+    expect(events.rows).toEqual([{ kind: "voice", disposition: "accepted" }]);
+  });
+
+  it("resumes the same Call without duplicating it or its event on duplicate delivery", async () => {
+    const callSid = "CA00000000000000000000000000000003";
+    const params = voiceParams(callSid);
+    const first = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
+    const replay = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
+    expect(replay.status).toBe(200);
+    expect(await replay.text()).toBe(await first.text());
+    const counts = await pool!.query<{ calls: number; events: number }>(
+      `select (select count(*)::int from call where twilio_call_sid = $1) as calls,
+              (select count(*)::int from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1) as events`,
+      [callSid],
+    );
+    expect(counts.rows[0]).toEqual({ calls: 1, events: 1 });
+  });
 });

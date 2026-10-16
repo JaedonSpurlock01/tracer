@@ -46,18 +46,20 @@ it("migrates a clean database to the latest authentication and Organization sche
     `select table_name
        from information_schema.tables
       where table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event')
       order by table_name`,
   );
   expect(result.rows.map(({ table_name }) => table_name)).toEqual([
     "access_grant",
     "account",
+    "call",
     "call_flow_draft",
     "flow_version",
     "invitation",
     "member",
     "number_assignment",
     "organization",
+    "provider_event",
     "session",
     "twilio_connection",
     "twilio_number",
@@ -119,7 +121,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(9);
+  expect(Number(result.rows[0].count)).toBe(10);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {
@@ -153,7 +155,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
        from information_schema.role_table_grants
       where grantee = $1
         and table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event')
       order by table_name, privilege_type`,
     [runtimeRole],
   );
@@ -173,6 +175,12 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "flow_version", privilege_type: "UPDATE" });
   expect(grants.rows).not.toContainEqual({ table_name: "flow_version", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "call_flow_draft", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "call", privilege_type: "INSERT" });
+  expect(grants.rows).toContainEqual({ table_name: "call", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "call", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "provider_event", privilege_type: "INSERT" });
+  expect(grants.rows).not.toContainEqual({ table_name: "provider_event", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "provider_event", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "INSERT" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "DELETE" });

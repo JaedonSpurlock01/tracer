@@ -24,6 +24,7 @@
 import type { Pool } from "pg";
 
 import { decryptSecret } from "@/data/credential-encryption";
+import { createInboundCalls } from "@/data/inbound-calls";
 import { isValidTwilioSignature } from "@/data/twilio-signature";
 
 export interface TwilioWebhookHandlerOptions {
@@ -79,6 +80,8 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
     if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${path}`, params, signature }))) {
       return forbidden();
     }
+    const result = await createInboundCalls({ pool: options.pool }).receiveVoiceWebhook(voice[1], params);
+    if (result.kind !== "call") return forbidden();
     return twiml("");
   };
 }
