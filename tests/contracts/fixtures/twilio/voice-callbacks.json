@@ -1,0 +1,66 @@
+{
+  "source": "https://www.twilio.com/docs/voice/twiml/gather, https://www.twilio.com/docs/voice/twiml/dial, https://www.twilio.com/docs/voice/twiml/record request parameters",
+  "gatherAction": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ApiVersion": "2010-04-01",
+    "CallSid": "CA11111111111111111111111111111111",
+    "CallStatus": "in-progress",
+    "Digits": "1",
+    "Direction": "inbound",
+    "FinishedOnKey": "",
+    "From": "+14155550123",
+    "To": "+14155550101",
+    "msg": "Gather End"
+  },
+  "gatherTimeout": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ApiVersion": "2010-04-01",
+    "CallSid": "CA11111111111111111111111111111111",
+    "CallStatus": "in-progress",
+    "Direction": "inbound",
+    "From": "+14155550123",
+    "To": "+14155550101"
+  },
+  "dialAction": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ApiVersion": "2010-04-01",
+    "CallSid": "CA11111111111111111111111111111111",
+    "CallStatus": "in-progress",
+    "DialCallDuration": "0",
+    "DialCallSid": "CA22222222222222222222222222222222",
+    "DialCallStatus": "no-answer",
+    "Direction": "inbound",
+    "From": "+14155550123",
+    "To": "+14155550101"
+  },
+  "recordingStatusCompleted": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "CallSid": "CA11111111111111111111111111111111",
+    "RecordingChannels": "1",
+    "RecordingDuration": "14",
+    "RecordingSid": "RE33333333333333333333333333333333",
+    "RecordingSource": "RecordVerb",
+    "RecordingStartTime": "Fri, 16 Oct 2026 19:00:00 +0000",
+    "RecordingStatus": "completed",
+    "RecordingUrl": "https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Recordings/RE33333333333333333333333333333333"
+  },
+  "recordingStatusAbsent": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "CallSid": "CA11111111111111111111111111111111",
+    "RecordingChannels": "1",
+    "RecordingDuration": "0",
+    "RecordingSid": "RE44444444444444444444444444444444",
+    "RecordingSource": "RecordVerb",
+    "RecordingStatus": "absent"
+  },
+  "recordingStatusFailed": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "CallSid": "CA11111111111111111111111111111111",
+    "ErrorCode": "13617",
+    "RecordingChannels": "1",
+    "RecordingDuration": "0",
+    "RecordingSid": "RE55555555555555555555555555555555",
+    "RecordingSource": "RecordVerb",
+    "RecordingStatus": "failed"
+  }
+}

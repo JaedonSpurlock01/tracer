@@ -347,6 +347,7 @@ function EditorBody({ workspace, initialFlow }: Props) {
           nodes={nodes.map((candidate) => candidate.data)}
           issues={selectedIssues}
           editing={editing}
+          timeZone={workspace.reportingTimezone}
           onChange={(nextNode) =>
             setNodes((current) => current.map((candidate) => (candidate.id === nextNode.id ? { ...candidate, data: nextNode } : candidate)))
           }

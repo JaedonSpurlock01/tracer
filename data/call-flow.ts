@@ -27,6 +27,7 @@ export const ttsVoices: readonly TtsVoice[] = ["Polly.Joanna", "Polly.Matthew", 
 
 export const recordingDisclosureText = "This call may be recorded for quality purposes.";
 export const voicemailLimits = { maxSeconds: 120, silenceTimeoutSeconds: 5, finishOnKey: "#" } as const;
+export const promptMaxLength = 500;
 
 export interface FlowPosition {
   x: number;
@@ -220,7 +221,28 @@ function validDate(value: unknown): value is string {
 }
 
 function validWindow(start: unknown, end: unknown): boolean {
-  return validTime(start) && validTime(end) && start < end;
+  return validTime(start) && (validTime(end) || end === "24:00") && start < (end as string);
+}
+
+export interface BusinessHours {
+  weeklyWindows: WeeklyWindow[];
+  dateOverrides: DateOverride[];
+}
+
+export function businessHoursOpen(hours: BusinessHours, at: Date, timeZone: string): boolean {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(at)
+      .map((part) => [part.type, part.value]),
+  );
+  const date = `${parts.year}-${parts.month}-${parts.day}`;
+  const time = `${parts.hour}:${parts.minute}`;
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday);
+  const overrides = hours.dateOverrides.filter((override) => override.date === date);
+  const windows = overrides.length > 0
+    ? overrides.flatMap((override) => (override.open && override.start && override.end ? [{ start: override.start, end: override.end }] : []))
+    : hours.weeklyWindows.filter((window) => window.day === day);
+  return windows.some((window) => window.start <= time && time < window.end);
 }
 
 function nodeById(nodes: FlowNode[]): Map<string, FlowNode> {
@@ -316,6 +338,14 @@ export function validateCallFlow(graph: CallFlowGraph, context: { recordingEnabl
   }
 
   for (const node of nodes) {
+    if (node.type !== "whisper") continue;
+    const next = edges.find((edge) => edge.source === node.id && edge.sourceHandle === "next");
+    if (next && byId.get(next.target)?.type !== "forward_call") {
+      issues.push(issue("whisper_requires_forward", "Whisper must lead directly to a forward call.", { nodeId: node.id }));
+    }
+  }
+
+  for (const node of nodes) {
     if (node.type !== "voicemail") continue;
     const nextEdges = edges.filter((edge) => edge.source === node.id && edge.sourceHandle === "next");
     const target = nextEdges.length === 1 ? byId.get(nextEdges[0].target) : undefined;
@@ -339,13 +369,13 @@ export function validateCallFlow(graph: CallFlowGraph, context: { recordingEnabl
     if ((node.type === "forward_call" && (!Number.isInteger(node.timeoutSeconds) || node.timeoutSeconds < 5 || node.timeoutSeconds > 120)) || (node.type === "keypad_gate" && (!Number.isInteger(node.timeoutSeconds) || node.timeoutSeconds < 1 || node.timeoutSeconds > 30))) {
       issues.push(issue("invalid_timeout", "Timeout is outside the supported range.", { nodeId: node.id }));
     }
-    if (node.type === "keypad_gate" && (typeof node.prompt !== "string" || node.prompt.trim().length < 1 || node.prompt.trim().length > 500)) {
+    if (node.type === "keypad_gate" && (typeof node.prompt !== "string" || node.prompt.trim().length < 1 || node.prompt.trim().length > promptMaxLength)) {
       issues.push(issue("invalid_prompt", "Prompt must be 1 to 500 characters.", { nodeId: node.id }));
     }
-    if (node.type === "whisper" && (typeof node.message !== "string" || node.message.trim().length < 1 || node.message.trim().length > 500)) {
+    if (node.type === "whisper" && (typeof node.message !== "string" || node.message.trim().length < 1 || node.message.trim().length > promptMaxLength)) {
       issues.push(issue("invalid_prompt", "Message must be 1 to 500 characters.", { nodeId: node.id }));
     }
-    if (node.type === "voicemail" && (typeof node.greeting !== "string" || node.greeting.trim().length < 1 || node.greeting.trim().length > 500)) {
+    if (node.type === "voicemail" && (typeof node.greeting !== "string" || node.greeting.trim().length < 1 || node.greeting.trim().length > promptMaxLength)) {
       issues.push(issue("invalid_prompt", "Greeting must be 1 to 500 characters.", { nodeId: node.id }));
     }
     if (node.type === "keypad_gate" && (typeof node.digit !== "string" || !/^[0-9]$/.test(node.digit))) {
@@ -411,41 +441,55 @@ export function generateInitialCallFlow(options: InitialFlowOptions): CallFlowGr
   return { version: 1, nodes, edges };
 }
 
-function summaryLabel(node: FlowNode, edges: FlowEdge[], byId: Map<string, FlowNode>): string {
+export interface FlowSummaryItem {
+  branch: string | null;
+  depth: number;
+  label: string;
+}
+
+const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const branchLabels: Record<EdgeHandle, string | null> = {
+  next: null,
+  open: "Open",
+  closed: "Closed",
+  pass: "Pass",
+  blocked: "Blocked",
+  answered: "Answered",
+  missed: "Missed",
+  failed: "Failed",
+};
+
+function summaryLabel(node: FlowNode): string {
   switch (node.type) {
     case "incoming_call": return "Incoming Call";
     case "recording_disclosure": return "Recording Disclosure";
-    case "business_hours": return "Business Hours";
-    case "keypad_gate": {
-      const blocked = edges.find((edge) => edge.source === node.id && edge.sourceHandle === "blocked");
-      const target = blocked ? byId.get(blocked.target) : undefined;
-      return `Keypad Gate: press ${node.digit} to continue (${target?.type === "outcome" ? target.outcome : "Blocked"} -> ${target?.type === "outcome" ? target.outcome : "Blocked"})`;
+    case "business_hours": {
+      const windows = node.weeklyWindows.map((window) => `${weekdayNames[window.day]} ${window.start}-${window.end}`).join(", ") || "No weekly windows";
+      const overrides = node.dateOverrides.length === 0 ? "" : `; ${node.dateOverrides.length} date override${node.dateOverrides.length === 1 ? "" : "s"}`;
+      return `Business Hours: ${windows}${overrides}`;
     }
+    case "keypad_gate": return `Keypad Gate: press ${node.digit} to continue`;
     case "forward_call": return `Forward Call to ${node.destinationNumber}`;
-    case "whisper": return `Whisper: ${node.message}`;
-    case "voicemail": return `Voicemail: ${node.greeting}`;
-    case "outcome": return `${node.outcome} -> ${node.outcome}`;
+    case "whisper": return `Whisper: "${node.message}"`;
+    case "voicemail": return `Voicemail: "${node.greeting}"`;
+    case "outcome": return `Outcome: ${node.outcome}`;
   }
 }
 
-export function summarizeCallFlow(graph: CallFlowGraph): string[] {
+export function summarizeCallFlow(graph: CallFlowGraph): FlowSummaryItem[] {
   const byId = nodeById(graph.nodes);
-  const summaries: string[] = [];
-  const visited = new Set<string>();
-  const handleOrder: Record<FlowNodeType, readonly EdgeHandle[]> = {
-    ...nodeHandles,
-    keypad_gate: ["pass", "blocked"],
-  };
-  const visit = (nodeId: string): void => {
-    if (visited.has(nodeId)) return;
+  const items: FlowSummaryItem[] = [];
+  const visit = (nodeId: string, branch: string | null, depth: number, path: ReadonlySet<string>): void => {
     const node = byId.get(nodeId);
-    if (!node) return;
-    visited.add(nodeId);
-    summaries.push(summaryLabel(node, graph.edges, byId));
-    const outgoing = handleOrder[node.type].flatMap((handle) => graph.edges.filter((edge) => edge.source === node.id && edge.sourceHandle === handle));
-    for (const edge of outgoing) visit(edge.target);
+    if (!node || path.has(nodeId)) return;
+    items.push({ branch, depth, label: summaryLabel(node) });
+    const nextPath = new Set(path).add(nodeId);
+    const outgoing = nodeHandles[node.type].flatMap((handle) => graph.edges.filter((edge) => edge.source === node.id && edge.sourceHandle === handle));
+    const branching = outgoing.length > 1;
+    for (const edge of outgoing) visit(edge.target, branchLabels[edge.sourceHandle], branching ? depth + 1 : depth, nextPath);
   };
   const incoming = graph.nodes.find((node) => node.type === "incoming_call");
-  if (incoming) visit(incoming.id);
-  return summaries;
+  if (incoming) visit(incoming.id, null, 0, new Set());
+  return items;
 }

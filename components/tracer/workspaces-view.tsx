@@ -48,7 +48,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { recordingDisclosureText, summarizeCallFlow, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
+import FlowSummary from "@/components/tracer/flow/flow-summary";
+import { recordingDisclosureText, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
 
@@ -693,11 +694,7 @@ export default function WorkspacesView({
                 <div>
                   <h3 className="font-medium">Call Flow</h3>
                   {flow?.draft ? (
-                    <ol className="list-decimal pl-5 text-sm">
-                      {summarizeCallFlow(flow.draft.graph).map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ol>
+                    <FlowSummary graph={flow.draft.graph} />
                   ) : (
                     <p className="text-sm text-muted-foreground">No generated Call Flow.</p>
                   )}

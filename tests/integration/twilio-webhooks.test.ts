@@ -25,7 +25,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
-import { generateInitialCallFlow } from "@/data/call-flow";
+import { generateInitialCallFlow, type CallFlowGraph, type WeeklyWindow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
 import { replayCallCallbacks, reportTrackingNumberCalls } from "@/data/call-smoke";
@@ -37,6 +37,10 @@ const baseURL = "https://tracer.example.com";
 const assignmentId = "webhook-assignment";
 const trackingNumber = "+14155550101";
 const destinationNumber = "+14155550199";
+
+const routingAssignmentId = "routing-assignment";
+const routingTrackingNumber = "+14155550103";
+const routingTimeZone = "Pacific/Kiritimati";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
@@ -150,6 +154,21 @@ beforeAll(async () => {
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ('archived-assignment', $1, 'archived-workspace', 'archived-number', '+14155550102', now(), now(), 'archived', now())`,
     [organizationId],
+  );
+  await pool.query(
+    `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
+     values ('routing-number', $1, 'PNcccccccccccccccccccccccccccccccc', $2, 'Routing Number', true, now(), now(), now(), now())`,
+    [organizationId, routingTrackingNumber],
+  );
+  await pool.query(
+    `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
+     values ('routing-workspace', $1, 'Routing Workspace', $2, 'Active', $3, now(), now())`,
+    [organizationId, routingTimeZone, destinationNumber],
+  );
+  await pool.query(
+    `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
+     values ($1, $2, 'routing-workspace', 'routing-number', $3, now(), now())`,
+    [routingAssignmentId, organizationId, routingTrackingNumber],
   );
 }, 120_000);
 
@@ -361,5 +380,278 @@ describe.sequential("Staging call smoke", () => {
     const callId = (await pool!.query("select id from call where twilio_call_sid = 'CA00000000000000000000000000000010'")).rows[0].id as string;
     const result = await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) });
     expect(result).toEqual({ replayed: 4, rejected: 0, unchanged: true });
+  });
+});
+
+let routingVersion = 0;
+
+async function publishRoutingFlow(graph: CallFlowGraph): Promise<void> {
+  routingVersion += 1;
+  await pool!.query(
+    `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
+     select $1, organization_id, 'routing-workspace', $2, $3, now() from workspace where id = 'routing-workspace'`,
+    [`routing-flow-version-${routingVersion}`, routingVersion, JSON.stringify(graph)],
+  );
+}
+
+function routingPost(path: string, params: Record<string, string>): Promise<Response> {
+  return post(path.replace("{assignment}", routingAssignmentId), params);
+}
+
+async function startRoutingCall(callSid: string): Promise<string> {
+  const response = await routingPost("/api/twilio/voice/{assignment}", { ...voiceParams(callSid), To: routingTrackingNumber });
+  expect(response.status).toBe(200);
+  return response.text();
+}
+
+function routingCallStatus(callSid: string, status: string, duration = "12"): Promise<Response> {
+  return routingPost("/api/twilio/status/{assignment}", { ...voiceParams(callSid), To: routingTrackingNumber, CallStatus: status, CallDuration: duration });
+}
+
+function windowAroundNowIn(timeZone: string): WeeklyWindow {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((part) => [part.type, part.value]),
+  );
+  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+  const clock = (value: number): string => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+  return {
+    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday) as WeeklyWindow["day"],
+    start: clock(Math.max(0, minutes - 30)),
+    end: minutes + 30 >= 24 * 60 ? "24:00" : clock(minutes + 30),
+  };
+}
+
+function businessHoursFlow(weeklyWindows: WeeklyWindow[]): CallFlowGraph {
+  const graph = generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+  return {
+    version: 1,
+    nodes: [
+      ...graph.nodes,
+      { id: "hours", type: "business_hours", position: { x: 0, y: 0 }, weeklyWindows, dateOverrides: [] },
+      { id: "outcome-closed", type: "outcome", position: { x: 0, y: 0 }, outcome: "Missed" },
+    ],
+    edges: [
+      ...graph.edges.filter((edge) => edge.source !== "incoming"),
+      { id: "incoming-next", source: "incoming", sourceHandle: "next", target: "hours" },
+      { id: "hours-open", source: "hours", sourceHandle: "open", target: "forward" },
+      { id: "hours-closed", source: "hours", sourceHandle: "closed", target: "outcome-closed" },
+    ],
+  };
+}
+
+function gatedFlow(): CallFlowGraph {
+  return generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: true, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+}
+
+function gatherAction(callSid: string, digits: string, attempt: number): Promise<Response> {
+  return routingPost(`/api/twilio/gather/{assignment}?node=gate&attempt=${attempt}`, { ...voiceParams(callSid), To: routingTrackingNumber, CallStatus: "in-progress", Digits: digits });
+}
+
+function voicemailFlow(entry: "closed" | "missed"): CallFlowGraph {
+  const window = windowAroundNowIn(routingTimeZone);
+  const graph = entry === "closed" ? businessHoursFlow([{ ...window, day: ((window.day + 3) % 7) as WeeklyWindow["day"] }]) : generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+  const replaced = entry === "closed" ? "outcome-closed" : "outcome-missed";
+  return {
+    version: 1,
+    nodes: [
+      ...graph.nodes.filter((node) => node.id !== replaced),
+      { id: "voicemail", type: "voicemail", position: { x: 0, y: 0 }, greeting: "Please leave a message.", voice: "Polly.Joanna" },
+      { id: "outcome-voicemail", type: "outcome", position: { x: 0, y: 0 }, outcome: "Voicemail" },
+    ],
+    edges: [
+      ...graph.edges.map((edge) => (edge.target === replaced ? { ...edge, target: "voicemail" } : edge)),
+      { id: "voicemail-next", source: "voicemail", sourceHandle: "next", target: "outcome-voicemail" },
+    ],
+  };
+}
+
+function recordingStatus(callSid: string, status: string, duration: string): Promise<Response> {
+  return routingPost("/api/twilio/voicemail-status/{assignment}?node=voicemail", {
+    AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    CallSid: callSid,
+    RecordingSid: `RE${callSid.slice(2)}`,
+    RecordingStatus: status,
+    RecordingDuration: duration,
+    RecordingChannels: "1",
+    RecordingSource: "RecordVerb",
+  });
+}
+
+function routingForwardStatus(callSid: string, status: string): Promise<Response> {
+  return routingPost("/api/twilio/forward-status/{assignment}?node=forward", { AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CallSid: `${callSid}-forward`, ParentCallSid: callSid, CallStatus: status, Direction: "outbound-dial" });
+}
+
+async function voicemailState(callSid: string): Promise<Record<string, unknown>> {
+  const result = await pool!.query("select voicemail_recording_sid, voicemail_duration_seconds from call where twilio_call_sid = $1", [callSid]);
+  return result.rows[0];
+}
+
+describe.sequential("First-release Call routing", () => {
+  it("forwards a Call that starts inside a Business Hours window in the Workspace timezone", async () => {
+    await publishRoutingFlow(businessHoursFlow([windowAroundNowIn(routingTimeZone)]));
+    const twiml = await startRoutingCall("CA00000000000000000000000000000100");
+    expect(twiml).toContain("<Dial ");
+  });
+
+  it("completes a Call that starts outside Business Hours on the Closed branch outcome", async () => {
+    const window = windowAroundNowIn(routingTimeZone);
+    await publishRoutingFlow(businessHoursFlow([{ ...window, day: ((window.day + 3) % 7) as WeeklyWindow["day"] }]));
+    const callSid = "CA00000000000000000000000000000101";
+    expect(await startRoutingCall(callSid)).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
+    await routingCallStatus(callSid, "completed", "2");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Missed", outcome_reason: "flow_outcome" });
+  });
+
+  it("prompts a gated Call and ends it as Blocked when the caller hangs up during the gate", async () => {
+    await publishRoutingFlow(gatedFlow());
+    const callSid = "CA00000000000000000000000000000110";
+    expect(await startRoutingCall(callSid)).toContain(`action="${baseURL}/api/twilio/gather/${routingAssignmentId}?node=gate&amp;attempt=1"`);
+    await routingCallStatus(callSid, "completed", "6");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Blocked", outcome_reason: "gate_not_completed" });
+  });
+
+  it("forwards a gated Call after the caller presses the gate digit", async () => {
+    const callSid = "CA00000000000000000000000000000111";
+    await startRoutingCall(callSid);
+    const passed = await gatherAction(callSid, "1", 1);
+    expect(passed.status).toBe(200);
+    expect(await passed.text()).toContain("<Dial ");
+    await routingPost("/api/twilio/forward-status/{assignment}?node=forward", { AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CallSid: `${callSid}-forward`, ParentCallSid: callSid, CallStatus: "initiated" });
+    await routingPost("/api/twilio/forward-status/{assignment}?node=forward", { AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CallSid: `${callSid}-forward`, ParentCallSid: callSid, CallStatus: "completed" });
+    await routingCallStatus(callSid, "completed", "30");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Answered" });
+  });
+
+  it("blocks a gated Call that fails the gate twice without ever forwarding it", async () => {
+    const callSid = "CA00000000000000000000000000000112";
+    await startRoutingCall(callSid);
+    expect(await (await gatherAction(callSid, "9", 1)).text()).toContain("attempt=2");
+    expect(await (await gatherAction(callSid, "", 2)).text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
+    await routingCallStatus(callSid, "completed", "20");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Blocked", outcome_reason: "flow_outcome" });
+    const forward = await pool!.query("select forward_node_id from call where twilio_call_sid = $1", [callSid]);
+    expect(forward.rows[0].forward_node_id).toBeNull();
+  });
+
+  it("answers a duplicate gate result with the same TwiML and one provider event", async () => {
+    const callSid = "CA00000000000000000000000000000113";
+    await startRoutingCall(callSid);
+    const first = await (await gatherAction(callSid, "4", 1)).text();
+    expect(await (await gatherAction(callSid, "4", 1)).text()).toBe(first);
+    const events = await pool!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
+    expect(events.rows.map((row) => row.kind)).toEqual(["voice", "gather"]);
+  });
+
+  it("speaks the Whisper to the business leg of a Call pinned to a Whisper flow", async () => {
+    await publishRoutingFlow(generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: true, whisperMessage: "Tracer lead", disclosureVoice: "Polly.Joanna" }));
+    const callSid = "CA00000000000000000000000000000120";
+    expect(await startRoutingCall(callSid)).toContain(`<Number url="${baseURL}/api/twilio/whisper/${routingAssignmentId}?node=whisper" method="POST"`);
+    const whisper = await routingPost("/api/twilio/whisper/{assignment}?node=whisper", {
+      AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      CallSid: `${callSid}-forward`,
+      ParentCallSid: callSid,
+      CallStatus: "in-progress",
+      Direction: "outbound-dial",
+    });
+    expect(whisper.status).toBe(200);
+    expect(await whisper.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">Tracer lead</Say></Response>');
+    const events = await pool!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
+    expect(events.rows.map((row) => row.kind)).toEqual(["voice", "whisper"]);
+  });
+
+  it("captures a voicemail on the Closed path and reports Voicemail even after the Call ends first", async () => {
+    await publishRoutingFlow(voicemailFlow("closed"));
+    const callSid = "CA00000000000000000000000000000130";
+    expect(await startRoutingCall(callSid)).toContain('<Record maxLength="120" timeout="5" finishOnKey="#"');
+    const action = await routingPost("/api/twilio/voicemail/{assignment}?node=voicemail", { ...voiceParams(callSid), To: routingTrackingNumber, CallStatus: "in-progress", Digits: "#", RecordingDuration: "14" });
+    expect(await action.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
+    await routingCallStatus(callSid, "completed", "25");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Abandoned", outcome_reason: "voicemail_not_captured" });
+    expect((await recordingStatus(callSid, "completed", "14")).status).toBe(204);
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Voicemail", outcome_reason: "voicemail_captured" });
+    expect(await voicemailState(callSid)).toEqual({ voicemail_recording_sid: `RE${callSid.slice(2)}`, voicemail_duration_seconds: 14 });
+  });
+
+  it("ends a Closed-path Call as Abandoned when the caller hangs up during the greeting", async () => {
+    const callSid = "CA00000000000000000000000000000131";
+    await startRoutingCall(callSid);
+    await routingCallStatus(callSid, "completed", "3");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Abandoned", outcome_reason: "voicemail_not_captured" });
+  });
+
+  it("captures a voicemail after a missed Forward Call in any callback order", async () => {
+    await publishRoutingFlow(voicemailFlow("missed"));
+    const callSid = "CA00000000000000000000000000000132";
+    await startRoutingCall(callSid);
+    await routingForwardStatus(callSid, "initiated");
+    const action = await routingPost("/api/twilio/forward/{assignment}?node=forward", { ...voiceParams(callSid), To: routingTrackingNumber, CallStatus: "in-progress", DialCallStatus: "no-answer" });
+    expect(await action.text()).toContain("<Record ");
+    await recordingStatus(callSid, "completed", "40");
+    await routingForwardStatus(callSid, "no-answer");
+    await routingCallStatus(callSid, "completed", "70");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Voicemail", outcome_reason: "voicemail_captured" });
+  });
+
+  it("keeps a missed Forward Call as Missed when no voicemail audio is captured", async () => {
+    const callSid = "CA00000000000000000000000000000133";
+    await startRoutingCall(callSid);
+    await routingForwardStatus(callSid, "initiated");
+    await routingForwardStatus(callSid, "busy");
+    await routingCallStatus(callSid, "completed", "15");
+    await recordingStatus(callSid, "absent", "0");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Missed", outcome_reason: "voicemail_not_captured" });
+  });
+
+  it("reports Failed rather than Voicemail when Twilio fails to capture the voicemail", async () => {
+    const callSid = "CA00000000000000000000000000000134";
+    await startRoutingCall(callSid);
+    await routingForwardStatus(callSid, "initiated");
+    await routingForwardStatus(callSid, "no-answer");
+    await routingCallStatus(callSid, "completed", "60");
+    await recordingStatus(callSid, "failed", "0");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Failed", outcome_reason: "voicemail_capture_failed" });
+  });
+
+  it("leaves a captured voicemail unchanged when its recording callback is replayed", async () => {
+    const callSid = "CA00000000000000000000000000000132";
+    const before = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    await recordingStatus(callSid, "completed", "40");
+    await routingForwardStatus(callSid, "no-answer");
+    expect((await pool!.query("select * from call where twilio_call_sid = $1", [callSid])).rows).toEqual(before.rows);
+  });
+
+  it("replays a gated voicemail Call's signed callbacks without changing it", async () => {
+    const gated = gatedFlow();
+    const flowWithVoicemail = voicemailFlow("missed");
+    await publishRoutingFlow({
+      version: 1,
+      nodes: [...flowWithVoicemail.nodes, ...gated.nodes.filter((node) => node.id === "gate" || node.id === "outcome-blocked")],
+      edges: [
+        ...flowWithVoicemail.edges.filter((edge) => edge.source !== "incoming"),
+        { id: "incoming-next", source: "incoming", sourceHandle: "next", target: "gate" },
+        { id: "gate-pass", source: "gate", sourceHandle: "pass", target: "forward" },
+        { id: "gate-blocked", source: "gate", sourceHandle: "blocked", target: "outcome-blocked" },
+      ],
+    });
+    const callSid = "CA00000000000000000000000000000140";
+    await startRoutingCall(callSid);
+    await gatherAction(callSid, "1", 1);
+    await routingForwardStatus(callSid, "initiated");
+    await routingForwardStatus(callSid, "no-answer");
+    await recordingStatus(callSid, "completed", "22");
+    await routingCallStatus(callSid, "completed", "50");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Voicemail" });
+    const [reported] = (await reportTrackingNumberCalls(pool!, routingTrackingNumber, 1));
+    expect(reported).toMatchObject({ twilioCallSid: callSid, voicemailDurationSeconds: 22 });
+    expect(reported.events.map((event) => `${event.kind}:${event.status}`)).toEqual([
+      "voice:ringing",
+      "gather:in-progress",
+      "forward_status:initiated",
+      "forward_status:no-answer",
+      "voicemail_status:completed",
+      "status:completed",
+    ]);
+    const callId = (await pool!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
+    expect(await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 5, rejected: 0, unchanged: true });
   });
 });

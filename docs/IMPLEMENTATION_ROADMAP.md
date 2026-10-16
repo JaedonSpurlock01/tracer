@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M10 is planned for the next sprint
-- **Next milestone:** M10 - Complete First-Release Call Routing
+- **Current milestone:** None; M11 is next
+- **Next milestone:** M11 - Durable Recording Transfer
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-16
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. The Product Owner waived M9's live Staging call gate, which M10's Staging verification now carries. No milestone is In Progress; M10 starts in the next sprint.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete on `milestone/m10-first-release-call-routing`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner marked M10 Complete before its live Staging call checks ran and will run them before merging; no milestone is In Progress.
 
 ## Status model
 
@@ -177,7 +177,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M7 | Call Flow Publication and Workspace Activation | Complete | Preview and Staging | M6 |
 | M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
-| M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
+| M10 | Complete First-Release Call Routing | Complete | Staging | M9 |
 | M11 | Durable Recording Transfer | Not Started | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
 | M13 | Transcript, Lead Assessment, and Lead Review | Not Started | Staging | M12 |
@@ -655,10 +655,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M10 - Complete First-Release Call Routing
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Outcome:** Published flows execute Business Hours, Keypad Gate, Whisper, Forward Call, and Voicemail branches with the documented outcomes.
 - **Depends on:** M9
 - **Target environment:** Staging
+- **Execution note:** Voicemail captures the caller's message whether or not Workspace recording is enabled, because the caller chooses to leave it; the recording setting and its disclosure govern connected conversations only. Voicemail succeeds when Twilio reports a completed recording with at least 1 second of audio. A Voicemail with no usable capture ends as Missed when entered from a Forward Call Missed branch and Abandoned when entered from Business Hours Closed; a Twilio recording error ends as Failed with a persisted reason. Keypad Gate replays its prompt once after a wrong digit or timeout, then follows Blocked; a caller hang-up during the gate is Blocked. Text-to-speech Preview uses the browser's speech synthesis, labeled as an approximation of the selected Twilio voice. Business Hours is evaluated once in the Workspace timezone at the Call's persisted start, a window includes its start and excludes its end, a window may end at 24:00 so overnight hours are entered as one segment per day, and a date override replaces that date's weekly windows. A Whisper must lead directly to a Forward Call and is spoken only to the answering business leg. M10 stores the voicemail's Twilio recording reference and length on the Call; moving the audio to R2 remains M11. Voicemail captured while recording is disabled is kept but never analyzed, because analysis already requires recording.
 
 #### Vertical slices
 
@@ -693,6 +694,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Staging exercises each branch with non-sensitive test calls.
 - Carried from M9: one real Staging call is answered and one non-answer outcome is observed, `pnpm smoke:staging-call --replay` leaves state unchanged, and Staging replaces the test number after a completed Call and verifies historical attribution.
 - Provider costs from branch smoke checks are recorded.
+- The Product Owner marked M10 Complete on 2026-10-16 after the domain, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed, and before the live Staging checks above ran; the Product Owner runs them, including provider cost recording, before merging the pull request.
 
 #### Exit criteria
 

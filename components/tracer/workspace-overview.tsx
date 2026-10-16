@@ -21,7 +21,8 @@ import Link from "next/link";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
-import { summarizeCallFlow, type CallFlowGraph } from "@/data/call-flow";
+import FlowSummary from "@/components/tracer/flow/flow-summary";
+import type { CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceRecord } from "@/data/workspaces";
 import { describeSetupChecklist } from "@/data/workspace-policy";
 
@@ -105,11 +106,9 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false }:
             )}
           </div>
           {published ? (
-            <ol className="mt-4 list-decimal pl-5 text-sm">
-              {summarizeCallFlow(published.graph).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ol>
+            <div className="mt-4">
+              <FlowSummary graph={published.graph} />
+            </div>
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">No published Call Flow.</p>
           )}

@@ -93,7 +93,7 @@ _Avoid_: Call
 - Every **Call** pins the published **Flow Version** active when it starts
 - A recording-enabled **Workspace** requires a disclosure step in every publishable **Call Flow**
 - Every completed **Call** has exactly one **Call Outcome**
-- A connected conversation or captured voicemail may produce one **Recording** when recording is enabled
+- A connected conversation may produce one **Recording** when recording is enabled; a captured voicemail produces one **Recording** regardless of the recording setting
 - A **Recording** is analysis-eligible when its **Call** passed any enabled spam gate and contains at least 15 seconds of connected talk time or captured voicemail speech
 - An analysis-eligible **Recording** may produce one **Transcript** and one immutable **Lead Assessment**
 - **Recording** audio, **Transcript** content, waveform data, and Transcript-derived evidence expire 12 months after the **Call**, while Call metadata and aggregate analytics remain

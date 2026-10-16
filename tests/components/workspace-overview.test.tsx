@@ -15,7 +15,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
@@ -71,7 +71,38 @@ describe("WorkspaceOverview", () => {
     expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
   });
 
-  it("shows a read-only Overview without Operator actions for a Client Viewer", () => {
+    it("lists the published Call Flow in execution order with each branch outcome under its step", () => {
+    render(
+      <WorkspaceOverview
+        workspace={workspace}
+        flow={{
+          published: {
+            version: 1,
+            graph: generateInitialCallFlow({
+              destinationNumber: "+14155550101",
+              recordingEnabled: false,
+              spamGateEnabled: true,
+              whisperEnabled: false,
+              whisperMessage: null,
+              disclosureVoice: "Polly.Joanna",
+            }),
+          },
+        }}
+      />,
+    );
+    const steps = within(screen.getByRole("list", { name: "Call Flow steps" })).getAllByRole("listitem").map((item) => item.textContent);
+    expect(steps).toEqual([
+      "Incoming Call",
+      "Keypad Gate: press 1 to continue",
+      "PassForward Call to +14155550101",
+      "AnsweredOutcome: Answered",
+      "MissedOutcome: Missed",
+      "FailedOutcome: Failed",
+      "BlockedOutcome: Blocked",
+    ]);
+  });
+
+it("shows a read-only Overview without Operator actions for a Client Viewer", () => {
     render(<WorkspaceOverview workspace={{ ...workspace, state: "Archived" }} flow={{ published: null }} readOnly />);
     expect(screen.getByText("Routing health")).toBeVisible();
     expect(screen.getByText("Call Flow")).toBeVisible();
