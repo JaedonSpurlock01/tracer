@@ -395,4 +395,28 @@ describe("WorkspacesView", () => {
       ),
     );
   });
+
+  it("hides Workspace management for a Client Viewer", async () => {
+    const active = { ...workspace, id: "workspace-2", name: "Acme Plumbing", state: "Active" as const, createdBy: null };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [active], counts: { setupRequired: 0, active: 1, archived: 0 } }), { status: 200 })),
+    );
+    render(<WorkspacesView initialTimezone="America/Chicago" readOnly />);
+    expect(await screen.findByRole("link", { name: /Acme Plumbing/ })).toBeVisible();
+    expect(screen.getByText("1 Active, 0 Archived")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create Workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume Setup" })).not.toBeInTheDocument();
+  });
+
+  it("explains an empty read-only Workspace list without a create action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 })),
+    );
+    render(<WorkspacesView initialTimezone="America/Chicago" readOnly />);
+    const emptyState = await screen.findByTestId("workspace-empty-state");
+    expect(within(emptyState).getByText("No Workspaces are shared with you.")).toBeVisible();
+    expect(within(emptyState).queryByRole("button")).not.toBeInTheDocument();
+  });
 });

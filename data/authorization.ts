@@ -95,6 +95,21 @@ export function isActiveOperatorActor(actor: Actor | null): actor is Actor {
   return actor?.state === "Active" && actor.role === "Operator";
 }
 
+export async function requireActiveActor(
+  auth: TracerAuth,
+  database: NodePgDatabase<typeof schema>,
+  headers: Headers,
+): Promise<Actor> {
+  const actor = await resolveActor(auth, database, headers);
+  if (!actor) {
+    throw new AuthorizationError(401);
+  }
+  if (actor.state !== "Active") {
+    throw new AuthorizationError(403);
+  }
+  return actor;
+}
+
 export async function requireActiveOperator(
   auth: TracerAuth,
   database: NodePgDatabase<typeof schema>,

@@ -192,12 +192,33 @@ function isNameConflict(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505";
 }
 
-export function createWorkspaces(pool: Pool, organizationId: string): Workspaces {
+export interface WorkspaceGrantScope {
+  grantedToUserId: string;
+  readableStates: readonly WorkspaceState[];
+}
+
+export function createWorkspaces(pool: Pool, organizationId: string, grantScope?: WorkspaceGrantScope): Workspaces {
   const lock = `tracer:workspaces:${organizationId}`;
 
+  function scopeConditions(values: unknown[]): string[] {
+    if (!grantScope) return [];
+    values.push(grantScope.grantedToUserId, grantScope.readableStates);
+    return [
+      `exists (select 1 from access_grant g where g.workspace_id = w.id and g.organization_id = w.organization_id and g.user_id = $${values.length - 1})`,
+      `w.state = any($${values.length}::text[])`,
+    ];
+  }
+
+  function toScopedRecord(row: WorkspaceRow): WorkspaceRecord {
+    const record = toRecord(row);
+    return grantScope ? { ...record, createdBy: null } : record;
+  }
+
   async function selectRecord(connection: Pool | PoolClient, id: string): Promise<WorkspaceRecord | null> {
-    const result = await connection.query<WorkspaceRow>(`${recordQuery} and w.id = $2 limit 1`, [organizationId, id]);
-    return result.rows[0] ? toRecord(result.rows[0]) : null;
+    const values: unknown[] = [organizationId, id];
+    const conditions = ["w.id = $2", ...scopeConditions(values)];
+    const result = await connection.query<WorkspaceRow>(`${recordQuery} and ${conditions.join(" and ")} limit 1`, values);
+    return result.rows[0] ? toScopedRecord(result.rows[0]) : null;
   }
 
   async function lockOrganization(client: PoolClient): Promise<void> {
@@ -208,7 +229,9 @@ export function createWorkspaces(pool: Pool, organizationId: string): Workspaces
     async list(query) {
       const normalized = normalizeQuery(query);
       const values: unknown[] = [organizationId];
-      const conditions = ["w.organization_id = $1"];
+      const conditions = ["w.organization_id = $1", ...scopeConditions(values)];
+      const scopeValues = [...values];
+      const scopeWhere = conditions.join(" and ");
       if (normalized.search) {
         values.push(`%${normalized.search}%`);
         conditions.push(`(w.name ilike $${values.length} or coalesce(w.destination_number, '') ilike $${values.length})`);
@@ -222,8 +245,8 @@ export function createWorkspaces(pool: Pool, organizationId: string): Workspaces
       values.push((normalized.page - 1) * normalized.pageSize, normalized.pageSize);
       const rows = await pool.query<WorkspaceRow>(`${recordQuery} and ${conditions.slice(1).join(" and ") || "true"} order by w.name, w.id offset $${values.length - 1} limit $${values.length}`, values);
       const totals = await pool.query<{ state: WorkspaceState; count: string }>(
-        "select state, count(*) from workspace where organization_id = $1 group by state",
-        [organizationId],
+        `select w.state, count(*) from workspace w where ${scopeWhere} group by w.state`,
+        scopeValues,
       );
       const counts = { setupRequired: 0, active: 0, archived: 0 };
       for (const row of totals.rows) {
@@ -231,7 +254,7 @@ export function createWorkspaces(pool: Pool, organizationId: string): Workspaces
         if (row.state === "Active") counts.active = Number(row.count);
         if (row.state === "Archived") counts.archived = Number(row.count);
       }
-      return { workspaces: rows.rows.map(toRecord), total: Number(count.rows[0]?.count ?? 0), page: normalized.page, pageSize: normalized.pageSize, counts };
+      return { workspaces: rows.rows.map(toScopedRecord), total: Number(count.rows[0]?.count ?? 0), page: normalized.page, pageSize: normalized.pageSize, counts };
     },
 
     async create(input) {

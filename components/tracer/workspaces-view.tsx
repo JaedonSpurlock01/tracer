@@ -92,7 +92,7 @@ function routingFromWorkspace(workspace: WorkspaceRecord | null): RoutingForm {
   };
 }
 
-export default function WorkspacesView({ initialTimezone }: { initialTimezone: string }) {
+export default function WorkspacesView({ initialTimezone, readOnly = false }: { initialTimezone: string; readOnly?: boolean }) {
   const searchParams = useSearchParams();
   const resumeId = searchParams.get("resume");
   const [result, setResult] = useState<WorkspaceListResult>({
@@ -195,7 +195,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
     return () => window.clearTimeout(timer);
   }, [dialogOpen, loadNumbers, step]);
   useEffect(() => {
-    if (!resumeId || resumeHandled || loading) return;
+    if (readOnly || !resumeId || resumeHandled || loading) return;
     const listed = result.workspaces.find((item) => item.id === resumeId);
     if (listed) {
       const timer = window.setTimeout(() => {
@@ -217,7 +217,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
     return () => {
       cancelled = true;
     };
-  }, [loading, openResume, result.workspaces, resumeHandled, resumeId]);
+  }, [loading, openResume, readOnly, result.workspaces, resumeHandled, resumeId]);
 
   function resetPagination() {
     setPagination((current) => ({ ...current, pageIndex: 0 }));
@@ -347,7 +347,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
         header: "",
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            {row.original.state === "Setup Required" ? (
+            {row.original.state === "Setup Required" && !readOnly ? (
               <Button variant="ghost" size="sm" onClick={() => openResume(row.original)}>
                 Resume Setup
               </Button>
@@ -359,7 +359,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
         ),
       },
     ],
-    [openResume],
+    [openResume, readOnly],
   );
   const table = useTable({
     features: dataGridFeatures,
@@ -383,7 +383,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Workspaces</h1>
         <p className="text-sm text-muted-foreground">
-          {result.counts.setupRequired} Setup Required, {result.counts.active} Active, {result.counts.archived} Archived
+          {readOnly ? null : `${result.counts.setupRequired} Setup Required, `}{result.counts.active} Active, {result.counts.archived} Archived
         </p>
       </div>
       <Frame>
@@ -422,9 +422,11 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
                 </SelectContent>
               </Select>
             </Field>
-            <Button type="button" onClick={openCreate}>
-              Create Workspace
-            </Button>
+            {readOnly ? null : (
+              <Button type="button" onClick={openCreate}>
+                Create Workspace
+              </Button>
+            )}
           </div>
           {status ? <p role="status">{status}</p> : null}
           {fetchError ? (
@@ -440,11 +442,15 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
               <p>
                 {search || stateFilter !== "All"
                   ? "No matching Workspaces."
-                  : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."}
+                  : readOnly
+                    ? "No Workspaces are shared with you."
+                    : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."}
               </p>
-              <Button type="button" onClick={openCreate}>
-                Create Workspace
-              </Button>
+              {readOnly ? null : (
+                <Button type="button" onClick={openCreate}>
+                  Create Workspace
+                </Button>
+              )}
             </div>
           ) : null}
           {!fetchError && (loading || result.workspaces.length > 0) ? (

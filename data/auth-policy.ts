@@ -34,8 +34,8 @@ export function isActiveOperator(
   return identity?.state === "Active" && identity.role === "owner";
 }
 
-export function isProvisionableRole(role: string): role is "Operator" {
-  return role === "Operator";
+export function isProvisionableRole(role: string): role is CanonicalRole {
+  return role === "Operator" || role === "Client Viewer";
 }
 
 export type OperatorStateDecision = { allowed: true } | { allowed: false; reason: "last_active_operator" };
@@ -52,6 +52,31 @@ export function decideOperatorStateChange(input: {
     input.activeOperatorCount <= 1
   ) {
     return { allowed: false, reason: "last_active_operator" };
+  }
+  return { allowed: true };
+}
+
+export type RoleChangeDecision =
+  | { allowed: true }
+  | { allowed: false; reason: "last_active_operator" | "access_grant_required" | "state_unchanged" };
+
+export function decideRoleChange(input: {
+  target: { state: UserState; role: MembershipRole };
+  nextRole: CanonicalRole;
+  activeOperatorCount: number;
+  accessGrantCount: number;
+}): RoleChangeDecision {
+  if (toCanonicalRole(input.target.role) === input.nextRole) {
+    return { allowed: false, reason: "state_unchanged" };
+  }
+  if (input.nextRole === "Operator") {
+    return { allowed: true };
+  }
+  if (isActiveOperator(input.target) && input.activeOperatorCount <= 1) {
+    return { allowed: false, reason: "last_active_operator" };
+  }
+  if (input.accessGrantCount < 1) {
+    return { allowed: false, reason: "access_grant_required" };
   }
   return { allowed: true };
 }

@@ -4,8 +4,9 @@
  * @brief  Renders the role-aware Tracer application Sidebar.
  *
  * @description
- *  Provides global navigation, the Tracer brand lockup, and account actions
- *  for authenticated Operators and Client Viewers.
+ *  Provides global navigation, the Tracer brand lockup, a Workspace switcher
+ *  limited to the Workspaces the actor may read, and account actions for
+ *  authenticated Operators and Client Viewers.
  *
  * @remarks
  *  Operator navigation is hidden for Client Viewers while server guards remain
@@ -21,6 +22,8 @@
 
 import {
   Activity,
+  Check,
+  ChevronsUpDown,
   FileText,
   House,
   LayoutGrid,
@@ -36,7 +39,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -50,8 +56,14 @@ import {
 } from "@/components/ui/sidebar";
 import { type CanonicalRole } from "@/data/auth-policy";
 
+interface WorkspaceLink {
+  id: string;
+  name: string;
+}
+
 interface AppSidebarProps {
   actor: { name: string; email: string; role: CanonicalRole };
+  workspaces: WorkspaceLink[];
 }
 
 interface NavigationItem {
@@ -81,7 +93,46 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-export default function AppSidebar({ actor }: AppSidebarProps) {
+function WorkspaceSwitcher({ workspaces, showAll }: { workspaces: WorkspaceLink[]; showAll: boolean }) {
+  const pathname = usePathname();
+  const currentId = pathname.match(/^\/workspaces\/([^/]+)/)?.[1];
+  const current = workspaces.find((workspace) => workspace.id === currentId);
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<SidebarMenuButton className="aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground" />}
+          >
+            <span className="truncate">{current?.name ?? "Select a Workspace"}</span>
+            <ChevronsUpDown className="ml-auto opacity-60" aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="start" className="w-56">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+              {workspaces.map((workspace) => (
+                <DropdownMenuItem key={workspace.id} render={<Link href={`/workspaces/${workspace.id}`} />}>
+                  <span className="truncate">{workspace.name}</span>
+                  {workspace.id === currentId ? <Check className="ml-auto size-3.5" aria-hidden="true" /> : null}
+                </DropdownMenuItem>
+              ))}
+              {workspaces.length ? null : <DropdownMenuItem disabled>No Workspaces</DropdownMenuItem>}
+            </DropdownMenuGroup>
+            {showAll ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem render={<Link href="/workspaces" />}>All Workspaces</DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
+export default function AppSidebar({ actor, workspaces }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const items = navigation.filter((item) => !item.operatorOnly || actor.role === "Operator");
@@ -103,6 +154,7 @@ export default function AppSidebar({ actor }: AppSidebarProps) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <WorkspaceSwitcher workspaces={workspaces} showAll={actor.role === "Operator"} />
       </SidebarHeader>
       <SidebarContent>
         <SidebarMenu>

@@ -59,16 +59,30 @@ export async function sendSignInCode(
   });
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export async function sendAccessCreatedNotice(
   email: TransactionalEmail,
-  input: { to: string; from: string; signInUrl: string },
+  input: { to: string; from: string; signInUrl: string; workspaceNames?: readonly string[] },
 ): Promise<void> {
+  const workspaceNames = input.workspaceNames ?? [];
+  const summary = workspaceNames.length > 0 ? ` You can view: ${workspaceNames.join(", ")}.` : "";
+  const htmlSummary = workspaceNames.length > 0
+    ? `<p>You can view: ${workspaceNames.map(escapeHtml).join(", ")}.</p>`
+    : "";
   await email.send({
     to: normalizeIdentityEmail(input.to),
     from: input.from,
     subject: "Your Tracer access is ready",
-    text: `An Operator created Tracer access for this address. Sign in at ${input.signInUrl} with an email code.`,
-    html: `<p>An Operator created Tracer access for this address.</p><p><a href="${input.signInUrl}">Sign in to Tracer</a> with an email code.</p>`,
+    text: `An Operator created Tracer access for this address.${summary} Sign in at ${input.signInUrl} with an email code.`,
+    html: `<p>An Operator created Tracer access for this address.</p>${htmlSummary}<p><a href="${input.signInUrl}">Sign in to Tracer</a> with an email code.</p>`,
   });
 }
 

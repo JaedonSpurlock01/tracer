@@ -328,6 +328,29 @@ export const flowVersions = pgTable(
   ],
 );
 
+export const accessGrants = pgTable(
+  "access_grant",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedByUserId: text("granted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("access_grant_user_workspace_idx").on(table.userId, table.workspaceId),
+    index("access_grant_organization_id_idx").on(table.organizationId),
+    index("access_grant_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -342,4 +365,5 @@ export const schema = {
   numberAssignment: numberAssignments,
   callFlowDraft: callFlowDrafts,
   flowVersion: flowVersions,
+  accessGrant: accessGrants,
 };

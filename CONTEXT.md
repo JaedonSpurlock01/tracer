@@ -102,7 +102,9 @@ _Avoid_: Call
 - A **Call** retains the **Tracking Number** dialed even after its **Number Assignment** ends
 - An **Operator** can manage multiple **Workspaces**
 - Each **Access Grant** connects exactly one **Client Viewer** to exactly one **Workspace**
-- A **Client Viewer** can hold one or more **Access Grants**
+- A **Client Viewer** can hold one or more **Access Grants** and always holds at least one
+- A new **Access Grant** may target only an Active **Workspace**
+- An **Access Grant** authorizes reads only while its **Workspace** is Active or Archived
 - A **Call** may be classified as a **Lead**, but the terms are not interchangeable
 
 ## Example dialogue

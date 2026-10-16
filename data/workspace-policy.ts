@@ -42,6 +42,14 @@ export function decideRestore(state: WorkspaceState): WorkspaceTransitionDecisio
     : { allowed: false, reason: "state_unchanged" };
 }
 
+export function canReceiveAccessGrant(state: WorkspaceState): boolean {
+  return state === "Active";
+}
+
+export function accessGrantAuthorizesRead(state: WorkspaceState): boolean {
+  return state === "Active" || state === "Archived";
+}
+
 export function describeSetupChecklist(record: {
   destinationNumber: string | null;
   trackingNumber: string | null;

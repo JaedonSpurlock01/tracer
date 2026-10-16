@@ -878,8 +878,6 @@ Fields:
 - Workspace Access, required with at least one Workspace for Client Viewer
 - Send access-created email, enabled by default
 
-Until M8 delivers Workspace Access Grants, the Role field offers only Operator; Client Viewer remains visible but unavailable with a short explanation.
-
 The email contains the Tracer sign-in URL and granted Workspace summary but no password, verification code, or activation token. Provisioning remains successful if delivery fails; show a warning and Resend action.
 
 ### Manage User

@@ -28,3 +28,4 @@ async function handle(request: Request): Promise<Response> {
 
 export const GET = handle;
 export const POST = handle;
+export const DELETE = handle;

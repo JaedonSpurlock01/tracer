@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import {
   decideEmailCodeRequest,
   decideOperatorStateChange,
+  decideRoleChange,
   isActiveOperator,
   isProvisionableRole,
   isValidIanaTimezone,
@@ -46,9 +47,10 @@ describe("identity policy", () => {
     expect(isActiveOperator(null)).toBe(false);
   });
 
-  it("keeps Client Viewer unavailable for provisioning in M4", () => {
+  it("provisions only the canonical Operator and Client Viewer roles", () => {
     expect(isProvisionableRole("Operator")).toBe(true);
-    expect(isProvisionableRole("Client Viewer")).toBe(false);
+    expect(isProvisionableRole("Client Viewer")).toBe(true);
+    expect(isProvisionableRole("Administrator")).toBe(false);
   });
 
   it("protects the last Active Operator from disablement", () => {
@@ -59,6 +61,32 @@ describe("identity policy", () => {
     });
     expect(decideOperatorStateChange({ target, nextState: "Disabled", activeOperatorCount: 2 })).toEqual({ allowed: true });
     expect(decideOperatorStateChange({ target, nextState: "Active", activeOperatorCount: 1 })).toEqual({ allowed: true });
+  });
+
+  it("refuses demoting the last Active Operator", () => {
+    const target = { state: "Active" as const, role: "owner" as const };
+    expect(decideRoleChange({ target, nextRole: "Client Viewer", activeOperatorCount: 1, accessGrantCount: 1 })).toEqual({
+      allowed: false,
+      reason: "last_active_operator",
+    });
+    expect(decideRoleChange({ target, nextRole: "Client Viewer", activeOperatorCount: 2, accessGrantCount: 1 })).toEqual({ allowed: true });
+  });
+
+  it("requires an Access Grant before an Operator becomes a Client Viewer", () => {
+    const target = { state: "Provisioned" as const, role: "owner" as const };
+    expect(decideRoleChange({ target, nextRole: "Client Viewer", activeOperatorCount: 1, accessGrantCount: 0 })).toEqual({
+      allowed: false,
+      reason: "access_grant_required",
+    });
+  });
+
+  it("promotes a Client Viewer regardless of Access Grants and rejects unchanged roles", () => {
+    const viewer = { state: "Active" as const, role: "member" as const };
+    expect(decideRoleChange({ target: viewer, nextRole: "Operator", activeOperatorCount: 1, accessGrantCount: 3 })).toEqual({ allowed: true });
+    expect(decideRoleChange({ target: viewer, nextRole: "Client Viewer", activeOperatorCount: 1, accessGrantCount: 3 })).toEqual({
+      allowed: false,
+      reason: "state_unchanged",
+    });
   });
 
   it("returns Active after verified sign-in and Provisioned otherwise", () => {

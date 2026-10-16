@@ -58,6 +58,23 @@ describe("Cloudflare transactional email", () => {
     expect(`${message.text} ${message.html}`).not.toMatch(/\d{6}/);
   });
 
+  it("summarizes granted Workspaces for a Client Viewer with escaped names", async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: "email-3" });
+    const email = createCloudflareTransactionalEmail({ send });
+
+    await sendAccessCreatedNotice(email, {
+      to: "viewer@example.com",
+      from: "auth@example.com",
+      signInUrl: "https://tracer.example.com/sign-in",
+      workspaceNames: ["Acme Plumbing", "<b>Beta & Sons</b>"],
+    });
+
+    const message = send.mock.calls[0][0];
+    expect(message.text).toContain("Acme Plumbing, <b>Beta & Sons</b>");
+    expect(message.html).toContain("&lt;b&gt;Beta &amp; Sons&lt;/b&gt;");
+    expect(message.html).not.toContain("<b>Beta");
+  });
+
   it("enforces the configured recipient allowlist", () => {
     const recipients = new Set(["operator@example.com"]);
     expect(isAllowedRecipient(recipients, " OPERATOR@example.com ")).toBe(true);

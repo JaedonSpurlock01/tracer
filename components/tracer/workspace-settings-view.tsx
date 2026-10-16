@@ -4,8 +4,8 @@
  * @brief  Renders Workspace vertical-rail settings.
  *
  * @description
- *  Provides enabled General settings and lifecycle actions while showing later
- *  Number, Recording and AI, and Access sections as unavailable.
+ *  Provides General, Number, Recording and AI, Access, and lifecycle
+ *  settings. An Archived Workspace keeps only Access and Restore editable.
  *
  * @remarks
  *  Archive and restore are explicit state transitions and never call Twilio.
@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
 function timezones(): string[] {
@@ -164,7 +165,7 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
         <FramePanel className="grid gap-6 md:grid-cols-[12rem_1fr]">
           <nav aria-label="Workspace settings sections" className="flex gap-1 overflow-x-auto md:flex-col">
             {sections.map((section) => {
-              const available = section !== "Access" && !archived;
+              const available = section === "Access" || !archived;
               return available ? (
                 <Button
                   key={section}
@@ -294,6 +295,7 @@ export default function WorkspaceSettingsView({ initialWorkspace }: { initialWor
                 </Button>
               </div>
             </section>
+            <WorkspaceAccessSection workspace={workspace} />
             <section id="danger" className="border-t pt-6">
               <h2 className="font-semibold">Danger</h2>
               <p className="mb-4 text-sm text-muted-foreground">

@@ -90,6 +90,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Security
 
+- Authorized every Client Viewer Workspace read through `data/workspace-authorization.ts` against current Access Grants on each request, so grant removal blocks an existing session's next read, and returned Not Found for ungranted Workspaces so they cannot be discovered (M8).
 - Encrypted the Organization Twilio API key secret with AES-256-GCM under the `TWILIO_CREDENTIAL_MASTER_KEY` deployment secret, verified credentials before storage or rotation, and excluded secret material from every application response; see ADR 0005.
 
 ### Deployment

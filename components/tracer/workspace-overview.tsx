@@ -28,6 +28,7 @@ import { describeSetupChecklist } from "@/data/workspace-policy";
 interface WorkspaceOverviewProps {
   workspace: WorkspaceRecord;
   flow?: { published: { version: number; graph: CallFlowGraph } | null };
+  readOnly?: boolean;
 }
 
 function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "success-light" | "destructive-light" {
@@ -36,7 +37,7 @@ function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "succe
   return "primary-light";
 }
 
-export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverviewProps) {
+export default function WorkspaceOverview({ workspace, flow, readOnly = false }: WorkspaceOverviewProps) {
   const checklist = describeSetupChecklist(workspace);
   const published = flow?.published ?? null;
 
@@ -50,7 +51,7 @@ export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverview
             <span className="text-sm text-muted-foreground">{workspace.reportingTimezone}</span>
           </div>
         </div>
-        <div className="flex gap-2">
+        {readOnly ? null : <div className="flex gap-2">
           <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings`} />}>
             Workspace Settings
           </Button>
@@ -60,7 +61,7 @@ export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverview
           {workspace.state === "Archived" ? (
             <Button render={<Link href={`/workspaces/${workspace.id}/settings#danger`} />}>Restore</Button>
           ) : null}
-        </div>
+        </div>}
       </div>
       <Frame>
         <FramePanel className="grid gap-5 sm:grid-cols-3">
@@ -97,9 +98,11 @@ export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverview
         <FramePanel>
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Call Flow</h2>
-            <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/flow`} />}>
-              Edit Flow
-            </Button>
+            {readOnly ? null : (
+              <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/flow`} />}>
+                Edit Flow
+              </Button>
+            )}
           </div>
           {published ? (
             <ol className="mt-4 list-decimal pl-5 text-sm">
@@ -112,7 +115,7 @@ export default function WorkspaceOverview({ workspace, flow }: WorkspaceOverview
           )}
         </FramePanel>
       </Frame>
-      {workspace.state === "Setup Required" ? (
+      {workspace.state === "Setup Required" && !readOnly ? (
         <Frame>
           <FramePanel className="flex flex-col gap-4">
             <div>

@@ -15,8 +15,8 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -41,6 +41,8 @@ const workspace = {
   updatedAt: "2026-01-01T00:00:00.000Z",
   archivedAt: null,
 };
+
+afterEach(() => cleanup());
 
 describe("WorkspaceOverview", () => {
   it("renders routing health, Call Flow steps, and Edit Flow link", () => {
@@ -67,5 +69,14 @@ describe("WorkspaceOverview", () => {
     expect(screen.getByText("Routing health")).toBeVisible();
     expect(screen.getByText("Incoming Call")).toBeVisible();
     expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
+  });
+
+  it("shows a read-only Overview without Operator actions for a Client Viewer", () => {
+    render(<WorkspaceOverview workspace={{ ...workspace, state: "Archived" }} flow={{ published: null }} readOnly />);
+    expect(screen.getByText("Routing health")).toBeVisible();
+    expect(screen.getByText("Call Flow")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Workspace Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Restore" })).not.toBeInTheDocument();
   });
 });
