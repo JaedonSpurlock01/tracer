@@ -52,14 +52,14 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false }:
           </div>
         </div>
         {readOnly ? null : <div className="flex gap-2">
-          <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings`} />}>
+          <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings/general`} prefetch />}>
             Workspace Settings
           </Button>
           {workspace.state === "Setup Required" ? (
             <Button render={<Link href={`/workspaces?resume=${workspace.id}`} />}>Resume Setup</Button>
           ) : null}
           {workspace.state === "Archived" ? (
-            <Button render={<Link href={`/workspaces/${workspace.id}/settings#danger`} />}>Restore</Button>
+            <Button render={<Link href={`/workspaces/${workspace.id}/settings/danger`} />}>Restore</Button>
           ) : null}
         </div>}
       </div>

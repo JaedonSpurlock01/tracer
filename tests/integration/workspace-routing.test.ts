@@ -57,6 +57,7 @@ const backgroundTasks: Promise<unknown>[] = [];
 const fetchedSids: string[] = [];
 const updates: Array<{ sid: string; configuration: TwilioVoiceConfiguration }> = [];
 let updateUnavailable = false;
+let failingUpdateSid: string | null = null;
 
 const fakeTwilio: TwilioClient = {
   async fetchAccount() {
@@ -76,7 +77,7 @@ const fakeTwilio: TwilioClient = {
     };
   },
   async updateIncomingPhoneNumberVoice(_credential, sid, configuration) {
-    if (updateUnavailable) throw new TwilioClientError("unavailable", null);
+    if (updateUnavailable || sid === failingUpdateSid) throw new TwilioClientError("unavailable", null);
     updates.push({ sid, configuration });
     return {
       sid,
@@ -216,6 +217,11 @@ beforeAll(async () => {
     ["routing-number-i", "PNiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", "+14155550109", true],
     ["routing-number-j", "PNjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj", "+14155550110", true],
     ["routing-number-k", "PNkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk", "+14155550111", true],
+    ["routing-number-l", "PNllllllllllllllllllllllllllllllll", "+14155550112", true],
+    ["routing-number-m", "PNmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm", "+14155550113", true],
+    ["routing-number-n", "PNnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn", "+14155550114", true],
+    ["routing-number-o", "PNoooooooooooooooooooooooooooooooo", "+14155550115", true],
+    ["routing-number-p", "PNpppppppppppppppppppppppppppppppp", "+14155550116", true],
   ]) {
     await pool.query(
       `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, released_at, first_seen_at, last_seen_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, now(), now(), now(), now())`,
@@ -330,6 +336,39 @@ describe.sequential("Workspace routing", () => {
     expect(discarded.status).toBe(204);
     const afterDiscard = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/flow`, { headers: { cookie } }));
     expect(afterDiscard.body.draft).toBeNull();
+  });
+
+  it("refuses activation until the Twilio Auth Token is configured", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Missing Auth Token Workspace");
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          destinationNumber: "+14155550101",
+          recordingEnabled: false,
+          analysisEnabled: false,
+          spamGateEnabled: false,
+          whisperEnabled: false,
+          whisperMessage: null,
+        }),
+      }),
+    );
+    updates.length = 0;
+    const refused = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-a" }),
+      }),
+    );
+    expect(refused.response.status).toBe(409);
+    expect(refused.body.error).toBe("twilio_auth_token_missing");
+    expect(updates).toHaveLength(0);
+    expect((await pool!.query("select state from workspace where id = $1", [workspaceId])).rows[0].state).toBe("Setup Required");
+    expect((await pool!.query("select count(*)::int as count from number_assignment where workspace_id = $1", [workspaceId])).rows[0].count).toBe(0);
+    await pool!.query("update twilio_connection set auth_token_ciphertext = $2 where organization_id = $1", [organizationId, await encryptSecret(masterKey, "routing-auth-token")]);
   });
 
   it("activates a Workspace and snapshots and updates Twilio voice configuration", async () => {
@@ -747,5 +786,179 @@ describe.sequential("Workspace routing", () => {
         )
       ).response.status,
     ).toBe(404);
+  });
+
+  it("replaces the Tracking Number while preserving Number Assignment and Call history", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Replacement Workspace");
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ destinationNumber: "+14155550101", recordingEnabled: false, analysisEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null }),
+      }),
+    );
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-l" }),
+      }),
+    );
+    const original = (await pool!.query("select id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId])).rows[0].id as string;
+    await pool!.query(
+      `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number, state, outcome, outcome_reason, started_at, ended_at, created_at, updated_at)
+       select 'replacement-history-call', $1, $2, $3, v.id, 'CAreplacementhistory', '+14155550112', '+14155550123', 'Completed', 'Answered', 'flow_outcome', now(), now(), now(), now()
+         from flow_version v where v.workspace_id = $2 order by v.version desc limit 1`,
+      [organizationId, workspaceId, original],
+    );
+    updates.length = 0;
+
+    const replaced = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/replace-number`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-m" }),
+      }),
+    );
+    expect(replaced.response.status).toBe(200);
+    expect(replaced.body.workspace).toMatchObject({ state: "Active" });
+    const assignments = await pool!.query(
+      "select id, twilio_number_id, phone_number, ended_reason, ended_at is not null as ended, prior_voice_url from number_assignment where workspace_id = $1 order by started_at, ended_at nulls last",
+      [workspaceId],
+    );
+    expect(assignments.rows).toEqual([
+      { id: original, twilio_number_id: "routing-number-l", phone_number: "+14155550112", ended_reason: "replaced", ended: true, prior_voice_url: priorConfiguration.voiceUrl },
+      { id: expect.any(String), twilio_number_id: "routing-number-m", phone_number: "+14155550113", ended_reason: null, ended: false, prior_voice_url: priorConfiguration.voiceUrl },
+    ]);
+    const replacement = assignments.rows[1].id as string;
+    expect(updates).toEqual([
+      {
+        sid: "PNmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+        configuration: {
+          voiceUrl: `${baseURL}/api/twilio/voice/${replacement}`,
+          voiceMethod: "POST",
+          voiceFallbackUrl: null,
+          voiceFallbackMethod: null,
+          statusCallback: `${baseURL}/api/twilio/status/${replacement}`,
+          statusCallbackMethod: "POST",
+        },
+      },
+      { sid: "PNllllllllllllllllllllllllllllllll", configuration: priorConfiguration },
+    ]);
+    expect((await pool!.query("select number_assignment_id, tracking_number from call where id = 'replacement-history-call'")).rows[0]).toEqual({
+      number_assignment_id: original,
+      tracking_number: "+14155550112",
+    });
+  });
+
+  it("keeps the current Tracking Number when restoring the replaced number fails", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = (await pool!.query("select id from workspace where name = 'Replacement Workspace'")).rows[0].id as string;
+    const current = (await pool!.query("select id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId])).rows[0].id as string;
+    updates.length = 0;
+    failingUpdateSid = "PNmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
+    try {
+      const failed = await json(
+        new Request(`${baseURL}/api/workspaces/${workspaceId}/replace-number`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ twilioNumberId: "routing-number-n" }),
+        }),
+      );
+      expect(failed.response.status).toBe(502);
+    } finally {
+      failingUpdateSid = null;
+    }
+    const active = await pool!.query("select id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId]);
+    expect(active.rows).toEqual([{ id: current }]);
+    expect((await pool!.query("select count(*)::int as count from number_assignment where twilio_number_id = 'routing-number-n'")).rows[0].count).toBe(0);
+    expect(updates.map((update) => update.sid)).toEqual(["PNnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn", "PNnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"]);
+    expect(updates[1].configuration).toEqual(priorConfiguration);
+  });
+
+  it("refuses replacement with an assigned number or outside an Active Workspace", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = (await pool!.query("select id from workspace where name = 'Replacement Workspace'")).rows[0].id as string;
+    const assigned = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/replace-number`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-a" }),
+      }),
+    );
+    expect(assigned.response.status).toBe(409);
+    expect(assigned.body.error).toBe("number_unavailable");
+    const setupWorkspaceId = await createWorkspace(cookie, "Replacement Setup Workspace");
+    const notActive = await json(
+      new Request(`${baseURL}/api/workspaces/${setupWorkspaceId}/replace-number`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-n" }),
+      }),
+    );
+    expect(notActive.response.status).toBe(409);
+    expect(notActive.body.error).toBe("activation_required");
+  });
+
+  it("detaches the Tracking Number, returns the Workspace to Setup Required, and reactivates on another number", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Detach Workspace");
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ destinationNumber: "+14155550101", recordingEnabled: false, analysisEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null }),
+      }),
+    );
+    await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-o" }),
+      }),
+    );
+    updates.length = 0;
+    const detached = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+    expect(detached.response.status).toBe(200);
+    expect(detached.body.workspace).toMatchObject({ state: "Setup Required", trackingNumber: null });
+    expect(updates).toEqual([{ sid: "PNoooooooooooooooooooooooooooooooo", configuration: priorConfiguration }]);
+    expect((await pool!.query("select ended_reason, ended_at is not null as ended from number_assignment where workspace_id = $1", [workspaceId])).rows).toEqual([
+      { ended_reason: "detached", ended: true },
+    ]);
+
+    const reactivated = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-p" }),
+      }),
+    );
+    expect(reactivated.response.status).toBe(200);
+    expect(reactivated.body.workspace).toMatchObject({ state: "Active", trackingNumber: "+14155550116" });
+  });
+
+  it("keeps the Workspace Active when restoring the detached number fails", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = (await pool!.query("select id from workspace where name = 'Detach Workspace'")).rows[0].id as string;
+    failingUpdateSid = "PNpppppppppppppppppppppppppppppppp";
+    try {
+      const failed = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+      expect(failed.response.status).toBe(502);
+    } finally {
+      failingUpdateSid = null;
+    }
+    expect((await pool!.query("select state from workspace where id = $1", [workspaceId])).rows[0].state).toBe("Active");
+    expect((await pool!.query("select twilio_number_id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId])).rows).toEqual([
+      { twilio_number_id: "routing-number-p" },
+    ]);
+  });
+
+  it("refuses to detach a number outside an Active Workspace", async () => {
+    const cookie = await signIn("operator@example.com");
+    const setupWorkspaceId = await createWorkspace(cookie, "Detach Setup Workspace");
+    const refused = await json(new Request(`${baseURL}/api/workspaces/${setupWorkspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+    expect(refused.response.status).toBe(409);
+    expect(refused.body.error).toBe("activation_required");
   });
 });

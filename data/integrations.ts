@@ -23,11 +23,12 @@ import type { Pool, PoolClient } from "pg";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
-import { TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
+import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 
 export interface TwilioConnectionRecord {
   accountSid: string;
   apiKeySid: string;
+  authTokenConfigured: boolean;
   accountFriendlyName: string | null;
   connectedAt: string;
   connectedBy: { id: string; name: string } | null;
@@ -80,7 +81,7 @@ export interface IntegrationsOptions {
 }
 
 export interface Integrations {
-  getTwilioConnection(): Promise<TwilioConnectionRecord | null>;
+  getTwilioConnection(client?: Pool | PoolClient): Promise<TwilioConnectionRecord | null>;
   withTwilioCredential<T>(
     operation: (credential: TwilioCredential) => Promise<T>,
     context?: { client?: Pool | PoolClient; deferFailureRecording?: boolean },
@@ -94,6 +95,7 @@ export interface Integrations {
   }): Promise<TwilioConnectionRecord>;
   testTwilio(): Promise<TwilioConnectionRecord>;
   rotateTwilioKey(input: { apiKeySid: string; apiKeySecret: string }): Promise<TwilioConnectionRecord>;
+  setTwilioAuthToken(input: { authToken: string }): Promise<TwilioConnectionRecord>;
   disconnectTwilio(): Promise<void>;
   syncTwilioNumbers(): Promise<{ numbers: TwilioNumberRecord[]; syncedAt: string; skipped: number }>;
   listTwilioNumbers(): Promise<TwilioNumberRecord[]>;
@@ -103,6 +105,7 @@ type ConnectionRow = {
   account_sid: string;
   api_key_sid: string;
   api_key_secret_ciphertext: string;
+  auth_token_ciphertext: string | null;
   account_friendly_name: string | null;
   connected_at: Date;
   connected_by_id: string | null;
@@ -143,7 +146,7 @@ async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) =>
 }
 
 const connectionQuery = `
-  select c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext,
+  select c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext,
          c.account_friendly_name, c.connected_at, c.connected_by_user_id as connected_by_id,
          u.name as connected_by_name, c.last_verified_at, c.last_failure_at,
          c.last_failure_detail, c.numbers_synced_at, count(n.id)::int as number_count
@@ -151,7 +154,7 @@ const connectionQuery = `
     left join "user" u on u.id = c.connected_by_user_id
     left join twilio_number n on n.organization_id = c.organization_id and n.released_at is null
    where c.organization_id = $1
-   group by c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext,
+   group by c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext,
             c.account_friendly_name, c.connected_at, c.connected_by_user_id,
             u.name, c.last_verified_at, c.last_failure_at,
             c.last_failure_detail, c.numbers_synced_at
@@ -161,6 +164,7 @@ function toConnectionRecord(row: ConnectionRow): TwilioConnectionRecord {
   return {
     accountSid: row.account_sid,
     apiKeySid: row.api_key_sid,
+    authTokenConfigured: row.auth_token_ciphertext !== null,
     accountFriendlyName: row.account_friendly_name,
     connectedAt: row.connected_at.toISOString(),
     connectedBy: row.connected_by_id && row.connected_by_name ? { id: row.connected_by_id, name: row.connected_by_name } : null,
@@ -250,8 +254,8 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
   }
 
   return {
-    async getTwilioConnection() {
-      return selectConnection(options.pool).then((row) => (row ? toConnectionRecord(row) : null));
+    async getTwilioConnection(client) {
+      return selectConnection(client ?? options.pool).then((row) => (row ? toConnectionRecord(row) : null));
     },
 
     async withTwilioCredential<T>(
@@ -359,6 +363,30 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
                   last_failure_at = null, last_failure_detail = null, updated_at = $5
             where organization_id = $1`,
           [options.organizationId, apiKeySid, ciphertext, account.friendlyName, now],
+        );
+        const updated = await selectConnection(client);
+        if (!updated) throw new IntegrationsError("not_connected");
+        return toConnectionRecord(updated);
+      });
+    },
+
+    async setTwilioAuthToken(input) {
+      const authToken = input.authToken.trim();
+      if (!authToken) throw new IntegrationsError("invalid_input");
+      const masterKey = options.masterKey;
+      if (!masterKey) throw new IntegrationsError("master_key_missing");
+      return withTransaction(options.pool, async (client) => {
+        await lockOrganization(client);
+        const current = await selectConnection(client);
+        if (!current) throw new IntegrationsError("not_connected");
+        await verifyCredential(authTokenCredential(current.account_sid, authToken));
+        const now = new Date();
+        await client.query(
+          `update twilio_connection
+              set auth_token_ciphertext = $2, last_verified_at = $3,
+                  last_failure_at = null, last_failure_detail = null, updated_at = $3
+            where organization_id = $1`,
+          [options.organizationId, await encryptSecret(masterKey, authToken), now],
         );
         const updated = await selectConnection(client);
         if (!updated) throw new IntegrationsError("not_connected");

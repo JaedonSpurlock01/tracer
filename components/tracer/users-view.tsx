@@ -85,11 +85,12 @@ function workspaceAccess(user: OperatorRecord): string {
 
 interface UsersViewProps {
   currentUserId: string;
+  initialUsers: OperatorRecord[];
 }
 
-export default function UsersView({ currentUserId }: UsersViewProps) {
-  const [users, setUsers] = useState<OperatorRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function UsersView({ currentUserId, initialUsers }: UsersViewProps) {
+  const [users, setUsers] = useState<OperatorRecord[]>(initialUsers);
+  const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<"All" | UserState>("All");
@@ -125,8 +126,8 @@ export default function UsersView({ currentUserId }: UsersViewProps) {
     void loadWorkspaceOptions();
   }, [loadWorkspaceOptions]);
 
-  const loadUsers = async () => {
-    setLoading(true);
+  const loadUsers = async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setFetchError(false);
     try {
       const response = await fetch("/api/users");
@@ -141,7 +142,7 @@ export default function UsersView({ currentUserId }: UsersViewProps) {
   };
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadUsers(), 0);
+    const timer = window.setTimeout(() => void loadUsers(true), 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -232,7 +233,7 @@ export default function UsersView({ currentUserId }: UsersViewProps) {
     setProvisionOpen(false);
     formElement.reset();
     setProvisionWorkspaceIds([]);
-    await loadUsers();
+    await loadUsers(true);
     const user = body.user as OperatorRecord;
     if (body.delivery === "failed") {
       setDeliveryWarning(user);
@@ -252,7 +253,7 @@ export default function UsersView({ currentUserId }: UsersViewProps) {
     const body = await responseBody(response);
     setManageUser(body.user as OperatorRecord);
     setGrantWorkspaceId(null);
-    await loadUsers();
+    await loadUsers(true);
     setStatus(message);
   }
 
@@ -300,7 +301,7 @@ export default function UsersView({ currentUserId }: UsersViewProps) {
     }
     setConfirmDisable(false);
     setManageUser(null);
-    await loadUsers();
+    await loadUsers(true);
     setStatus(nextState === "Disabled" ? "User disabled." : "User re-enabled.");
   }
 

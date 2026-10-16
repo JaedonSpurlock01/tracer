@@ -4,11 +4,14 @@
  * @brief  Renders the Operator Integrations provider health surface.
  *
  * @description
- *  Loads provider health, manages Twilio credentials and numbers, and exposes
- *  safe Hyperdrive and Email Service test actions.
+ *  Renders server-provided provider health, manages Twilio credentials and
+ *  numbers, and exposes safe Hyperdrive and Email Service test actions.
  *
  * @remarks
- *  Provider actions remain behind the authenticated HTTP boundary.
+ *  Provider actions remain behind the authenticated HTTP boundary. The first
+ *  data arrives from the server, so the page never shows a loading Skeleton;
+ *  it refreshes in place after mount and after each action, and a failed
+ *  refresh keeps the current data with a Retry.
  *
  * @see
  *  data/integrations-handler.ts
@@ -27,7 +30,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
 import type { ProviderHealth, ProviderState } from "@/data/provider-health";
@@ -37,7 +39,7 @@ type IntegrationResponse = {
   twilio: TwilioConnectionRecord | null;
 };
 
-type Action = "test" | "sync" | "rotate" | "disconnect" | "hyperdrive" | "email" | null;
+type Action = "test" | "sync" | "rotate" | "authToken" | "disconnect" | "hyperdrive" | "email" | null;
 
 type FormValues = {
   accountSid: string;
@@ -107,12 +109,17 @@ function ProviderDetails({ provider }: { provider: ProviderHealth }) {
   );
 }
 
-export default function IntegrationsView() {
-  const [providers, setProviders] = useState<ProviderHealth[]>([]);
-  const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(null);
-  const [numbers, setNumbers] = useState<TwilioNumberRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState(false);
+export interface IntegrationsOverview {
+  providers: ProviderHealth[];
+  twilio: TwilioConnectionRecord | null;
+  numbers: TwilioNumberRecord[];
+}
+
+export default function IntegrationsView({ initial }: { initial: IntegrationsOverview }) {
+  const [providers, setProviders] = useState<ProviderHealth[]>(initial.providers);
+  const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
+  const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
+  const [refreshError, setRefreshError] = useState(false);
   const [status, setStatus] = useState("");
   const [twilioAction, setTwilioAction] = useState<Action>(null);
   const [providerAction, setProviderAction] = useState<Action>(null);
@@ -122,13 +129,14 @@ export default function IntegrationsView() {
   const [providerMessages, setProviderMessages] = useState<Record<string, string>>({});
   const [connectOpen, setConnectOpen] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
+  const [authTokenOpen, setAuthTokenOpen] = useState(false);
+  const [authToken, setAuthToken] = useState("");
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [form, setForm] = useState<FormValues>(emptyForm);
   const [formError, setFormError] = useState("");
 
   async function reload() {
-    setLoading(true);
-    setFetchError(false);
+    setRefreshError(false);
     try {
       const response = await fetch("/api/integrations");
       if (!response.ok) throw new Error("Integrations unavailable");
@@ -144,9 +152,7 @@ export default function IntegrationsView() {
         setNumbers([]);
       }
     } catch {
-      setFetchError(true);
-    } finally {
-      setLoading(false);
+      setRefreshError(true);
     }
   }
 
@@ -207,6 +213,33 @@ export default function IntegrationsView() {
     resetForm();
     await reload();
     setStatus("Twilio API key rotated.");
+    setTwilioAction(null);
+  }
+
+  async function saveAuthToken(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setTwilioAction("authToken");
+    const response = await fetch("/api/integrations/twilio/auth-token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ authToken }),
+    }).catch(() => null);
+    if (!response) {
+      setFormError("Connection failed.");
+      setTwilioAction(null);
+      return;
+    }
+    const body = await responseBody(response);
+    if (!response.ok) {
+      setFormError(response.status === 400 ? "Enter the Twilio Auth Token." : providerError(response.status, body.detail, "Connection failed."));
+      setTwilioAction(null);
+      return;
+    }
+    setAuthTokenOpen(false);
+    setAuthToken("");
+    await reload();
+    setStatus("Twilio Auth Token saved.");
     setTwilioAction(null);
   }
 
@@ -288,23 +321,15 @@ export default function IntegrationsView() {
     setRotateOpen(true);
   }
 
+  function openAuthToken() {
+    setFormError("");
+    setAuthToken("");
+    setAuthTokenOpen(true);
+  }
+
   const readyCount = providers.filter((provider) => provider.state === "connected" || provider.state === "configured").length;
   const twilioProvider = providers.find((provider) => provider.id === "twilio");
   const canConnect = !twilio && twilioProvider?.note === "No Organization Twilio credential is connected";
-
-  if (loading) {
-    return <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <Skeleton className="h-4 w-40" />
-      </div>
-      <div className="flex flex-col gap-4">{Array.from({ length: 6 }, (_, index) => <Frame key={index}><FramePanel className="flex flex-col gap-4"><Skeleton className="h-6 w-36" /><Skeleton className="h-4 w-28" /><Skeleton className="h-4 w-full" /></FramePanel></Frame>)}</div>
-    </div>;
-  }
-
-  if (fetchError) {
-    return <div className="flex items-center gap-3"><p role="alert">Integrations are unavailable.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div>;
-  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -313,6 +338,7 @@ export default function IntegrationsView() {
         <p className="text-sm text-muted-foreground">{readyCount} of {providers.length} providers ready</p>
       </div>
       {status ? <p role="status">{status}</p> : null}
+      {refreshError ? <div className="flex items-center gap-3"><p role="alert">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
       {providers.map((provider) => {
         const headingId = `integration-${provider.id}`;
         const isTwilio = provider.id === "twilio";
@@ -326,7 +352,7 @@ export default function IntegrationsView() {
                 </div>
                 <ProviderDetails provider={provider} />
                 {isTwilio ? (
-                  twilio ? <TwilioConnected connection={twilio} numbers={numbers} action={twilioAction} error={twilioError} retry={twilioRetry} onTest={() => void testTwilio()} onSync={() => void syncTwilio()} onRotate={openRotate} onDisconnect={() => setDisconnectOpen(true)} />
+                  twilio ? <TwilioConnected connection={twilio} numbers={numbers} action={twilioAction} error={twilioError} retry={twilioRetry} onTest={() => void testTwilio()} onSync={() => void syncTwilio()} onRotate={openRotate} onSetAuthToken={openAuthToken} onDisconnect={() => setDisconnectOpen(true)} />
                     : canConnect ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null
                 ) : provider.id === "hyperdrive" && provider.testable ? (
                   <ProviderAction id="hyperdrive" action={providerAction} message={providerMessages.hyperdrive} error={providerErrors.hyperdrive} onClick={() => void testProvider("hyperdrive")} />
@@ -362,6 +388,16 @@ export default function IntegrationsView() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={authTokenOpen} onOpenChange={setAuthTokenOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Set Twilio Auth Token</DialogTitle><DialogDescription>Tracer verifies Twilio webhook signatures with the account Auth Token. It is verified, encrypted, and never displayed again.</DialogDescription></DialogHeader>
+          <form className="flex flex-col gap-4" onSubmit={(event) => void saveAuthToken(event)}>
+            <Field data-invalid={Boolean(formError)}><FieldLabel htmlFor="twilio-auth-token">Auth Token</FieldLabel><Input id="twilio-auth-token" type="password" autoComplete="off" value={authToken} onChange={(event) => setAuthToken(event.target.value)} required />{formError ? <FieldError>{formError}</FieldError> : null}</Field>
+            <DialogFooter><Button type="submit" disabled={twilioAction === "authToken"}>{twilioAction === "authToken" ? <><Spinner /> Saving...</> : "Save Auth Token"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect Twilio?</AlertDialogTitle><AlertDialogDescription>The encrypted credential and synced number inventory are removed.</AlertDialogDescription></AlertDialogHeader>
@@ -377,7 +413,7 @@ function ProviderAction({ id, action, message, error, onClick }: { id: "hyperdri
   return <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" disabled={action === id} onClick={onClick}>{action === id ? <><Spinner /> Testing...</> : id === "email" ? "Send Test Email" : "Test Connection"}</Button>{message ? <p>{message}</p> : null}{error ? <><p role="alert">{error}</p><Button type="button" variant="outline" onClick={onClick}>Retry</Button></> : null}</div>;
 }
 
-function TwilioConnected({ connection, numbers, action, error, retry, onTest, onSync, onRotate, onDisconnect }: { connection: TwilioConnectionRecord; numbers: TwilioNumberRecord[]; action: Action; error: string; retry: boolean; onTest: () => void; onSync: () => void; onRotate: () => void; onDisconnect: () => void }) {
+function TwilioConnected({ connection, numbers, action, error, retry, onTest, onSync, onRotate, onSetAuthToken, onDisconnect }: { connection: TwilioConnectionRecord; numbers: TwilioNumberRecord[]; action: Action; error: string; retry: boolean; onTest: () => void; onSync: () => void; onRotate: () => void; onSetAuthToken: () => void; onDisconnect: () => void }) {
   const busy = action !== null;
   const progress = actionText(action);
   return <div className="flex flex-col gap-4">
@@ -388,6 +424,7 @@ function TwilioConnected({ connection, numbers, action, error, retry, onTest, on
       <div><dt className="text-muted-foreground">Connected by</dt><dd>{connection.connectedBy?.name ?? "Unknown"}</dd></div>
       <div><dt className="text-muted-foreground">Connected at</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
       <div><dt className="text-muted-foreground">Last verified</dt><dd>{formatDate(connection.lastVerifiedAt)}</dd></div>
+      <div><dt className="text-muted-foreground">Webhook Auth Token</dt><dd><Badge variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge></dd></div>
     </dl>
     <p className="text-sm"><span>{connection.numberCount} eligible numbers</span>. Last synced {formatDate(connection.numbersSyncedAt)}.</p>
     <dl className="grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Active Number Assignments</dt><dd>Available after Workspace activation</dd></div><div><dt className="text-muted-foreground">Webhook health</dt><dd>Available after call routing</dd></div></dl>
@@ -396,6 +433,7 @@ function TwilioConnected({ connection, numbers, action, error, retry, onTest, on
       <Button type="button" disabled={busy} onClick={onTest}>{action === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
       <Button type="button" variant="outline" disabled={busy} onClick={onSync}>{action === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
       <Button type="button" variant="outline" disabled={busy} onClick={onRotate}>{action === "rotate" ? <><Spinner /> Rotating...</> : "Rotate Key"}</Button>
+      <Button type="button" variant="outline" disabled={busy} onClick={onSetAuthToken}>Set Auth Token</Button>
       <Button type="button" variant="destructive" disabled={busy} onClick={onDisconnect}>Disconnect</Button>
     </div>
     <div className="overflow-x-auto">

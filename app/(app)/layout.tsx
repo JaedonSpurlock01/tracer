@@ -5,8 +5,8 @@
  *
  * @description
  *  Resolves the current actor, redirects unauthenticated requests, and wraps
- *  authenticated pages in the responsive Sidebar shell with the Workspaces
- *  the actor may read.
+ *  authenticated pages in the responsive Sidebar shell with the actor's
+ *  account menu and current Organization.
  *
  * @remarks
  *  Route authorization remains server-side before shell content renders.
@@ -23,7 +23,7 @@ import type { ReactNode } from "react";
 import AppSidebar from "@/components/tracer/app-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { resolveRequestActor } from "@/app/(app)/actor";
-import { createReadableWorkspaces } from "@/data/workspace-authorization";
+import { createOrganizationRepository } from "@/data/organization-repository";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
 interface AppLayoutProps {
@@ -35,15 +35,13 @@ export default async function AppLayout({ children }: AppLayoutProps) {
   if (!actor) {
     redirect("/sign-in");
   }
-  const workspaces = actor.state === "Active"
-    ? (await withTracerRuntime(({ pool }) => createReadableWorkspaces(pool, actor).list({ pageSize: 50 }))).workspaces
-    : [];
+  const organization = await withTracerRuntime(({ pool }) => createOrganizationRepository(pool).findById(actor.organizationId));
 
   return (
     <SidebarProvider>
       <AppSidebar
-        actor={{ name: actor.name, email: actor.email, role: actor.role }}
-        workspaces={workspaces.map(({ id, name }) => ({ id, name }))}
+        actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role }}
+        organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
       />
       <SidebarInset>
         <header className="flex h-12 items-center gap-2 border-b border-border px-4">

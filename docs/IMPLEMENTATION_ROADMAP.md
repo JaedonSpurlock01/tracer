@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M8 - Workspace Access Grants
-- **Next milestone:** M9 - Minimal Inbound Call Tracer Bullet
+- **Current milestone:** None; M10 is planned for the next sprint
+- **Next milestone:** M10 - Complete First-Release Call Routing
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-15
+- **Last roadmap review:** 2026-10-16
 
-M7 is Complete and merged to `main`. M8 is In Progress on the `milestone/m8-workspace-access-grants` branch and delivers Access Grant persistence, Client Viewer provisioning, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. The Product Owner waived M9's live Staging call gate, which M10's Staging verification now carries. No milestone is In Progress; M10 starts in the next sprint.
 
 ## Status model
 
@@ -175,8 +175,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
 | M6 | Workspace Setup | Complete | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Complete | Preview and Staging | M6 |
-| M8 | Workspace Access Grants | In Progress | Preview and Staging | M7 |
-| M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
+| M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
+| M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
 | M11 | Durable Recording Transfer | Not Started | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
@@ -548,7 +548,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M8 - Workspace Access Grants
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** An Operator can grant a Client Viewer explicit read access to an Active Workspace without exposing any ungranted Workspace.
 - **Depends on:** M7
 - **Target environment:** Preview and Staging
@@ -601,10 +601,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M9 - Minimal Inbound Call Tracer Bullet
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Outcome:** One real Staging inbound call travels through Tracer, forwards to the Destination Number, and persists a canonical Call lifecycle.
 - **Depends on:** M8
 - **Target environment:** Staging
+- **Execution note:** Twilio signs webhooks with the account Auth Token, which the M5 API key credential cannot replace, so the Organization Twilio connection gains an Auth Token encrypted under ADR 0005, entered and verified on the Integrations page before storage. Workspace activation is refused until that Auth Token is configured, because every inbound Call would otherwise fail signature validation. A Call whose pinned Flow Version reaches a step deferred to M10 (Business Hours, Keypad Gate, Whisper, or Voicemail) ends as Failed with a persisted reason rather than skipping the step. A voice webhook for an ended Number Assignment or a non-Active Workspace returns `<Reject/>`, creates no Call, and persists the provider event for diagnosis. Forward Call maps a connected leg to Answered, no-answer or busy to Missed, a caller hang-up before connection to Abandoned, and provider or Tracer errors to Failed. Replace Number is available for any Active Workspace; replacing after a completed Call is only the Staging verification order. At the Product Owner's request, M9 also moves the account menu to the top of the Sidebar with a DiceBear avatar, lists the current Organization with a disabled New organization action, and removes the Sidebar Workspace switcher because the Workspaces page owns Workspace selection. Detach Number ends the active Number Assignment as detached, restores the number's prior Twilio voice configuration, and moves the Workspace to Setup Required with its Calls and Flow Versions intact, so an Operator can stop routing without a replacement number; the number stays in the Twilio account, and a Twilio failure aborts the detach and keeps the Workspace Active. Workspace Settings sections become separate pages behind a vertical rail. Frequently used pages render their first data on the server and their navigation links prefetch the full route, so they open without Skeletons; each view then revalidates quietly in the background because a fully prefetched route can be served from the client cache for up to five minutes. Workspaces search, state filter, and page live in the URL so the server renders the requested page.
 
 #### Vertical slices
 
@@ -629,12 +630,15 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 #### Deliverables
 
 - Twilio webhook routes
-- Signature validation
+- Encrypted Organization Twilio Auth Token and signature validation
 - Minimal constrained TwiML renderer
 - Call lifecycle and provider-event persistence
 - Tracking Number replacement flow in Workspace Settings
 - Contract fixtures for voice and status callbacks
 - Staging smoke script for the dedicated number
+- Sidebar account and Organization menu replacing the Workspace switcher, added at the Product Owner's request
+- Detach Number in Workspace Settings and one page per Workspace Settings section, added at the Product Owner's request
+- Server-rendered first data and full Link prefetching for Workspaces, Workspace Settings, Users, and Integrations, with Workspaces pagination in the URL, added at the Product Owner's request
 
 #### Verification gate
 
@@ -642,6 +646,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - One real Staging call is answered and one non-answer outcome is observed.
 - Duplicate callback replay leaves state unchanged.
 - Staging replaces the test number after a completed Call and verifies historical attribution.
+- The Product Owner waived the three live Staging checks above when closing M9 on 2026-10-16; they move to M10's verification gate. The automated suites passed in the pull request's full-verification and Staging database smoke checks.
 
 #### Exit criteria
 
@@ -686,6 +691,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 - Domain, contract, Worker, and integration suites pass.
 - Staging exercises each branch with non-sensitive test calls.
+- Carried from M9: one real Staging call is answered and one non-answer outcome is observed, `pnpm smoke:staging-call --replay` leaves state unchanged, and Staging replaces the test number after a completed Call and verifies historical attribution.
 - Provider costs from branch smoke checks are recorded.
 
 #### Exit criteria

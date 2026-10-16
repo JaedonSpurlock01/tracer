@@ -117,6 +117,11 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
         }
         return response({ connection: await integrations.rotateTwilioKey({ apiKeySid: body.apiKeySid, apiKeySecret: body.apiKeySecret }) });
       }
+      if (request.method === "POST" && route === "twilio/auth-token") {
+        const body = await readBody(request);
+        if (typeof body.authToken !== "string") throw new IntegrationsError("invalid_input");
+        return response({ connection: await integrations.setTwilioAuthToken({ authToken: body.authToken }) });
+      }
       if (request.method === "POST" && route === "twilio/disconnect") {
         await integrations.disconnectTwilio();
         return response({ disconnected: true });

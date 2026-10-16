@@ -21,7 +21,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTable, type ColumnDef, type PaginationState } from "@tanstack/react-table";
 
 import { Badge } from "@/components/reui/badge";
@@ -92,21 +92,32 @@ function routingFromWorkspace(workspace: WorkspaceRecord | null): RoutingForm {
   };
 }
 
-export default function WorkspacesView({ initialTimezone, readOnly = false }: { initialTimezone: string; readOnly?: boolean }) {
+export interface WorkspacesViewQuery {
+  search: string;
+  state: "All" | WorkspaceState;
+  page: number;
+}
+
+export default function WorkspacesView({
+  initialTimezone,
+  initialResult,
+  initialQuery,
+  readOnly = false,
+}: {
+  initialTimezone: string;
+  initialResult: WorkspaceListResult;
+  initialQuery: WorkspacesViewQuery;
+  readOnly?: boolean;
+}) {
   const searchParams = useSearchParams();
   const resumeId = searchParams.get("resume");
-  const [result, setResult] = useState<WorkspaceListResult>({
-    workspaces: [],
-    total: 0,
-    page: 1,
-    pageSize,
-    counts: { setupRequired: 0, active: 0, archived: 0 },
-  });
-  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<WorkspaceListResult>(initialResult);
+  const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const [search, setSearch] = useState("");
-  const [stateFilter, setStateFilter] = useState<"All" | WorkspaceState>("All");
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
+  const [search, setSearch] = useState(initialQuery.search);
+  const [stateFilter, setStateFilter] = useState<"All" | WorkspaceState>(initialQuery.state);
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initialQuery.page - 1, pageSize });
+  const revalidated = useRef(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceRecord | null>(null);
   const [step, setStep] = useState(1);
@@ -124,8 +135,8 @@ export default function WorkspacesView({ initialTimezone, readOnly = false }: { 
   const [reviewError, setReviewError] = useState("");
   const [reviewIssues, setReviewIssues] = useState<Array<{ code: string; message: string }>>([]);
 
-  const loadWorkspaces = useCallback(async () => {
-    setLoading(true);
+  const loadWorkspaces = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setFetchError(false);
     const params = new URLSearchParams({ search, state: stateFilter, page: String(pagination.pageIndex + 1), pageSize: String(pageSize) });
     try {
@@ -186,9 +197,21 @@ export default function WorkspacesView({ initialTimezone, readOnly = false }: { 
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadWorkspaces(), 0);
+    const quiet = !revalidated.current;
+    revalidated.current = true;
+    if (!quiet) {
+      const url = new URL(window.location.href);
+      if (search) url.searchParams.set("search", search);
+      else url.searchParams.delete("search");
+      if (stateFilter !== "All") url.searchParams.set("state", stateFilter);
+      else url.searchParams.delete("state");
+      if (pagination.pageIndex > 0) url.searchParams.set("page", String(pagination.pageIndex + 1));
+      else url.searchParams.delete("page");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    }
+    const timer = window.setTimeout(() => void loadWorkspaces(quiet), 0);
     return () => window.clearTimeout(timer);
-  }, [loadWorkspaces]);
+  }, [loadWorkspaces, pagination.pageIndex, search, stateFilter]);
   useEffect(() => {
     if (!dialogOpen || step !== 2) return;
     const timer = window.setTimeout(() => void loadNumbers(), 0);
@@ -252,7 +275,7 @@ export default function WorkspacesView({ initialTimezone, readOnly = false }: { 
     setWorkspace(created);
     setRouting(routingFromWorkspace(created));
     setStep(2);
-    await loadWorkspaces();
+    await loadWorkspaces(true);
   }
 
   async function nextFromRouting() {
@@ -313,7 +336,7 @@ export default function WorkspacesView({ initialTimezone, readOnly = false }: { 
     }
     const active = body.workspace as WorkspaceRecord;
     setDialogOpen(false);
-    await loadWorkspaces();
+    await loadWorkspaces(true);
     setStatus(`${active.name} is Active.`);
     setBusy(false);
   }
@@ -324,7 +347,7 @@ export default function WorkspacesView({ initialTimezone, readOnly = false }: { 
         accessorKey: "name",
         header: "Workspace",
         cell: ({ row }) => (
-          <Link className="font-medium hover:underline" href={`/workspaces/${row.original.id}`}>
+          <Link className="font-medium hover:underline" href={`/workspaces/${row.original.id}`} prefetch>
             <span>{row.original.name}</span>
             <span className="block text-xs text-muted-foreground">{row.original.reportingTimezone}</span>
           </Link>

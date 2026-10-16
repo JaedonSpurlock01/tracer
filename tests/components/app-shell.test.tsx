@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => pathname.value,
 }));
 
-import AppSidebar from "@/components/tracer/app-sidebar";
+import AppSidebar, { avatarUrl } from "@/components/tracer/app-sidebar";
 import UsersView from "@/components/tracer/users-view";
 import { SidebarProvider } from "@/components/ui/sidebar";
 
@@ -44,6 +44,8 @@ const operator: OperatorRecord = {
   createdAt: "2026-10-01T00:00:00.000Z",
   accessGrants: [],
 };
+
+const organization = { name: "Spurlock Labs", slug: "spurlock-labs" };
 
 const secondOperator: OperatorRecord = {
   ...operator,
@@ -108,7 +110,7 @@ afterEach(() => {
 
 describe("application shell", () => {
   it("shows all navigation links for an Operator and hides Operator links for a Client Viewer", () => {
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
     expect(screen.getByRole("link", { name: "Home" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toBeVisible();
@@ -118,40 +120,49 @@ describe("application shell", () => {
     expect(screen.getByRole("link", { name: "Integrations" })).toBeVisible();
 
     cleanup();
-    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[]} /></SidebarProvider>);
+    render(<SidebarProvider><AppSidebar actor={viewer} organization={organization} /></SidebarProvider>);
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
   });
 
-  it("switches between the Client Viewer's granted Workspaces only", async () => {
-    pathname.value = "/workspaces/ws-acme";
-    render(<SidebarProvider><AppSidebar actor={viewer} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }, { id: "ws-gamma", name: "Gamma HVAC" }]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Acme Plumbing/ }));
-    expect(await screen.findByRole("menuitem", { name: "Gamma HVAC" })).toHaveAttribute("href", "/workspaces/ws-gamma");
-    expect(screen.getByRole("menuitem", { name: /Acme Plumbing/ })).toHaveAttribute("href", "/workspaces/ws-acme");
-    expect(screen.queryByRole("menuitem", { name: "All Workspaces" })).not.toBeInTheDocument();
-  });
-
-  it("offers Operators every Workspace and the full Workspace list", async () => {
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[{ id: "ws-acme", name: "Acme Plumbing" }]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Select a Workspace/ }));
-    expect(await screen.findByRole("menuitem", { name: "All Workspaces" })).toHaveAttribute("href", "/workspaces");
-    expect(screen.getByRole("menuitem", { name: "Acme Plumbing" })).toHaveAttribute("href", "/workspaces/ws-acme");
-  });
-
-  it("opens the account menu and signs out through Better Auth", async () => {
+  it("opens the account menu from the top of the Sidebar with the current Organization", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ success: true })));
-    render(<SidebarProvider><AppSidebar actor={operator} workspaces={[]} /></SidebarProvider>);
-    fireEvent.click(screen.getByRole("button", { name: /Example Operator/ }));
-    await screen.findByRole("menuitem", { name: "Account Settings" });
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
+    const trigger = screen.getByRole("button", { name: /Example Operator/ });
+    expect(trigger).toHaveTextContent("spurlock-labs");
+    expect(trigger.compareDocumentPosition(screen.getByRole("link", { name: "Home" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Organizations")).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: /Spurlock Labs/ })).toHaveTextContent("spurlock-labs");
+    expect(screen.getByRole("menuitem", { name: "New organization" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("operator@example.com")).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Account Settings" })).toHaveAttribute("href", "/account/settings");
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/auth/sign-out", { method: "POST" }));
     expect(router.push).toHaveBeenCalledWith("/sign-in");
   });
 
+  it("leaves Workspace selection to the Workspaces page", () => {
+    render(<SidebarProvider><AppSidebar actor={viewer} organization={organization} /></SidebarProvider>);
+    expect(screen.queryByRole("button", { name: /Select a Workspace/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Workspaces" })).toHaveAttribute("href", "/workspaces");
+  });
+
+  it("uses a DiceBear Gaze avatar seeded by the user id", () => {
+    expect(avatarUrl("operator-1")).toBe("https://api.dicebear.com/10.x/gaze/svg?seed=operator-1");
+  });
+
+  it("renders server-provided users immediately without a loading skeleton", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const { container } = render(<UsersView currentUserId={operator.id} initialUsers={[operator, viewer]} />);
+    expect(screen.getByRole("button", { name: "Manage Example Operator" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Manage Client Viewer" })).toBeVisible();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
   it("lists users, filters by search text, and clears no-match filters", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ users: [operator, viewer] })));
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     expect(await screen.findByRole("button", { name: "Manage Example Operator" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Search users"), { target: { value: "nobody" } });
     expect(await screen.findByText("No matching users.")).toBeVisible();
@@ -166,7 +177,7 @@ describe("application shell", () => {
       .mockResolvedValueOnce(response({ users: [operator, secondOperator] }))
       .mockResolvedValue(response({ delivery: "sent" }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByText("Example Operator");
     fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "second@example.com" } });
@@ -182,7 +193,7 @@ describe("application shell", () => {
   it("protects the last Active Operator in the Manage dialog", async () => {
     const fetch = vi.fn().mockResolvedValue(response({ users: [operator] }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByRole("button", { name: "Manage Example Operator" });
     fireEvent.click(screen.getByRole("button", { name: "Manage Example Operator" }));
     expect(screen.getByText("The last Active Operator cannot be disabled or made a Client Viewer.")).toBeVisible();
@@ -192,7 +203,7 @@ describe("application shell", () => {
   it("disables a second Active Operator after confirmation", async () => {
     const fetch = vi.fn().mockResolvedValue(response({ users: [operator, secondOperator] }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByRole("button", { name: "Manage Second Operator" });
     fireEvent.click(screen.getByRole("button", { name: "Manage Second Operator" }));
     fireEvent.click(screen.getByRole("button", { name: "Disable" }));
@@ -205,7 +216,7 @@ describe("application shell", () => {
 
   it("shows each Client Viewer's granted Workspaces", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ users: [operator, viewer] })));
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     expect(await screen.findByText("All Workspaces")).toBeVisible();
     expect(screen.getByText("Acme Plumbing")).toBeVisible();
   });
@@ -217,7 +228,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByText("Example Operator");
     fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
     fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
@@ -243,7 +254,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, viewer] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
     expect(screen.getByRole("button", { name: "Remove Acme Plumbing" })).toBeDisabled();
     expect(screen.getByText("A Client Viewer must keep at least one Access Grant.")).toBeVisible();
@@ -266,7 +277,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, twoGrants] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove Gamma HVAC" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users/viewer-1/access-grants/ws-gamma", expect.objectContaining({ method: "DELETE" })));
@@ -279,7 +290,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, viewer] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Example Operator" }));
     expect(screen.getByRole("button", { name: "Make Client Viewer" })).toBeDisabled();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });

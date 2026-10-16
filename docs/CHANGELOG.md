@@ -64,6 +64,15 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Moved M9's live Staging call checks into M10's verification gate because the Product Owner closed M9 before they ran; M10 cannot complete until a real answered and non-answer Call, callback replay, and number replacement are verified on Staging.
+- Started M9 - Minimal Inbound Call Tracer Bullet for signed Twilio voice and status webhooks, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
+- Added an encrypted Twilio Auth Token to the Organization Twilio connection because Twilio signs webhooks with the Auth Token and the M5 API key credential cannot validate them, and refused Workspace activation until that Auth Token is configured so no live Tracking Number routes Calls Tracer cannot authenticate.
+- Ended M9 Calls that reach a step deferred to M10 as Failed instead of skipping the step, rejected voice webhooks for inactive Number Assignments without creating a Call, and made Replace Number available for any Active Workspace rather than only after the first Call.
+- Changed Tracking Number replacement failure handling to abort the replacement and keep the Workspace Active on its current Number Assignment instead of moving it to Setup Required, matching the M7 archive rule, because ending an assignment while Twilio still routes to it would leave inbound Calls unowned; replacement attaches the new number before restoring the old one so one number always routes to Tracer.
+- Added a Sidebar account menu to M9 at the top of the Sidebar with a DiceBear avatar, the current Organization, a disabled New organization action, Account Settings, and Sign out, and removed the Sidebar Workspace switcher because the Workspaces page owns Workspace selection.
+- Added Detach Number to M9: an Operator can end an Active Workspace's Number Assignment without a replacement, which restores the number's prior Twilio configuration and returns the Workspace to Setup Required, so its Access Grants authorize nothing until reactivation. It is named Detach rather than Release because Tracer never releases a number from Twilio.
+- Split Workspace Settings into one page per section behind a vertical rail.
+- Added server-rendered first data and full Link prefetching to Workspaces, Workspace Settings, Users, and Integrations so they open without Skeletons, with quiet background revalidation instead of a shorter experimental client-cache lifetime, and moved Workspaces search, state filter, and page into the URL.
 - Started M8 - Workspace Access Grants for Access Grant persistence, Client Viewer provisioning and access instructions, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
 - Restricted new Access Grants to Active Workspaces, kept existing grants as read-only access to Archived Workspaces and as dormant authorization after a restore to Setup Required, and refused removing a Client Viewer's last Access Grant so a Client Viewer always holds at least one grant.
 - Started M7 - Call Flow Publication and Workspace Activation for the Number Assignment, Call Flow, and Flow Version domain modules, the completed Create Workspace wizard, the graph validator, the React Flow editor, and the Twilio attachment and restoration boundaries.
@@ -103,6 +112,8 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Completed
 
+- Completed M9 - Minimal Inbound Call Tracer Bullet after the domain, contract, integration, component, browser, typecheck, lint, build, and Staging database smoke gates passed with migrations 0008 through 0010 applied to Staging. The Product Owner waived the live Staging call gate (an answered and a non-answer call, signed callback replay, and number replacement with historical attribution); it moves to M10's Staging verification.
+- Completed M8 - Workspace Access Grants after the domain, contract, integration, component, and Access Grant browser gates passed in a full-verification run on `main`, including direct-route, API denial, and revocation from an existing session, and migration 0007 with its `access_grant` runtime grants was confirmed in the Staging database.
 - Completed M7 - Call Flow Publication and Workspace Activation after the domain, contract, integration, component, and Workspace and Flow browser gates passed and the Product Owner confirmed the live Staging attach, activate, archive, and restore check on the dedicated test number.
 - Completed M0 - Planning and Governance Baseline.
 - Completed M1 - Verified Application Skeleton after fast tests, typecheck, lint, build, Preview deployment, and the live `/health` smoke check passed.

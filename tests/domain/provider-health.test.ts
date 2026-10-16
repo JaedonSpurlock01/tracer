@@ -34,6 +34,7 @@ const configured: ProviderConfiguration = {
 const connection: TwilioConnectionRecord = {
   accountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   apiKeySid: "SK11111111111111111111111111111111",
+  authTokenConfigured: true,
   accountFriendlyName: "Example Account",
   connectedAt: "2026-10-14T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Operator" },

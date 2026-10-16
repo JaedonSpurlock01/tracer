@@ -50,6 +50,10 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(page.getByRole("button", { name: "Sync Numbers" })).toBeVisible();
   }
+  await page.getByRole("button", { name: "Set Auth Token" }).click();
+  await page.getByLabel("Auth Token", { exact: true }).fill("e2e-auth-token");
+  await page.getByRole("button", { name: "Save Auth Token" }).click();
+  await expect(page.getByText("Twilio Auth Token saved.")).toBeVisible();
   await page.getByRole("button", { name: "Sync Numbers" }).click();
   await expect(page.getByText(/Synced/).first()).toBeVisible();
 }

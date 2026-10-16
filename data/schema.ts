@@ -178,6 +178,7 @@ export const twilioConnections = pgTable(
     accountSid: text("account_sid").notNull(),
     apiKeySid: text("api_key_sid").notNull(),
     apiKeySecretCiphertext: text("api_key_secret_ciphertext").notNull(),
+    authTokenCiphertext: text("auth_token_ciphertext"),
     masterKeyVersion: integer("master_key_version").notNull().default(1),
     accountFriendlyName: text("account_friendly_name"),
     connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),
@@ -278,7 +279,7 @@ export const numberAssignments = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => [
-    check("number_assignment_ended_reason_check", sql`${table.endedReason} is null or ${table.endedReason} in ('archived', 'replaced', 'activation_failed')`),
+    check("number_assignment_ended_reason_check", sql`${table.endedReason} is null or ${table.endedReason} in ('archived', 'replaced', 'detached', 'activation_failed')`),
     uniqueIndex("number_assignment_active_number_idx").on(table.twilioNumberId).where(sql`${table.endedAt} is null`),
     uniqueIndex("number_assignment_active_workspace_idx").on(table.workspaceId).where(sql`${table.endedAt} is null`),
     index("number_assignment_organization_id_idx").on(table.organizationId),
@@ -351,6 +352,73 @@ export const accessGrants = pgTable(
   ],
 );
 
+export const calls = pgTable(
+  "call",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    numberAssignmentId: text("number_assignment_id")
+      .notNull()
+      .references(() => numberAssignments.id, { onDelete: "restrict" }),
+    flowVersionId: text("flow_version_id")
+      .notNull()
+      .references(() => flowVersions.id, { onDelete: "restrict" }),
+    twilioCallSid: text("twilio_call_sid").notNull(),
+    trackingNumber: text("tracking_number").notNull(),
+    callerNumber: text("caller_number"),
+    state: text().notNull().default("In Progress"),
+    outcome: text(),
+    outcomeReason: text("outcome_reason"),
+    forwardNodeId: text("forward_node_id"),
+    forwardStartedAt: timestamp("forward_started_at", { withTimezone: true }),
+    forwardStatus: text("forward_status"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    durationSeconds: integer("duration_seconds"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("call_state_check", sql`${table.state} in ('In Progress', 'Completed')`),
+    check("call_outcome_check", sql`${table.outcome} is null or ${table.outcome} in ('Answered', 'Voicemail', 'Missed', 'Abandoned', 'Blocked', 'Failed')`),
+    check("call_completed_outcome_check", sql`${table.state} <> 'Completed' or ${table.outcome} is not null`),
+    uniqueIndex("call_organization_call_sid_idx").on(table.organizationId, table.twilioCallSid),
+    index("call_organization_id_idx").on(table.organizationId),
+    index("call_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export const providerEvents = pgTable(
+  "provider_event",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    numberAssignmentId: text("number_assignment_id").references(() => numberAssignments.id, { onDelete: "set null" }),
+    callId: text("call_id").references(() => calls.id, { onDelete: "set null" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    kind: text().notNull(),
+    disposition: text().notNull(),
+    detail: text(),
+    payload: jsonb().notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("provider_event_kind_check", sql`${table.kind} in ('voice', 'forward', 'forward_status', 'status')`),
+    check("provider_event_disposition_check", sql`${table.disposition} in ('accepted', 'rejected')`),
+    uniqueIndex("provider_event_organization_key_idx").on(table.organizationId, table.idempotencyKey),
+    index("provider_event_organization_id_idx").on(table.organizationId),
+    index("provider_event_call_id_idx").on(table.callId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -366,4 +434,6 @@ export const schema = {
   callFlowDraft: callFlowDrafts,
   flowVersion: flowVersions,
   accessGrant: accessGrants,
+  call: calls,
+  providerEvent: providerEvents,
 };

@@ -1,0 +1,2 @@
+ALTER TABLE "number_assignment" DROP CONSTRAINT "number_assignment_ended_reason_check";--> statement-breakpoint
+ALTER TABLE "number_assignment" ADD CONSTRAINT "number_assignment_ended_reason_check" CHECK ("number_assignment"."ended_reason" is null or "number_assignment"."ended_reason" in ('archived', 'replaced', 'detached', 'activation_failed'));

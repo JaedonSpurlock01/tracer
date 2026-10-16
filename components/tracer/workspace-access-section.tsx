@@ -41,8 +41,18 @@ function stateVariant(state: OperatorRecord["state"]): "primary-light" | "succes
   return "primary-light";
 }
 
-export default function WorkspaceAccessSection({ workspace }: { workspace: Pick<WorkspaceRecord, "id" | "state"> }) {
-  const [clientViewers, setClientViewers] = useState<OperatorRecord[] | null>(null);
+function clientViewersOf(users: OperatorRecord[]): OperatorRecord[] {
+  return users.filter((user) => user.role === "Client Viewer");
+}
+
+export default function WorkspaceAccessSection({
+  workspace,
+  initialUsers,
+}: {
+  workspace: Pick<WorkspaceRecord, "id" | "state">;
+  initialUsers?: OperatorRecord[];
+}) {
+  const [clientViewers, setClientViewers] = useState<OperatorRecord[] | null>(initialUsers ? clientViewersOf(initialUsers) : null);
   const [loadError, setLoadError] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -54,7 +64,7 @@ export default function WorkspaceAccessSection({ workspace }: { workspace: Pick<
       const response = await fetch("/api/users");
       if (!response.ok) throw new Error("Users unavailable");
       const body = (await response.json()) as { users?: OperatorRecord[] };
-      setClientViewers((body.users ?? []).filter((user) => user.role === "Client Viewer"));
+      setClientViewers(clientViewersOf(body.users ?? []));
     } catch {
       setLoadError(true);
     }
@@ -84,7 +94,7 @@ export default function WorkspaceAccessSection({ workspace }: { workspace: Pick<
   }
 
   return (
-    <section id="access" className="flex flex-col gap-4 border-t pt-6">
+    <section id="access" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-0.5">
           <h2 className="font-semibold">Access</h2>

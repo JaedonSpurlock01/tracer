@@ -22,6 +22,10 @@ export interface TwilioCredential {
   apiKeySecret: string;
 }
 
+export function authTokenCredential(accountSid: string, authToken: string): TwilioCredential {
+  return { accountSid, apiKeySid: accountSid, apiKeySecret: authToken };
+}
+
 export interface TwilioAccountSummary {
   sid: string;
   friendlyName: string;

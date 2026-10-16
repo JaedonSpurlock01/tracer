@@ -43,6 +43,7 @@ export type RoutingErrorCode =
   | "not_found"
   | "state_unchanged"
   | "twilio_not_connected"
+  | "twilio_auth_token_missing"
   | "number_unavailable"
   | "draft_required"
   | "draft_invalid"
@@ -104,6 +105,8 @@ export interface WorkspaceRouting {
   saveDraft(workspaceId: string, graph: unknown, actorUserId: string): Promise<{ validation: ValidationResult; updatedAt: string }>;
   discardDraft(workspaceId: string): Promise<void>;
   activate(workspaceId: string, input: { twilioNumberId: string; actorUserId: string }): Promise<WorkspaceRecord>;
+  replaceNumber(workspaceId: string, input: { twilioNumberId: string }): Promise<WorkspaceRecord>;
+  detachNumber(workspaceId: string): Promise<WorkspaceRecord>;
   publish(workspaceId: string, actorUserId: string): Promise<WorkspaceRecord>;
   archive(workspaceId: string): Promise<WorkspaceRecord>;
 }
@@ -235,6 +238,47 @@ export function createWorkspaceRouting(options: {
 }): WorkspaceRouting {
   const lock = `tracer:workspaces:${options.organizationId}`;
   const baseURL = options.baseURL.replace(/\/$/, "");
+
+  function tracerVoiceConfiguration(assignmentId: string): TwilioVoiceConfiguration {
+    return {
+      voiceUrl: `${baseURL}/api/twilio/voice/${assignmentId}`,
+      voiceMethod: "POST",
+      voiceFallbackUrl: null,
+      voiceFallbackMethod: null,
+      statusCallback: `${baseURL}/api/twilio/status/${assignmentId}`,
+      statusCallbackMethod: "POST",
+    };
+  }
+
+  async function findActiveAssignment(client: PoolClient, workspaceId: string): Promise<AssignmentRow | undefined> {
+    const result = await client.query<AssignmentRow>(
+      `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
+              a.prior_voice_fallback_url, a.prior_voice_fallback_method,
+              a.prior_status_callback_url, a.prior_status_callback_method
+         from number_assignment a
+         join twilio_number n on n.id = a.twilio_number_id and n.organization_id = a.organization_id
+        where a.organization_id = $1 and a.workspace_id = $2 and a.ended_at is null
+        limit 1`,
+      [options.organizationId, workspaceId],
+    );
+    return result.rows[0];
+  }
+
+  async function lockAvailableNumber(client: PoolClient, twilioNumberId: string): Promise<NumberRow> {
+    const numberResult = await client.query<NumberRow>(
+      "select id, twilio_sid, phone_number, friendly_name, voice_url, voice_method, released_at, voice_capable from twilio_number where organization_id = $1 and id = $2 for update",
+      [options.organizationId, twilioNumberId],
+    );
+    const number = numberResult.rows[0];
+    if (!number) throw new RoutingError("not_found");
+    if (number.released_at || !number.voice_capable) throw new RoutingError("number_unavailable");
+    const active = await client.query(
+      "select 1 from number_assignment where organization_id = $1 and twilio_number_id = $2 and ended_at is null limit 1",
+      [options.organizationId, twilioNumberId],
+    );
+    if (active.rowCount) throw new RoutingError("number_unavailable");
+    return number;
+  }
 
   async function lockOrganization(client: PoolClient): Promise<void> {
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
@@ -501,24 +545,15 @@ export function createWorkspaceRouting(options: {
           await lockOrganization(client);
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state !== "Setup Required") throw new RoutingError("state_unchanged");
-          const numberResult = await client.query<NumberRow>(
-            "select id, twilio_sid, phone_number, friendly_name, voice_url, voice_method, released_at, voice_capable from twilio_number where organization_id = $1 and id = $2 for update",
-            [options.organizationId, input.twilioNumberId],
-          );
-          const number = numberResult.rows[0];
-          if (!number) throw new RoutingError("not_found");
-          if (number.released_at || !number.voice_capable) throw new RoutingError("number_unavailable");
-          const active = await client.query(
-            "select 1 from number_assignment where organization_id = $1 and twilio_number_id = $2 and ended_at is null limit 1",
-            [options.organizationId, input.twilioNumberId],
-          );
-          if (active.rowCount) throw new RoutingError("number_unavailable");
+          const number = await lockAvailableNumber(client, input.twilioNumberId);
           const existingDraft = await draft(client, workspaceId);
           const latest = await latestVersion(client, workspaceId);
           const graph = existingDraft ? requireGraph(existingDraft.graph) : latest ? requireGraph(latest.graph) : null;
           if (!graph) throw new RoutingError("draft_required");
           const validation = validateDraft(graph, workspace.recording_enabled);
           if (!validation.valid) throw new RoutingError("draft_invalid", undefined, validation.issues);
+          const connection = await options.integrations.getTwilioConnection(client);
+          if (connection && !connection.authTokenConfigured) throw new RoutingError("twilio_auth_token_missing");
           sid = number.twilio_sid;
           await options.integrations.withTwilioCredential(
             async (credential: TwilioCredential) => {
@@ -560,14 +595,7 @@ export function createWorkspaceRouting(options: {
                 workspaceId,
               ]);
               await updateWorkspaceFromGraph(client, workspaceId, graph, "Active", null);
-              await options.twilio.updateIncomingPhoneNumberVoice(credential, number.twilio_sid, {
-                voiceUrl: `${baseURL}/api/twilio/voice/${assignmentId}`,
-                voiceMethod: "POST",
-                voiceFallbackUrl: null,
-                voiceFallbackMethod: null,
-                statusCallback: `${baseURL}/api/twilio/status/${assignmentId}`,
-                statusCallbackMethod: "POST",
-              });
+              await options.twilio.updateIncomingPhoneNumberVoice(credential, number.twilio_sid, tracerVoiceConfiguration(assignmentId));
               updated = true;
             },
             { client, deferFailureRecording: true },
@@ -581,6 +609,117 @@ export function createWorkspaceRouting(options: {
             );
           } catch {}
         }
+        if (error instanceof TwilioClientError) throw mapIntegrationsError(await options.integrations.recordTwilioFailure(error));
+        if (error instanceof IntegrationsError) throw mapIntegrationsError(error);
+        throw error;
+      }
+      const result = await options.workspaces.find(workspaceId);
+      if (!result) throw new RoutingError("not_found");
+      return result;
+    },
+
+    async replaceNumber(workspaceId, input) {
+      let attached: { sid: string; snapshot: TwilioVoiceConfiguration } | null = null;
+      try {
+        await withTransaction(options.pool, async (client) => {
+          await lockOrganization(client);
+          const workspace = await findWorkspace(client, workspaceId, true);
+          if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
+          if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
+          const current = await findActiveAssignment(client, workspaceId);
+          if (!current) throw new RoutingError("number_unavailable");
+          const number = await lockAvailableNumber(client, input.twilioNumberId);
+          const connection = await options.integrations.getTwilioConnection(client);
+          if (connection && !connection.authTokenConfigured) throw new RoutingError("twilio_auth_token_missing");
+          await options.integrations.withTwilioCredential(
+            async (credential: TwilioCredential) => {
+              const fetched = await options.twilio.fetchIncomingPhoneNumber(credential, number.twilio_sid);
+              const snapshot: TwilioVoiceConfiguration = {
+                voiceUrl: fetched.voiceUrl,
+                voiceMethod: fetched.voiceMethod,
+                voiceFallbackUrl: fetched.voiceFallbackUrl,
+                voiceFallbackMethod: fetched.voiceFallbackMethod,
+                statusCallback: fetched.statusCallback,
+                statusCallbackMethod: fetched.statusCallbackMethod,
+              };
+              const assignmentId = randomUUID();
+              const now = new Date();
+              await client.query(
+                "update number_assignment set ended_at = $3, ended_reason = 'replaced' where organization_id = $1 and id = $2",
+                [options.organizationId, current.id, now],
+              );
+              await client.query(
+                `insert into number_assignment
+                 (id, organization_id, workspace_id, twilio_number_id, phone_number, prior_voice_url, prior_voice_method,
+                  prior_voice_fallback_url, prior_voice_fallback_method, prior_status_callback_url, prior_status_callback_method,
+                  started_at, created_at)
+               values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+                [
+                  assignmentId,
+                  options.organizationId,
+                  workspaceId,
+                  number.id,
+                  number.phone_number,
+                  snapshot.voiceUrl,
+                  snapshot.voiceMethod,
+                  snapshot.voiceFallbackUrl,
+                  snapshot.voiceFallbackMethod,
+                  snapshot.statusCallback,
+                  snapshot.statusCallbackMethod,
+                  now,
+                ],
+              );
+              await options.twilio.updateIncomingPhoneNumberVoice(credential, number.twilio_sid, tracerVoiceConfiguration(assignmentId));
+              attached = { sid: number.twilio_sid, snapshot };
+              await options.twilio.updateIncomingPhoneNumberVoice(credential, current.twilio_sid, voiceConfiguration(current));
+            },
+            { client, deferFailureRecording: true },
+          );
+        });
+      } catch (error) {
+        const compensation = attached as { sid: string; snapshot: TwilioVoiceConfiguration } | null;
+        if (compensation) {
+          try {
+            await options.integrations.withTwilioCredential((credential) =>
+              options.twilio.updateIncomingPhoneNumberVoice(credential, compensation.sid, compensation.snapshot),
+            );
+          } catch {}
+        }
+        if (error instanceof TwilioClientError) throw mapIntegrationsError(await options.integrations.recordTwilioFailure(error));
+        if (error instanceof IntegrationsError) throw mapIntegrationsError(error);
+        throw error;
+      }
+      const result = await options.workspaces.find(workspaceId);
+      if (!result) throw new RoutingError("not_found");
+      return result;
+    },
+
+    async detachNumber(workspaceId) {
+      try {
+        await withTransaction(options.pool, async (client) => {
+          await lockOrganization(client);
+          const workspace = await findWorkspace(client, workspaceId, true);
+          if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
+          if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
+          const assignment = await findActiveAssignment(client, workspaceId);
+          if (!assignment) throw new RoutingError("number_unavailable");
+          await options.integrations.withTwilioCredential(
+            async (credential) => {
+              await options.twilio.updateIncomingPhoneNumberVoice(credential, assignment.twilio_sid, voiceConfiguration(assignment));
+              const now = new Date();
+              await client.query(
+                "update number_assignment set ended_at = $3, ended_reason = 'detached' where organization_id = $1 and id = $2",
+                [options.organizationId, assignment.id, now],
+              );
+              await client.query(
+                "update workspace set state = 'Setup Required', updated_at = $3 where organization_id = $1 and id = $2",
+                [options.organizationId, workspaceId, now],
+              );
+            },
+            { client, deferFailureRecording: true },
+          );
+        });
+      } catch (error) {
         if (error instanceof TwilioClientError) throw mapIntegrationsError(await options.integrations.recordTwilioFailure(error));
         if (error instanceof IntegrationsError) throw mapIntegrationsError(error);
         throw error;
@@ -627,17 +766,7 @@ export function createWorkspaceRouting(options: {
             );
             return;
           }
-          const assignmentResult = await client.query<AssignmentRow>(
-            `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
-                    a.prior_voice_fallback_url, a.prior_voice_fallback_method,
-                    a.prior_status_callback_url, a.prior_status_callback_method
-               from number_assignment a
-               join twilio_number n on n.id = a.twilio_number_id and n.organization_id = a.organization_id
-              where a.organization_id = $1 and a.workspace_id = $2 and a.ended_at is null
-              limit 1`,
-            [options.organizationId, workspaceId],
-          );
-          const assignment = assignmentResult.rows[0];
+          const assignment = await findActiveAssignment(client, workspaceId);
           if (!assignment) throw new RoutingError("number_unavailable");
           await options.integrations.withTwilioCredential(
             async (credential) => {

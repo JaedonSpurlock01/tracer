@@ -68,13 +68,14 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
-- Use the shadcn Sidebar as the application shell. The ReUI workspace-switcher example is the starting composition: [c-sidebar-1](https://reui.io/preview/base/components/c-sidebar-1?ref=mcp).
+- Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher.
 - Prefer Frame-led pages and dense controls.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
 - Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
-- Use Skeletons in the final region layout, an action-oriented Empty state, and an inline Retry state for every data region.
+- Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
+- Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
 - Never nest a Card inside a Frame or a Frame inside a Card.
 
@@ -90,7 +91,16 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 6. Users, Operator only
 7. Integrations, Operator only
 
-Account Settings is reached from the account menu in the sidebar footer rather than occupying primary navigation.
+### Account menu
+
+The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer orb, the user's name, and the current Organization slug. The menu contains:
+
+1. **Organizations:** the current Organization with its name, slug, and a check, then a disabled New organization action until multiple Organizations are supported
+2. **User:** a DiceBear Gaze avatar seeded by the user id, the name, the email, and an outline role Badge
+3. **Account Settings**
+4. **Sign out**, styled as destructive
+
+The Sidebar has no Workspace switcher; the Workspaces page owns Workspace selection. Account Settings is reached from the account menu rather than occupying primary navigation.
 
 ### Workspace navigation
 
@@ -466,7 +476,7 @@ Purge Media is Operator only and uses an AlertDialog with explicit irreversible 
 3. **Container family:** One Frame around toolbar, grid, and pagination
 4. **Density:** Dense
 5. **Regions:** Header, lifecycle filters, server-backed Workspace grid
-6. **States:** Data Grid Skeleton rows, first-Workspace Empty state, and inline Retry
+6. **States:** Server-rendered first page, in-place refresh after each action, Data Grid Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
 7. **Motion:** None
 
 ### Header and filters
@@ -545,6 +555,7 @@ If the Workspace record is created but external configuration does not complete,
 - Tracer restores the voice configuration captured when the number was attached.
 - Number replacement ends the current Number Assignment and starts a new one without deleting Workspace history.
 - New attachment failure leaves the Workspace Setup Required with no Number Assignment and provides a Retry path.
+- Any Twilio failure during number replacement aborts the replacement and keeps the current Number Assignment Active, for the same reason.
 - Restoration failure during archive aborts the archive: the Workspace stays Active with its Number Assignment intact, and the Operator sees the provider error with Retry. Tracer never ends an assignment while Twilio still points at it.
 
 ### States
@@ -839,7 +850,7 @@ Rows support Download, Regenerate, and View Parameters while authorization remai
 3. **Container family:** One Frame around toolbar, grid, and pagination
 4. **Density:** Dense
 5. **Regions:** Header, role and state filters, server-backed user grid
-6. **States:** Data Grid Skeleton rows, first-user protection, and inline Retry
+6. **States:** Server-rendered user list, in-place refresh after each action, Data Grid Skeleton rows only while reloading after a Retry, first-user protection, and inline Retry
 7. **Motion:** None
 
 ### Access
@@ -1019,7 +1030,7 @@ There is no password section. Revoking the current session redirects to Sign In.
 3. **Container family:** Frame-led
 4. **Density:** Dense
 5. **Regions:** Header, provider health summary, one Frame per integration
-6. **States:** Per-provider Skeleton, configured or missing state, test progress, and Retry
+6. **States:** Server-rendered provider health, configured or missing state, test progress, and an inline Retry when a background refresh fails
 7. **Motion:** None
 
 ### Access and secrets
@@ -1041,10 +1052,11 @@ Each provider Frame shows:
 - API key SID
 - API key secret entry shown only when connecting or rotating
 - Encrypted Organization credential status
+- Webhook Auth Token status, Configured or Not configured, with a Set Auth Token dialog; Workspace activation requires it because Tracer validates every Twilio webhook signature with it
 - Number inventory sync state and last sync time
 - Active Number Assignment count
 - Recent webhook health
-- Connect, Test Connection, Rotate Key, and Disconnect actions
+- Connect, Test Connection, Rotate Key, Set Auth Token, and Disconnect actions
 - Never purchase or release numbers from Tracer
 
 The API key secret is encrypted with a deployment-held master key and never displayed again. Disconnect is blocked while Active Workspaces depend on the connection.
@@ -1105,10 +1117,10 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 3. **Container family:** Frame-led
 4. **Density:** Default forms with dense metadata
 5. **Regions:** General, Number, Recording and AI, Access, Danger
-6. **States:** Section Skeletons, inline validation, save success, and Retry
+6. **States:** Server-rendered section data, inline validation, save success, and Retry
 7. **Motion:** Installed section control behavior only
 
-Workspace Settings is Operator only. Client Viewers do not see the tab.
+Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
 
 ### General
 
@@ -1126,8 +1138,11 @@ Changing timezone affects future date grouping and report interpretation. Stored
 - Masked prior Twilio voice configuration status
 - Read-only Destination Number with `Edit Flow` link
 - Replace Number action
+- Detach Number action
 
-Replace Number uses a confirmation wizard that selects an unassigned Twilio number, validates it, restores the old number's saved voice configuration, attaches Tracer to the new number, and starts a new Number Assignment. Historical Calls retain the number dialed. Partial failure moves the Workspace to Setup Required with recovery actions.
+Replace Number is available for any Active Workspace. Its confirmation dialog selects an unassigned Twilio number, ends the current Number Assignment, starts a new one, attaches Tracer to the new number, and then restores the old number's saved voice configuration, so at least one number always routes to Tracer. Historical Calls retain the number dialed. Any Twilio failure aborts the replacement: the new number's captured configuration is restored, the Workspace stays Active on its current Tracking Number, and the Operator sees the provider error.
+
+Detach Number is available for any Active Workspace when no replacement number is wanted. After confirmation it restores the number's saved voice configuration, ends the Number Assignment as detached, and returns the Workspace to Setup Required with its Calls and Flow Versions intact. The number stays in the Twilio account; Tracer never releases a number from Twilio. Client Viewers lose access until the Workspace is activated on a number again. A Twilio failure aborts the detach and keeps the Workspace Active on its current Tracking Number.
 
 ### Recording and AI
 
@@ -1167,7 +1182,7 @@ Tracer does not permanently delete a Workspace in the first release.
 ### States
 
 - **Setup Required:** Emphasize incomplete number or routing configuration and Resume Setup.
-- **Number replacement failure:** Preserve both assignment records and show the exact recovery stage.
+- **Number replacement failure:** Keep the current Tracking Number and Number Assignment, and explain that the replacement did not complete.
 - **Access removal conflict:** Keep the current list and explain why the grant was not removed.
 - **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore.
 
