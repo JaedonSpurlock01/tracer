@@ -43,6 +43,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -116,6 +117,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
   const [numbersLoading, setNumbersLoading] = useState(false);
   const [numbersError, setNumbersError] = useState(false);
   const [selectedNumberId, setSelectedNumberId] = useState("");
+  const [numberSearch, setNumberSearch] = useState("");
   const [routing, setRouting] = useState<RoutingForm>(routingFromWorkspace(null));
   const [flow, setFlow] = useState<FlowResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -168,6 +170,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
     setReviewIssues([]);
     setRouting(routingFromWorkspace(null));
     setSelectedNumberId("");
+    setNumberSearch("");
     setDialogOpen(true);
   }, []);
   const openResume = useCallback((value: WorkspaceRecord) => {
@@ -178,6 +181,7 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
     setReviewIssues([]);
     setRouting(routingFromWorkspace(value));
     setSelectedNumberId("");
+    setNumberSearch("");
     setDialogOpen(true);
   }, []);
 
@@ -368,6 +372,10 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
   const noResults = !fetchError && !loading && result.workspaces.length === 0;
   const activeStep = workspace && step === 1 ? 2 : step;
   const selectedNumber = numbers.find((number) => number.id === selectedNumberId);
+  const numberQuery = numberSearch.trim().toLowerCase();
+  const visibleNumbers = numbers.filter(
+    (number) => number.phoneNumber.toLowerCase().includes(numberQuery) || number.friendlyName.toLowerCase().includes(numberQuery),
+  );
   const canActivate = Boolean(flow?.draft);
 
   return (
@@ -506,26 +514,40 @@ export default function WorkspacesView({ initialTimezone }: { initialTimezone: s
                   </p>
                 ) : null}
                 {numbersLoading ? <p>Loading numbers...</p> : null}
-                <div className="grid gap-2">
-                  {numbers.map((number) => (
-                    <label key={number.id} className="flex items-start gap-3 rounded-md border p-3">
-                      <input
-                        type="radio"
-                        aria-label={number.phoneNumber}
-                        checked={selectedNumberId === number.id}
-                        disabled={Boolean(number.assignedWorkspace)}
-                        onChange={() => setSelectedNumberId(number.id)}
-                      />
-                      <span>
-                        <span className="block font-medium">{number.phoneNumber}</span>
-                        {number.friendlyName ? <span className="block text-sm text-muted-foreground">{number.friendlyName}</span> : null}
-                        {number.assignedWorkspace ? (
-                          <span className="block text-sm text-muted-foreground">Assigned to {number.assignedWorkspace.name}</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                {numbers.length > 0 ? (
+                  <Input
+                    type="search"
+                    aria-label="Search numbers"
+                    placeholder="Search numbers"
+                    value={numberSearch}
+                    onChange={(event) => setNumberSearch(event.target.value)}
+                  />
+                ) : null}
+                {numbers.length > 0 && visibleNumbers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No numbers match your search.</p>
+                ) : null}
+                <ScrollArea className="[&>[data-slot=scroll-area-viewport]]:max-h-76">
+                  <div className="grid gap-2 pe-3">
+                    {visibleNumbers.map((number) => (
+                      <label key={number.id} className="flex items-start gap-3 rounded-md border p-3">
+                        <input
+                          type="radio"
+                          aria-label={number.phoneNumber}
+                          checked={selectedNumberId === number.id}
+                          disabled={Boolean(number.assignedWorkspace)}
+                          onChange={() => setSelectedNumberId(number.id)}
+                        />
+                        <span>
+                          <span className="block font-medium">{number.phoneNumber}</span>
+                          {number.friendlyName ? <span className="block text-sm text-muted-foreground">{number.friendlyName}</span> : null}
+                          {number.assignedWorkspace ? (
+                            <span className="block text-sm text-muted-foreground">Assigned to {number.assignedWorkspace.name}</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </ScrollArea>
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => void loadNumbers()}>
                     Refresh
