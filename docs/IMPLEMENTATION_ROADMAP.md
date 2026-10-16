@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M8 - Workspace Access Grants
-- **Next milestone:** M9 - Minimal Inbound Call Tracer Bullet
+- **Current milestone:** M9 - Minimal Inbound Call Tracer Bullet
+- **Next milestone:** M10 - Complete First-Release Call Routing
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-15
 
-M7 is Complete and merged to `main`. M8 is In Progress on the `milestone/m8-workspace-access-grants` branch and delivers Access Grant persistence, Client Viewer provisioning, the central Workspace authorization policy, safe role changes, and the Workspace Settings Access section.
+M8 is Complete and merged to `main`. M9 is In Progress on the `milestone/m9-inbound-call-tracer` branch and delivers signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
 
 ## Status model
 
@@ -175,8 +175,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M5 | Organization Integrations and Twilio Connection | Complete | Staging | M4 |
 | M6 | Workspace Setup | Complete | Preview and Staging | M5 |
 | M7 | Call Flow Publication and Workspace Activation | Complete | Preview and Staging | M6 |
-| M8 | Workspace Access Grants | In Progress | Preview and Staging | M7 |
-| M9 | Minimal Inbound Call Tracer Bullet | Not Started | Staging | M8 |
+| M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
+| M9 | Minimal Inbound Call Tracer Bullet | In Progress | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Not Started | Staging | M9 |
 | M11 | Durable Recording Transfer | Not Started | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
@@ -548,7 +548,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M8 - Workspace Access Grants
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** An Operator can grant a Client Viewer explicit read access to an Active Workspace without exposing any ungranted Workspace.
 - **Depends on:** M7
 - **Target environment:** Preview and Staging
@@ -601,10 +601,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M9 - Minimal Inbound Call Tracer Bullet
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** One real Staging inbound call travels through Tracer, forwards to the Destination Number, and persists a canonical Call lifecycle.
 - **Depends on:** M8
 - **Target environment:** Staging
+- **Execution note:** Twilio signs webhooks with the account Auth Token, which the M5 API key credential cannot replace, so the Organization Twilio connection gains an Auth Token encrypted under ADR 0005, entered and verified on the Integrations page before storage. A Call whose pinned Flow Version reaches a step deferred to M10 (Business Hours, Keypad Gate, Whisper, or Voicemail) ends as Failed with a persisted reason rather than skipping the step. A voice webhook for an ended Number Assignment or a non-Active Workspace returns `<Reject/>`, creates no Call, and persists the provider event for diagnosis. Forward Call maps a connected leg to Answered, no-answer or busy to Missed, a caller hang-up before connection to Abandoned, and provider or Tracer errors to Failed. Replace Number is available for any Active Workspace; replacing after a completed Call is only the Staging verification order.
 
 #### Vertical slices
 
@@ -629,7 +630,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 #### Deliverables
 
 - Twilio webhook routes
-- Signature validation
+- Encrypted Organization Twilio Auth Token and signature validation
 - Minimal constrained TwiML renderer
 - Call lifecycle and provider-event persistence
 - Tracking Number replacement flow in Workspace Settings
