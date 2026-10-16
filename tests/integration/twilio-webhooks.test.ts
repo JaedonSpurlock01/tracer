@@ -135,6 +135,21 @@ beforeAll(async () => {
      values ('webhook-flow-version-1', $1, 'webhook-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), userId],
   );
+  await pool.query(
+    `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
+     values ('archived-number', $1, 'PNbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '+14155550102', 'Archived Number', true, now(), now(), now(), now())`,
+    [organizationId],
+  );
+  await pool.query(
+    `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at, archived_at)
+     values ('archived-workspace', $1, 'Archived Workspace', 'UTC', 'Archived', $2, now(), now(), now())`,
+    [organizationId, destinationNumber],
+  );
+  await pool.query(
+    `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
+     values ('archived-assignment', $1, 'archived-workspace', 'archived-number', '+14155550102', now(), now(), 'archived', now())`,
+    [organizationId],
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -308,5 +323,19 @@ describe.sequential("Call Outcome lifecycle", () => {
     const params = { ...voiceParams("CA00000000000000000000000000000015"), CallStatus: "completed" };
     const response = await handler()(webhookRequest(`/api/twilio/status/${assignmentId}`, params, sign(`${baseURL}/api/twilio/status/${assignmentId}`, params, "other-auth-token")));
     expect(response.status).toBe(403);
+  });
+});
+
+describe.sequential("Inactive Number Assignments", () => {
+  it("rejects a Call to an ended Number Assignment without creating a Call", async () => {
+    const callSid = "CA00000000000000000000000000000020";
+    const path = "/api/twilio/voice/archived-assignment";
+    const params = { ...voiceParams(callSid), To: "+14155550102" };
+    const response = await post(path, params);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>');
+    expect((await pool!.query("select count(*)::int as count from call where twilio_call_sid = $1", [callSid])).rows[0].count).toBe(0);
+    const events = await pool!.query("select kind, disposition, detail, call_id, number_assignment_id from provider_event where idempotency_key = $1", [`${callSid}:voice`]);
+    expect(events.rows).toEqual([{ kind: "voice", disposition: "rejected", detail: "inactive_assignment", call_id: null, number_assignment_id: "archived-assignment" }]);
   });
 });

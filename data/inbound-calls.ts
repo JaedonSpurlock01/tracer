@@ -20,7 +20,10 @@
  *  the Dial action request when the caller hangs up first. A Call that ends
  *  before its Forward Call starts is provisionally Abandoned and may still be
  *  corrected by a late Forward Call result. Event payloads keep only an
- *  allowlist of Twilio fields; caller numbers live on the Call.
+ *  allowlist of Twilio fields; caller numbers live on the Call. A voice
+ *  webhook for an ended Number Assignment or a non-Active Workspace is
+ *  rejected with TwiML Reject, creates no Call, and is kept as a rejected
+ *  provider event for diagnosis.
  *
  * @see
  *  data/twilio-webhook-handler.ts
@@ -49,7 +52,7 @@ export interface InboundCalls {
 
 type EventKind = "voice" | "forward" | "forward_status" | "status";
 
-type AssignmentRow = { organization_id: string; workspace_id: string; phone_number: string };
+type AssignmentRow = { organization_id: string; workspace_id: string; phone_number: string; active: boolean };
 
 type CallRow = {
   id: string;
@@ -79,6 +82,7 @@ const terminalForwardStatuses = new Set(["completed", "busy", "no-answer", "fail
 const terminalCallStatuses = new Set(["completed", "busy", "no-answer", "failed", "canceled"]);
 const provisionalReason = "ended_before_forward";
 const hangup = '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>';
+const reject = '<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>';
 
 function eventPayload(params: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(payloadFields.filter((field) => field in params).map((field) => [field, params[field]]));
@@ -100,7 +104,13 @@ async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) =>
 }
 
 async function findAssignment(client: PoolClient, assignmentId: string): Promise<AssignmentRow | undefined> {
-  const result = await client.query<AssignmentRow>("select organization_id, workspace_id, phone_number from number_assignment where id = $1", [assignmentId]);
+  const result = await client.query<AssignmentRow>(
+    `select a.organization_id, a.workspace_id, a.phone_number, a.ended_at is null and w.state = 'Active' as active
+       from number_assignment a
+       join workspace w on w.id = a.workspace_id
+      where a.id = $1`,
+    [assignmentId],
+  );
   return result.rows[0];
 }
 
@@ -147,6 +157,10 @@ export function createInboundCalls(options: { pool: Pool }): InboundCalls {
       return withTransaction(options.pool, async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
+        if (!assignment.active) {
+          await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: null, key: `${params.CallSid}:voice`, kind: "voice", disposition: "rejected", detail: "inactive_assignment", params });
+          return { kind: "twiml", twiml: reject };
+        }
         await client.query(
           `insert into call
              (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid,
