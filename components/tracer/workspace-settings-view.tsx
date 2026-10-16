@@ -46,6 +46,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
+import type { OperatorRecord } from "@/data/operator-administration";
 import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
@@ -53,7 +54,15 @@ function timezones(): string[] {
   return typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["UTC"];
 }
 
-export default function WorkspaceSettingsView({ initialWorkspace, section }: { initialWorkspace: WorkspaceRecord; section: WorkspaceSettingsSection }) {
+export default function WorkspaceSettingsView({
+  initialWorkspace,
+  section,
+  initialAccessUsers,
+}: {
+  initialWorkspace: WorkspaceRecord;
+  section: WorkspaceSettingsSection;
+  initialAccessUsers?: OperatorRecord[];
+}) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [name, setName] = useState(initialWorkspace.name);
   const [timezone, setTimezone] = useState(initialWorkspace.reportingTimezone);
@@ -237,6 +246,7 @@ export default function WorkspaceSettingsView({ initialWorkspace, section }: { i
               <Link
                 key={item.slug}
                 href={`/workspaces/${workspace.id}/settings/${item.slug}`}
+                prefetch
                 aria-current={item.slug === section ? "page" : undefined}
                 className={buttonVariants({ variant: item.slug === section ? "secondary" : "ghost", className: "justify-start whitespace-nowrap" })}
               >
@@ -369,7 +379,7 @@ export default function WorkspaceSettingsView({ initialWorkspace, section }: { i
                 </div>
               </section>
             ) : null}
-            {section === "access" ? <WorkspaceAccessSection workspace={workspace} /> : null}
+            {section === "access" ? <WorkspaceAccessSection workspace={workspace} initialUsers={initialAccessUsers} /> : null}
             {section === "danger" ? (
               <section id="danger">
                 <h2 className="font-semibold">Danger</h2>

@@ -185,7 +185,7 @@ export default function AppSidebar({ actor, organization }: AppSidebarProps) {
             const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
               <SidebarMenuItem key={item.href}>
-                <SidebarMenuButton render={<Link href={item.href} />} isActive={isActive}>
+                <SidebarMenuButton render={<Link href={item.href} prefetch />} isActive={isActive}>
                   <Icon aria-hidden="true" />
                   <span>{item.label}</span>
                 </SidebarMenuButton>

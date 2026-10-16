@@ -20,6 +20,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspaceSettingsView from "@/components/tracer/workspace-settings-view";
+import type { OperatorRecord } from "@/data/operator-administration";
 
 const workspace = {
   id: "workspace-1",
@@ -265,6 +266,15 @@ describe("WorkspaceSettingsView", () => {
         return new Response(JSON.stringify({ user: users[0] }), { status: 200 });
       });
     }
+
+    it("renders server-provided Access immediately without a loading skeleton", () => {
+      vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+      const { container } = render(<WorkspaceSettingsView initialWorkspace={activeWorkspace} section="access" initialAccessUsers={users as OperatorRecord[]} />);
+      const access = within(document.getElementById("access")!);
+      expect(access.getByText("Client A")).toBeVisible();
+      expect(access.queryByText("Client B")).not.toBeInTheDocument();
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    });
 
     it("lists only Client Viewers granted this Workspace and adds Access on an Active Workspace", async () => {
       const fetch = routed();

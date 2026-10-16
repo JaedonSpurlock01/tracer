@@ -74,7 +74,8 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 - Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
-- Use Skeletons in the final region layout, an action-oriented Empty state, and an inline Retry state for every data region.
+- Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
+- Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
 - Never nest a Card inside a Frame or a Frame inside a Card.
 
@@ -475,7 +476,7 @@ Purge Media is Operator only and uses an AlertDialog with explicit irreversible 
 3. **Container family:** One Frame around toolbar, grid, and pagination
 4. **Density:** Dense
 5. **Regions:** Header, lifecycle filters, server-backed Workspace grid
-6. **States:** Data Grid Skeleton rows, first-Workspace Empty state, and inline Retry
+6. **States:** Server-rendered first page, in-place refresh after each action, Data Grid Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
 7. **Motion:** None
 
 ### Header and filters
@@ -849,7 +850,7 @@ Rows support Download, Regenerate, and View Parameters while authorization remai
 3. **Container family:** One Frame around toolbar, grid, and pagination
 4. **Density:** Dense
 5. **Regions:** Header, role and state filters, server-backed user grid
-6. **States:** Data Grid Skeleton rows, first-user protection, and inline Retry
+6. **States:** Server-rendered user list, in-place refresh after each action, Data Grid Skeleton rows only while reloading after a Retry, first-user protection, and inline Retry
 7. **Motion:** None
 
 ### Access
@@ -1029,7 +1030,7 @@ There is no password section. Revoking the current session redirects to Sign In.
 3. **Container family:** Frame-led
 4. **Density:** Dense
 5. **Regions:** Header, provider health summary, one Frame per integration
-6. **States:** Per-provider Skeleton, configured or missing state, test progress, and Retry
+6. **States:** Server-rendered provider health, configured or missing state, test progress, and an inline Retry when a background refresh fails
 7. **Motion:** None
 
 ### Access and secrets
@@ -1116,7 +1117,7 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 3. **Container family:** Frame-led
 4. **Density:** Default forms with dense metadata
 5. **Regions:** General, Number, Recording and AI, Access, Danger
-6. **States:** Section Skeletons, inline validation, save success, and Retry
+6. **States:** Server-rendered section data, inline validation, save success, and Retry
 7. **Motion:** Installed section control behavior only
 
 Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.

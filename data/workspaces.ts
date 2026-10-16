@@ -27,6 +27,7 @@ import {
   decideRestore,
   initialWorkspaceState,
   normalizeWorkspaceName,
+  workspaceStates,
   type WorkspaceState,
 } from "@/data/workspace-policy";
 
@@ -73,6 +74,21 @@ export interface WorkspaceListResult {
   page: number;
   pageSize: number;
   counts: { setupRequired: number; active: number; archived: number };
+}
+
+export function workspaceListQueryFromSearchParams(params: Readonly<Record<string, string | string[] | undefined>>): {
+  search: string;
+  state: WorkspaceState | "All";
+  page: number;
+} {
+  const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value) ?? "";
+  const state = first(params.state);
+  const page = Number(first(params.page));
+  return {
+    search: first(params.search).trim(),
+    state: workspaceStates.includes(state as WorkspaceState) ? (state as WorkspaceState) : "All",
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+  };
 }
 
 export interface Workspaces {

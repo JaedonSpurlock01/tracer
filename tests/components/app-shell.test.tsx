@@ -152,9 +152,17 @@ describe("application shell", () => {
     expect(avatarUrl("operator-1")).toBe("https://api.dicebear.com/10.x/gaze/svg?seed=operator-1");
   });
 
+  it("renders server-provided users immediately without a loading skeleton", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const { container } = render(<UsersView currentUserId={operator.id} initialUsers={[operator, viewer]} />);
+    expect(screen.getByRole("button", { name: "Manage Example Operator" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Manage Client Viewer" })).toBeVisible();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
   it("lists users, filters by search text, and clears no-match filters", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ users: [operator, viewer] })));
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     expect(await screen.findByRole("button", { name: "Manage Example Operator" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Search users"), { target: { value: "nobody" } });
     expect(await screen.findByText("No matching users.")).toBeVisible();
@@ -169,7 +177,7 @@ describe("application shell", () => {
       .mockResolvedValueOnce(response({ users: [operator, secondOperator] }))
       .mockResolvedValue(response({ delivery: "sent" }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByText("Example Operator");
     fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "second@example.com" } });
@@ -185,7 +193,7 @@ describe("application shell", () => {
   it("protects the last Active Operator in the Manage dialog", async () => {
     const fetch = vi.fn().mockResolvedValue(response({ users: [operator] }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByRole("button", { name: "Manage Example Operator" });
     fireEvent.click(screen.getByRole("button", { name: "Manage Example Operator" }));
     expect(screen.getByText("The last Active Operator cannot be disabled or made a Client Viewer.")).toBeVisible();
@@ -195,7 +203,7 @@ describe("application shell", () => {
   it("disables a second Active Operator after confirmation", async () => {
     const fetch = vi.fn().mockResolvedValue(response({ users: [operator, secondOperator] }));
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByRole("button", { name: "Manage Second Operator" });
     fireEvent.click(screen.getByRole("button", { name: "Manage Second Operator" }));
     fireEvent.click(screen.getByRole("button", { name: "Disable" }));
@@ -208,7 +216,7 @@ describe("application shell", () => {
 
   it("shows each Client Viewer's granted Workspaces", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ users: [operator, viewer] })));
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     expect(await screen.findByText("All Workspaces")).toBeVisible();
     expect(screen.getByText("Acme Plumbing")).toBeVisible();
   });
@@ -220,7 +228,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     await screen.findByText("Example Operator");
     fireEvent.click(screen.getByRole("button", { name: "Provision User" }));
     fireEvent.click(screen.getByRole("combobox", { name: "Role" }));
@@ -246,7 +254,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, viewer] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
     expect(screen.getByRole("button", { name: "Remove Acme Plumbing" })).toBeDisabled();
     expect(screen.getByText("A Client Viewer must keep at least one Access Grant.")).toBeVisible();
@@ -269,7 +277,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, twoGrants] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Client Viewer" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove Gamma HVAC" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/users/viewer-1/access-grants/ws-gamma", expect.objectContaining({ method: "DELETE" })));
@@ -282,7 +290,7 @@ describe("application shell", () => {
       "GET /api/users": { users: [operator, viewer] },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<UsersView currentUserId={operator.id} />);
+    render(<UsersView currentUserId={operator.id} initialUsers={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage Example Operator" }));
     expect(screen.getByRole("button", { name: "Make Client Viewer" })).toBeDisabled();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });

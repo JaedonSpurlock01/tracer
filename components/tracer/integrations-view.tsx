@@ -4,11 +4,14 @@
  * @brief  Renders the Operator Integrations provider health surface.
  *
  * @description
- *  Loads provider health, manages Twilio credentials and numbers, and exposes
- *  safe Hyperdrive and Email Service test actions.
+ *  Renders server-provided provider health, manages Twilio credentials and
+ *  numbers, and exposes safe Hyperdrive and Email Service test actions.
  *
  * @remarks
- *  Provider actions remain behind the authenticated HTTP boundary.
+ *  Provider actions remain behind the authenticated HTTP boundary. The first
+ *  data arrives from the server, so the page never shows a loading Skeleton;
+ *  it refreshes in place after mount and after each action, and a failed
+ *  refresh keeps the current data with a Retry.
  *
  * @see
  *  data/integrations-handler.ts
@@ -27,7 +30,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
 import type { ProviderHealth, ProviderState } from "@/data/provider-health";
@@ -107,12 +109,17 @@ function ProviderDetails({ provider }: { provider: ProviderHealth }) {
   );
 }
 
-export default function IntegrationsView() {
-  const [providers, setProviders] = useState<ProviderHealth[]>([]);
-  const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(null);
-  const [numbers, setNumbers] = useState<TwilioNumberRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState(false);
+export interface IntegrationsOverview {
+  providers: ProviderHealth[];
+  twilio: TwilioConnectionRecord | null;
+  numbers: TwilioNumberRecord[];
+}
+
+export default function IntegrationsView({ initial }: { initial: IntegrationsOverview }) {
+  const [providers, setProviders] = useState<ProviderHealth[]>(initial.providers);
+  const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
+  const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
+  const [refreshError, setRefreshError] = useState(false);
   const [status, setStatus] = useState("");
   const [twilioAction, setTwilioAction] = useState<Action>(null);
   const [providerAction, setProviderAction] = useState<Action>(null);
@@ -129,8 +136,7 @@ export default function IntegrationsView() {
   const [formError, setFormError] = useState("");
 
   async function reload() {
-    setLoading(true);
-    setFetchError(false);
+    setRefreshError(false);
     try {
       const response = await fetch("/api/integrations");
       if (!response.ok) throw new Error("Integrations unavailable");
@@ -146,9 +152,7 @@ export default function IntegrationsView() {
         setNumbers([]);
       }
     } catch {
-      setFetchError(true);
-    } finally {
-      setLoading(false);
+      setRefreshError(true);
     }
   }
 
@@ -327,20 +331,6 @@ export default function IntegrationsView() {
   const twilioProvider = providers.find((provider) => provider.id === "twilio");
   const canConnect = !twilio && twilioProvider?.note === "No Organization Twilio credential is connected";
 
-  if (loading) {
-    return <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <Skeleton className="h-4 w-40" />
-      </div>
-      <div className="flex flex-col gap-4">{Array.from({ length: 6 }, (_, index) => <Frame key={index}><FramePanel className="flex flex-col gap-4"><Skeleton className="h-6 w-36" /><Skeleton className="h-4 w-28" /><Skeleton className="h-4 w-full" /></FramePanel></Frame>)}</div>
-    </div>;
-  }
-
-  if (fetchError) {
-    return <div className="flex items-center gap-3"><p role="alert">Integrations are unavailable.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div>;
-  }
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -348,6 +338,7 @@ export default function IntegrationsView() {
         <p className="text-sm text-muted-foreground">{readyCount} of {providers.length} providers ready</p>
       </div>
       {status ? <p role="status">{status}</p> : null}
+      {refreshError ? <div className="flex items-center gap-3"><p role="alert">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
       {providers.map((provider) => {
         const headingId = `integration-${provider.id}`;
         const isTwilio = provider.id === "twilio";

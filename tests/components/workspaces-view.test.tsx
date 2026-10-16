@@ -45,6 +45,7 @@ const workspace = {
   archivedAt: null,
 };
 const result = { workspaces: [workspace], total: 1, page: 1, pageSize: 10, counts: { setupRequired: 1, active: 0, archived: 0 } };
+const initial = { initialResult: result, initialQuery: { search: "", state: "All" as const, page: 1 } };
 
 beforeEach(() => {
   useSearchParamsMock.mockReturnValue(new URLSearchParams());
@@ -72,13 +73,41 @@ afterEach(() => {
 });
 
 describe("WorkspacesView", () => {
-  it("renders a loading skeleton before server data arrives", () => {
+  it("renders server-provided Workspaces immediately without a loading skeleton", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise<Response>(() => undefined)),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
-    expect(screen.getByRole("table")).toBeVisible();
+    const { container } = render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    expect(screen.getByRole("link", { name: /^Phoenix Office/ })).toBeVisible();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
+  it("quietly revalidates the server-provided page without a loading skeleton", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [{ ...workspace, name: "Phoenix Office Renamed" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const { container } = render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    expect(await screen.findByRole("link", { name: /Phoenix Office Renamed/ })).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=&state=All&page=1&pageSize=10");
+  });
+
+  it("keeps search, state filter, and page in the URL", async () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ...result, total: 25, page: 2 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <WorkspacesView
+        initialResult={{ ...result, total: 25, page: 2 }}
+        initialQuery={{ search: "pho", state: "Setup Required", page: 2 }}
+        initialTimezone="America/Chicago"
+      />,
+    );
+    expect(screen.getByRole("textbox", { name: "Search workspaces" })).toHaveValue("pho");
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=pho&state=Setup+Required&page=2&pageSize=10"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "gamma" } });
+    await waitFor(() => expect(replaceState).toHaveBeenLastCalledWith(null, "", "/?search=gamma&state=Setup+Required"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=gamma&state=Setup+Required&page=1&pageSize=10"));
   });
 
   it("shows the first Workspace empty state and create action", async () => {
@@ -86,7 +115,7 @@ describe("WorkspacesView", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 })),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     const emptyState = await screen.findByTestId("workspace-empty-state");
     expect(
       within(emptyState).getByText(
@@ -103,7 +132,7 @@ describe("WorkspacesView", () => {
         throw new Error("offline");
       }),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Workspaces are unavailable.");
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
@@ -131,7 +160,7 @@ describe("WorkspacesView", () => {
       return new Response(JSON.stringify(result), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(await screen.findByText("Setup Required")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Resume Setup" }));
     expect(screen.getByText("Basics")).toBeVisible();
@@ -155,7 +184,7 @@ describe("WorkspacesView", () => {
           : new Response(JSON.stringify(result), { status: 200 }),
       ),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
     await screen.findByText("+16025550199");
     const search = screen.getByRole("searchbox", { name: "Search numbers" });
@@ -196,7 +225,7 @@ describe("WorkspacesView", () => {
         return new Response(JSON.stringify(result), { status: 200 });
       }),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(await screen.findByText("Resume setup for Phoenix Office")).toBeVisible();
     expect(await screen.findByText("+14155550100")).toBeVisible();
   });
@@ -207,7 +236,7 @@ describe("WorkspacesView", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "name_taken" }), { status: 409 }));
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Phoenix Office" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
@@ -245,7 +274,7 @@ describe("WorkspacesView", () => {
       return new Response(JSON.stringify({ ...result, workspaces: [created], total: 1 }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
@@ -260,7 +289,7 @@ describe("WorkspacesView", () => {
       return new Response(JSON.stringify(result), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Connect the Organization Twilio account in Integrations first");
     expect(screen.getByRole("link", { name: "Integrations" })).toHaveAttribute("href", "/integrations");
@@ -317,7 +346,7 @@ describe("WorkspacesView", () => {
       return new Response(JSON.stringify(result), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
     fireEvent.click(await screen.findByRole("radio", { name: /\+14155550100/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -380,7 +409,7 @@ describe("WorkspacesView", () => {
       return new Response(JSON.stringify(result), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
     fireEvent.click(await screen.findByRole("radio", { name: /\+14155550100/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -402,7 +431,7 @@ describe("WorkspacesView", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [active], counts: { setupRequired: 0, active: 1, archived: 0 } }), { status: 200 })),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" readOnly />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" readOnly />);
     expect(await screen.findByRole("link", { name: /Acme Plumbing/ })).toBeVisible();
     expect(screen.getByText("1 Active, 0 Archived")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Create Workspace" })).not.toBeInTheDocument();
@@ -414,7 +443,7 @@ describe("WorkspacesView", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 })),
     );
-    render(<WorkspacesView initialTimezone="America/Chicago" readOnly />);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" readOnly />);
     const emptyState = await screen.findByTestId("workspace-empty-state");
     expect(within(emptyState).getByText("No Workspaces are shared with you.")).toBeVisible();
     expect(within(emptyState).queryByRole("button")).not.toBeInTheDocument();
