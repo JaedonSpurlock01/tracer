@@ -375,6 +375,8 @@ export const calls = pgTable(
     outcome: text(),
     outcomeReason: text("outcome_reason"),
     forwardNodeId: text("forward_node_id"),
+    forwardStartedAt: timestamp("forward_started_at", { withTimezone: true }),
+    forwardStatus: text("forward_status"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
@@ -409,7 +411,7 @@ export const providerEvents = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   },
   (table) => [
-    check("provider_event_kind_check", sql`${table.kind} in ('voice', 'status', 'dial')`),
+    check("provider_event_kind_check", sql`${table.kind} in ('voice', 'forward', 'forward_status', 'status')`),
     check("provider_event_disposition_check", sql`${table.disposition} in ('accepted', 'rejected')`),
     uniqueIndex("provider_event_organization_key_idx").on(table.organizationId, table.idempotencyKey),
     index("provider_event_organization_id_idx").on(table.organizationId),

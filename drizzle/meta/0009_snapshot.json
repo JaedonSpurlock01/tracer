@@ -1,5 +1,5 @@
 {
-  "id": "adda29c9-9621-45f2-9171-e0e50b199a8e",
+  "id": "5b3cd352-09c9-4700-bd3b-d30a5e06049f",
   "prevId": "fa3a4eac-b5e3-4d72-8deb-73a94613e8d6",
   "version": "7",
   "dialect": "postgresql",
@@ -498,6 +498,18 @@
         },
         "forward_node_id": {
           "name": "forward_node_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "forward_started_at": {
+          "name": "forward_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "forward_status": {
+          "name": "forward_status",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1505,7 +1517,7 @@
       "checkConstraints": {
         "provider_event_kind_check": {
           "name": "provider_event_kind_check",
-          "value": "\"provider_event\".\"kind\" in ('voice', 'status', 'dial')"
+          "value": "\"provider_event\".\"kind\" in ('voice', 'forward', 'forward_status', 'status')"
         },
         "provider_event_disposition_check": {
           "name": "provider_event_disposition_check",

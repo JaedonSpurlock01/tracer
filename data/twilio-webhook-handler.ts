@@ -1,21 +1,25 @@
 /**
  * -------------------------------------------------------------------------
  * @file   twilio-webhook-handler.ts
- * @brief  Receives Twilio voice webhooks for Number Assignments.
+ * @brief  Receives Twilio voice and status webhooks for Number Assignments.
  *
  * @description
  *  Resolves the Organization from the Number Assignment in the webhook URL,
  *  validates the X-Twilio-Signature with that Organization's Auth Token, and
- *  answers accepted requests with TwiML.
+ *  hands accepted voice, Forward Call, and status callbacks to the Call
+ *  lifecycle. Voice and Forward Call action requests receive TwiML; status
+ *  callbacks receive an empty 204.
  *
  * @remarks
- *  Twilio signs the exact voice URL Tracer configured during activation, so
- *  the signed URL is rebuilt from the configured base URL rather than from the
- *  incoming request, which a proxy may rewrite. Every rejection returns the
- *  same 403 so unknown assignments cannot be distinguished from bad signatures.
+ *  Twilio signs the exact URL Tracer configured, including its query string,
+ *  so the signed URL is rebuilt from the configured base URL rather than from
+ *  the incoming request, which a proxy may rewrite. Every rejection returns
+ *  the same 403 so unknown assignments cannot be distinguished from bad
+ *  signatures.
  *
  * @see
  *  data/twilio-signature.ts
+ *  data/inbound-calls.ts
  *  data/workspace-routing.ts
  *
  * @author Jaedon Spurlock
@@ -33,7 +37,7 @@ export interface TwilioWebhookHandlerOptions {
   baseURL: string;
 }
 
-const voiceRoute = /^\/api\/twilio\/voice\/([^/]+)$/;
+const webhookRoute = /^\/api\/twilio\/(voice|forward|forward-status|status)\/([^/]+)$/;
 
 function twiml(document: string): Response {
   return new Response(document, {
@@ -71,21 +75,30 @@ async function assignmentAuthToken(options: TwilioWebhookHandlerOptions, assignm
 export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions): (request: Request) => Promise<Response> {
   const baseURL = options.baseURL.replace(/\/$/, "");
   return async (request) => {
-    const path = new URL(request.url).pathname;
-    const voice = voiceRoute.exec(path);
-    if (request.method !== "POST" || !voice) return new Response("Not Found", { status: 404 });
+    const url = new URL(request.url);
+    const route = webhookRoute.exec(url.pathname);
+    if (request.method !== "POST" || !route) return new Response("Not Found", { status: 404 });
+    const [, kind, assignmentId] = route;
     const params = await readParams(request);
-    const authToken = await assignmentAuthToken(options, voice[1]);
+    const authToken = await assignmentAuthToken(options, assignmentId);
     const signature = request.headers.get("x-twilio-signature");
-    if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${path}`, params, signature }))) {
+    if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${url.pathname}${url.search}`, params, signature }))) {
       return forbidden();
     }
-    const assignmentId = voice[1];
-    const result = await createInboundCalls({ pool: options.pool }).receiveVoiceWebhook(assignmentId, params, {
-      forwardAction: (nodeId) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
-      forwardStatus: (nodeId) => `${baseURL}/api/twilio/forward-status/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
-    });
-    if (result.kind !== "call") return forbidden();
-    return twiml(result.twiml);
+    const calls = createInboundCalls({ pool: options.pool });
+    const forwardNodeId = url.searchParams.get("node") ?? "";
+    if (kind === "voice" || kind === "forward") {
+      const result = kind === "voice"
+        ? await calls.receiveVoiceWebhook(assignmentId, params, {
+            forwardAction: (nodeId) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
+            forwardStatus: (nodeId) => `${baseURL}/api/twilio/forward-status/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
+          })
+        : await calls.receiveForwardAction(assignmentId, forwardNodeId, params);
+      return result.kind === "twiml" ? twiml(result.twiml) : forbidden();
+    }
+    const result = kind === "forward-status"
+      ? await calls.receiveForwardStatus(assignmentId, forwardNodeId, params)
+      : await calls.receiveCallStatus(assignmentId, params);
+    return result.kind === "recorded" ? new Response(null, { status: 204 }) : forbidden();
   };
 }

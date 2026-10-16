@@ -70,7 +70,7 @@ function walk(graph: CallFlowGraph, start: FlowNode | undefined, urls: VoiceUrls
         if (!urls) return { twiml: hangup, forwardNodeId: null, outcome: { outcome: "Failed", reason: "unsupported_step:forward_call" } };
         verbs.push(
           `<Dial action="${escapeXml(urls.forwardAction(node.id))}" method="POST" timeout="${node.timeoutSeconds}">` +
-            `<Number statusCallback="${escapeXml(urls.forwardStatus(node.id))}" statusCallbackEvent="answered completed" statusCallbackMethod="POST">${escapeXml(node.destinationNumber)}</Number>` +
+            `<Number statusCallback="${escapeXml(urls.forwardStatus(node.id))}" statusCallbackEvent="initiated answered completed" statusCallbackMethod="POST">${escapeXml(node.destinationNumber)}</Number>` +
             "</Dial>",
         );
         return { twiml: response(verbs.join("")), forwardNodeId: node.id, outcome: null };

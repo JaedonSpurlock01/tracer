@@ -66,6 +66,37 @@ function handler() {
   return createTwilioWebhookHandler({ pool: pool!, masterKey, baseURL });
 }
 
+async function post(path: string, params: Record<string, string>): Promise<Response> {
+  return handler()(webhookRequest(path, params, sign(`${baseURL}${path}`, params)));
+}
+
+async function startCall(callSid: string): Promise<void> {
+  expect((await post(`/api/twilio/voice/${assignmentId}`, voiceParams(callSid))).status).toBe(200);
+}
+
+function forwardStatus(callSid: string, status: string): Promise<Response> {
+  return post(`/api/twilio/forward-status/${assignmentId}?node=forward`, {
+    AccountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    CallSid: `${callSid}-forward`,
+    ParentCallSid: callSid,
+    CallStatus: status,
+    Direction: "outbound-dial",
+  });
+}
+
+function callStatus(callSid: string, status: string, duration = "42"): Promise<Response> {
+  return post(`/api/twilio/status/${assignmentId}`, { ...voiceParams(callSid), CallStatus: status, CallDuration: duration });
+}
+
+async function callState(callSid: string): Promise<Record<string, unknown>> {
+  const result = await pool!.query(
+    `select state, outcome, outcome_reason, answered_at is not null as answered, ended_at is not null as ended, duration_seconds
+       from call where twilio_call_sid = $1`,
+    [callSid],
+  );
+  return result.rows[0];
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
@@ -134,7 +165,7 @@ describe.sequential("Twilio voice webhook", () => {
     expect(await response.text()).toBe(
       '<?xml version="1.0" encoding="UTF-8"?><Response>' +
         `<Dial action="${baseURL}/api/twilio/forward/${assignmentId}?node=forward" method="POST" timeout="30">` +
-        `<Number statusCallback="${baseURL}/api/twilio/forward-status/${assignmentId}?node=forward" statusCallbackEvent="answered completed" statusCallbackMethod="POST">${destinationNumber}</Number>` +
+        `<Number statusCallback="${baseURL}/api/twilio/forward-status/${assignmentId}?node=forward" statusCallbackEvent="initiated answered completed" statusCallbackMethod="POST">${destinationNumber}</Number>` +
         "</Dial></Response>",
     );
     const call = await pool!.query("select forward_node_id, outcome from call where twilio_call_sid = $1", [params.CallSid]);
@@ -182,5 +213,100 @@ describe.sequential("Twilio voice webhook", () => {
       [callSid],
     );
     expect(counts.rows[0]).toEqual({ calls: 1, events: 1 });
+  });
+});
+
+describe.sequential("Call Outcome lifecycle", () => {
+  it("completes an answered Call once the Forward Call and the Incoming Call both end", async () => {
+    const callSid = "CA00000000000000000000000000000010";
+    await startCall(callSid);
+    expect((await forwardStatus(callSid, "initiated")).status).toBe(204);
+    await forwardStatus(callSid, "in-progress");
+    expect(await callState(callSid)).toMatchObject({ state: "In Progress", outcome: null, answered: true });
+    await forwardStatus(callSid, "completed");
+    expect(await callState(callSid)).toMatchObject({ state: "In Progress", outcome: "Answered" });
+    expect((await callStatus(callSid, "completed", "42")).status).toBe(204);
+    expect(await callState(callSid)).toEqual({ state: "Completed", outcome: "Answered", outcome_reason: "flow_outcome", answered: true, ended: true, duration_seconds: 42 });
+  });
+
+  it.each([
+    ["busy", "Missed"],
+    ["no-answer", "Missed"],
+    ["failed", "Failed"],
+    ["canceled", "Abandoned"],
+  ])("maps a %s Forward Call to %s even when the Incoming Call ends first", async (status, outcome) => {
+    const callSid = `CA0000000000000000000000000000${status.replace(/[^a-z]/g, "").slice(0, 4).padEnd(4, "x")}`;
+    await startCall(callSid);
+    await forwardStatus(callSid, "initiated");
+    await callStatus(callSid, "completed", "9");
+    expect(await callState(callSid)).toMatchObject({ state: "In Progress", outcome: null, ended: true });
+    await forwardStatus(callSid, status);
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome });
+  });
+
+  it("marks a caller who hangs up before the Forward Call starts as Abandoned", async () => {
+    const callSid = "CA00000000000000000000000000000011";
+    await startCall(callSid);
+    await callStatus(callSid, "completed", "3");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Abandoned", outcome_reason: "ended_before_forward" });
+  });
+
+  it("corrects a provisional Abandoned outcome when the Forward Call result arrives late", async () => {
+    const callSid = "CA00000000000000000000000000000016";
+    await startCall(callSid);
+    await callStatus(callSid, "completed", "40");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Abandoned", outcome_reason: "ended_before_forward" });
+    await forwardStatus(callSid, "initiated");
+    await forwardStatus(callSid, "completed");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Answered", outcome_reason: "flow_outcome" });
+  });
+
+  it("returns the published branch TwiML to the Forward Call action", async () => {
+    const callSid = "CA00000000000000000000000000000012";
+    await startCall(callSid);
+    const action = await post(`/api/twilio/forward/${assignmentId}?node=forward`, { ...voiceParams(callSid), CallStatus: "in-progress", DialCallStatus: "no-answer" });
+    expect(action.status).toBe(200);
+    expect(await action.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
+  });
+
+  it("keeps a Call on its pinned Flow Version after a new publication", async () => {
+    const callSid = "CA00000000000000000000000000000013";
+    await startCall(callSid);
+    const republished = generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+    republished.nodes = republished.nodes.map((node) => (node.id === "outcome-answered" && node.type === "outcome" ? { ...node, outcome: "Missed" } : node));
+    await pool!.query(
+      `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
+       select 'webhook-flow-version-2', organization_id, 'webhook-workspace', 2, $1, now() from workspace where id = 'webhook-workspace'`,
+      [JSON.stringify(republished)],
+    );
+    await forwardStatus(callSid, "initiated");
+    await forwardStatus(callSid, "completed");
+    await callStatus(callSid, "completed");
+    expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Answered" });
+    const pinned = await pool!.query("select flow_version_id from call where twilio_call_sid = $1", [callSid]);
+    expect(pinned.rows[0].flow_version_id).toBe("webhook-flow-version-1");
+  });
+
+  it("leaves state and events unchanged when status callbacks are replayed", async () => {
+    const callSid = "CA00000000000000000000000000000014";
+    await startCall(callSid);
+    await forwardStatus(callSid, "initiated");
+    await forwardStatus(callSid, "completed");
+    await callStatus(callSid, "completed", "42");
+    const before = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    const eventsBefore = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
+    await forwardStatus(callSid, "completed");
+    await callStatus(callSid, "completed", "42");
+    await forwardStatus(callSid, "canceled");
+    const after = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    const eventsAfter = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
+    expect(after.rows).toEqual(before.rows);
+    expect(eventsAfter.rows[0].count).toBe(eventsBefore.rows[0].count + 1);
+  });
+
+  it("rejects status callbacks without a valid signature", async () => {
+    const params = { ...voiceParams("CA00000000000000000000000000000015"), CallStatus: "completed" };
+    const response = await handler()(webhookRequest(`/api/twilio/status/${assignmentId}`, params, sign(`${baseURL}/api/twilio/status/${assignmentId}`, params, "other-auth-token")));
+    expect(response.status).toBe(403);
   });
 });

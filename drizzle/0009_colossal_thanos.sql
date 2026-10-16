@@ -11,6 +11,8 @@ CREATE TABLE "call" (
 	"outcome" text,
 	"outcome_reason" text,
 	"forward_node_id" text,
+	"forward_started_at" timestamp with time zone,
+	"forward_status" text,
 	"started_at" timestamp with time zone NOT NULL,
 	"answered_at" timestamp with time zone,
 	"ended_at" timestamp with time zone,
@@ -33,7 +35,7 @@ CREATE TABLE "provider_event" (
 	"detail" text,
 	"payload" jsonb NOT NULL,
 	"received_at" timestamp with time zone NOT NULL,
-	CONSTRAINT "provider_event_kind_check" CHECK ("provider_event"."kind" in ('voice', 'status', 'dial')),
+	CONSTRAINT "provider_event_kind_check" CHECK ("provider_event"."kind" in ('voice', 'forward', 'forward_status', 'status')),
 	CONSTRAINT "provider_event_disposition_check" CHECK ("provider_event"."disposition" in ('accepted', 'rejected'))
 );
 --> statement-breakpoint

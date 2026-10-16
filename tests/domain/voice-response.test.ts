@@ -41,7 +41,7 @@ function flow(options: { recordingEnabled?: boolean; spamGateEnabled?: boolean; 
 
 const forwardTwiml =
   '<Dial action="https://tracer.example.com/api/twilio/forward/assignment-1?node=forward&amp;step=action" method="POST" timeout="30">' +
-  '<Number statusCallback="https://tracer.example.com/api/twilio/forward-status/assignment-1?node=forward" statusCallbackEvent="answered completed" statusCallbackMethod="POST">+14155550199</Number>' +
+  '<Number statusCallback="https://tracer.example.com/api/twilio/forward-status/assignment-1?node=forward" statusCallbackEvent="initiated answered completed" statusCallbackMethod="POST">+14155550199</Number>' +
   "</Dial>";
 
 describe("Call start TwiML", () => {
