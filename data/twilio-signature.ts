@@ -40,8 +40,12 @@ function constantTimeEqual(left: string, right: string): boolean {
   return difference === 0;
 }
 
+export async function signTwilioRequest(input: Omit<TwilioSignatureInput, "signature">): Promise<string> {
+  const payload = input.url + Object.keys(input.params).sort().map((name) => name + input.params[name]).join("");
+  return computeSignature(input.authToken, payload);
+}
+
 export async function isValidTwilioSignature(input: TwilioSignatureInput): Promise<boolean> {
   if (!input.signature || !input.authToken) return false;
-  const payload = input.url + Object.keys(input.params).sort().map((name) => name + input.params[name]).join("");
-  return constantTimeEqual(await computeSignature(input.authToken, payload), input.signature);
+  return constantTimeEqual(await signTwilioRequest(input), input.signature);
 }

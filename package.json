@@ -18,6 +18,7 @@
     "db:provision": "tsx scripts/provision-data-platform.ts",
     "db:grant-runtime": "tsx scripts/grant-runtime-role.ts",
     "auth:bootstrap": "tsx scripts/bootstrap-initial-operator.ts",
+    "smoke:staging-call": "tsx scripts/staging-call-smoke.ts",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "preview:deploy": "opennextjs-cloudflare build && wrangler preview",
     "cf-typegen": "cross-env CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false CLOUDFLARE_INCLUDE_PROCESS_ENV=false wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",

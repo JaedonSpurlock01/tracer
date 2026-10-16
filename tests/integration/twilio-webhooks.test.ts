@@ -28,6 +28,7 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { replayCallCallbacks, reportTrackingNumberCalls } from "@/data/call-smoke";
 import { createTwilioWebhookHandler } from "@/data/twilio-webhook-handler";
 
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
@@ -337,5 +338,28 @@ describe.sequential("Inactive Number Assignments", () => {
     expect((await pool!.query("select count(*)::int as count from call where twilio_call_sid = $1", [callSid])).rows[0].count).toBe(0);
     const events = await pool!.query("select kind, disposition, detail, call_id, number_assignment_id from provider_event where idempotency_key = $1", [`${callSid}:voice`]);
     expect(events.rows).toEqual([{ kind: "voice", disposition: "rejected", detail: "inactive_assignment", call_id: null, number_assignment_id: "archived-assignment" }]);
+  });
+});
+
+describe.sequential("Staging call smoke", () => {
+  it("reports the newest Calls on a Tracking Number with their provider events", async () => {
+    const calls = await reportTrackingNumberCalls(pool!, trackingNumber, 2);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ twilioCallSid: expect.any(String), state: expect.any(String), events: expect.any(Array) });
+    const answered = (await reportTrackingNumberCalls(pool!, trackingNumber, 50)).find((call) => call.twilioCallSid === "CA00000000000000000000000000000010");
+    expect(answered).toMatchObject({ state: "Completed", outcome: "Answered", durationSeconds: 42 });
+    expect(answered?.events.map((event) => `${event.kind}:${event.status}`)).toEqual([
+      "voice:ringing",
+      "forward_status:initiated",
+      "forward_status:in-progress",
+      "forward_status:completed",
+      "status:completed",
+    ]);
+  });
+
+  it("replays a completed Call's signed status callbacks without changing it", async () => {
+    const callId = (await pool!.query("select id from call where twilio_call_sid = 'CA00000000000000000000000000000010'")).rows[0].id as string;
+    const result = await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) });
+    expect(result).toEqual({ replayed: 4, rejected: 0, unchanged: true });
   });
 });
