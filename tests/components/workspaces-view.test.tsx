@@ -141,6 +141,37 @@ describe("WorkspacesView", () => {
     expect(screen.getByText("Review")).toBeVisible();
   });
 
+  it("filters Twilio numbers on the Number step by phone number or friendly name", async () => {
+    const numbers = [
+      { id: "number-1", phoneNumber: "+14155550100", friendlyName: "Support", assignedWorkspace: null },
+      { id: "number-2", phoneNumber: "+14155550101", friendlyName: "Sales", assignedWorkspace: null },
+      { id: "number-3", phoneNumber: "+16025550199", friendlyName: "Billing", assignedWorkspace: null },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: RequestInfo | URL) =>
+        String(request).endsWith("/api/workspaces/numbers")
+          ? new Response(JSON.stringify({ numbers }), { status: 200 })
+          : new Response(JSON.stringify(result), { status: 200 }),
+      ),
+    );
+    render(<WorkspacesView initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await screen.findByText("+16025550199");
+    const search = screen.getByRole("searchbox", { name: "Search numbers" });
+
+    fireEvent.change(search, { target: { value: "602" } });
+    expect(screen.getByText("+16025550199")).toBeVisible();
+    expect(screen.queryByText("+14155550100")).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "sales" } });
+    expect(screen.getByText("+14155550101")).toBeVisible();
+    expect(screen.queryByText("+16025550199")).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "nothing" } });
+    expect(screen.getByText("No numbers match your search.")).toBeVisible();
+  });
+
   it("opens Resume Setup from the overview query parameter", async () => {
     useSearchParamsMock.mockReturnValue(new URLSearchParams("resume=workspace-1"));
     vi.stubGlobal(
