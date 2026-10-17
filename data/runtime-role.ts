@@ -70,6 +70,7 @@ export async function provisionRuntimeRole(
   await connection.query(`GRANT SELECT, INSERT, DELETE ON TABLE public.access_grant TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.call TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT ON TABLE public.provider_event TO ${runtimeRole}`);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.recording TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public."user" TO ${runtimeRole}`);
   await connection.query(`REVOKE CREATE ON SCHEMA public FROM ${runtimeRole}`);
 }

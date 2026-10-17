@@ -23,7 +23,16 @@
         "name": "EMAIL",
         "remote": true
       }
-    ]
+    ],
+    "r2_buckets": [
+      {
+        "binding": "R2",
+        "bucket_name": "tracer-recordings-staging"
+      }
+    ],
+    "vars": {
+      "R2_BUCKET": "tracer-recordings-staging"
+    }
   },
   "services": [
     {
@@ -44,6 +53,15 @@
       "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:5432/tracer"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "tracer-recordings-production"
+    }
+  ],
+  "vars": {
+    "R2_BUCKET": "tracer-recordings-production"
+  },
   "env": {
     "staging": {
       "name": "tracer-staging",
@@ -59,7 +77,16 @@
           "id": "19a5d9e69d2a4a82b33c5d3f8cf2480f",
           "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:5432/tracer"
         }
-      ]
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2",
+          "bucket_name": "tracer-recordings-staging"
+        }
+      ],
+      "vars": {
+        "R2_BUCKET": "tracer-recordings-staging"
+      }
     }
   }
 }

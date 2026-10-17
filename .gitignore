@@ -13,3 +13,4 @@ test-results/
 cloudflare-env.d.ts
 .DS_Store
 Thumbs.db
+.trigger/

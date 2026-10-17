@@ -6,10 +6,10 @@
  * @description
  *  Resolves the Organization from the Number Assignment in the webhook URL,
  *  validates the X-Twilio-Signature with that Organization's Auth Token, and
- *  hands accepted voice, Keypad Gate, Whisper, Forward Call, voicemail, and
- *  status callbacks to the Call lifecycle. Voice, gather, whisper, Forward
- *  Call, and voicemail action requests receive TwiML; status and recording
- *  status callbacks receive an empty 204.
+ *  hands accepted voice, Keypad Gate, Whisper, Forward Call, voicemail,
+ *  connected Recording, and status callbacks to the Call lifecycle. Voice,
+ *  gather, whisper, Forward Call, and voicemail action requests receive
+ *  TwiML; status and recording status callbacks receive an empty 204.
  *
  * @remarks
  *  Twilio signs the exact URL Tracer configured, including its query string,
@@ -30,6 +30,7 @@ import type { Pool } from "pg";
 
 import { decryptSecret } from "@/data/credential-encryption";
 import { createInboundCalls } from "@/data/inbound-calls";
+import type { RecordingProcessing } from "@/data/recording";
 import { isValidTwilioSignature } from "@/data/twilio-signature";
 import type { VoiceUrls } from "@/data/voice-response";
 
@@ -37,9 +38,10 @@ export interface TwilioWebhookHandlerOptions {
   pool: Pool;
   masterKey: string | undefined;
   baseURL: string;
+  recordingProcessing: RecordingProcessing;
 }
 
-const webhookRoute = /^\/api\/twilio\/(voice|gather|whisper|forward|forward-status|voicemail|voicemail-status|status)\/([^/]+)$/;
+const webhookRoute = /^\/api\/twilio\/(voice|gather|whisper|forward|forward-status|voicemail|voicemail-status|recording-status|status)\/([^/]+)$/;
 
 function twiml(document: string): Response {
   return new Response(document, {
@@ -87,7 +89,7 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
     if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${url.pathname}${url.search}`, params, signature }))) {
       return forbidden();
     }
-    const calls = createInboundCalls({ pool: options.pool });
+    const calls = createInboundCalls({ pool: options.pool, recordingProcessing: options.recordingProcessing });
     const nodeId = url.searchParams.get("node") ?? "";
     const urls: VoiceUrls = {
       forwardAction: (node) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(node)}`,
@@ -96,6 +98,7 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
       voicemailAction: (node) => `${baseURL}/api/twilio/voicemail/${assignmentId}?node=${encodeURIComponent(node)}`,
       voicemailStatus: (node) => `${baseURL}/api/twilio/voicemail-status/${assignmentId}?node=${encodeURIComponent(node)}`,
       gatherAction: (node, attempt) => `${baseURL}/api/twilio/gather/${assignmentId}?node=${encodeURIComponent(node)}&attempt=${attempt}`,
+      recordingStatus: (node) => `${baseURL}/api/twilio/recording-status/${assignmentId}?node=${encodeURIComponent(node)}`,
     };
     if (kind === "whisper") {
       const result = await calls.receiveWhisper(assignmentId, nodeId, params);
@@ -115,7 +118,9 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
       ? await calls.receiveForwardStatus(assignmentId, nodeId, params, urls)
       : kind === "voicemail-status"
         ? await calls.receiveVoicemailStatus(assignmentId, nodeId, params)
-        : await calls.receiveCallStatus(assignmentId, params);
+        : kind === "recording-status"
+          ? await calls.receiveRecordingStatus(assignmentId, nodeId, params)
+          : await calls.receiveCallStatus(assignmentId, params);
     return result.kind === "recorded" ? new Response(null, { status: 204 }) : forbidden();
   };
 }

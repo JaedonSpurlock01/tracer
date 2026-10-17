@@ -5,8 +5,9 @@
  *
  * @description
  *  Walks published Call Flow graphs through Recording Disclosure, Business
- *  Hours, Keypad Gate, Whisper, Forward Call, and Voicemail, and maps Forward
- *  Call and voicemail recording results to the canonical Call Outcome.
+ *  Hours, Keypad Gate, Whisper, Forward Call, and Voicemail, maps Forward
+ *  Call and voicemail recording results to the canonical Call Outcome, and
+ *  checks when the Forward Call leg is recorded.
  *
  * @remarks
  *  Graphs come from the same initial-flow generator Operators publish with.
@@ -30,9 +31,11 @@ const context: VoiceContext = {
     voicemailAction: (nodeId) => `https://tracer.example.com/api/twilio/voicemail/assignment-1?node=${nodeId}`,
     voicemailStatus: (nodeId) => `https://tracer.example.com/api/twilio/voicemail-status/assignment-1?node=${nodeId}`,
     gatherAction: (nodeId, attempt) => `https://tracer.example.com/api/twilio/gather/assignment-1?node=${nodeId}&attempt=${attempt}`,
+    recordingStatus: (nodeId) => `https://tracer.example.com/api/twilio/recording-status/assignment-1?node=${nodeId}`,
   },
   at: new Date("2026-10-19T16:00:00Z"),
   timeZone: "America/Los_Angeles",
+  recordingEnabled: false,
 };
 
 function flow(options: { recordingEnabled?: boolean; spamGateEnabled?: boolean; whisperEnabled?: boolean } = {}): CallFlowGraph {
@@ -70,6 +73,25 @@ describe("Call start TwiML", () => {
     });
   });
 
+  it("records the answered Forward Call leg in dual channel when the Workspace records and the Flow Version plays the Recording Disclosure", () => {
+    expect(renderCallStart(flow({ recordingEnabled: true }), { ...context, recordingEnabled: true }).twiml).toContain(
+      '<Dial action="https://tracer.example.com/api/twilio/forward/assignment-1?node=forward&amp;step=action" method="POST" timeout="30" ' +
+        'record="record-from-answer-dual" recordingStatusCallback="https://tracer.example.com/api/twilio/recording-status/assignment-1?node=forward" ' +
+        'recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed absent">',
+    );
+  });
+
+  it("never records the Forward Call leg when Workspace recording is disabled", () => {
+    expect(renderCallStart(flow({ recordingEnabled: true }), context).twiml).not.toContain("record=");
+  });
+
+  it("never records the Forward Call leg when the pinned Flow Version has no Recording Disclosure, even if the Workspace records", () => {
+    expect(renderCallStart(flow(), { ...context, recordingEnabled: true }).twiml).not.toContain("record=");
+  });
+
+  it("records the Forward Call leg reached through a Keypad Gate after the Recording Disclosure", () => {
+    expect(renderGatherResult(flow({ recordingEnabled: true, spamGateEnabled: true }), "gate", "1", 1, { ...context, recordingEnabled: true }).twiml).toContain('record="record-from-answer-dual"');
+  });
 
   it("ends a Call at a terminal Outcome step", () => {
     const graph: CallFlowGraph = {

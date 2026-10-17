@@ -1,0 +1,23 @@
+{
+  "accountId": "0123456789abcdef0123456789abcdef",
+  "bucket": "tracer-recordings-staging",
+  "key": "organizations/organization-1/workspaces/workspace-1/calls/call-1/recordings/recording-1.wav",
+  "putObject": {
+    "status": 200,
+    "headers": { "etag": "\"6f1ed002ab5595859014ebf0951522d9\"" }
+  },
+  "headObject": {
+    "status": 200,
+    "headers": {
+      "content-length": "76",
+      "content-type": "audio/wav",
+      "etag": "\"6f1ed002ab5595859014ebf0951522d9\"",
+      "last-modified": "Fri, 16 Oct 2026 12:00:00 GMT",
+      "x-amz-meta-sha256": "b71fe471bb3658aad65c9fe207cbe871141fde057e0f3b33b7c629e0f6918b7a"
+    }
+  },
+  "accessDenied": {
+    "status": 403,
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>"
+  }
+}

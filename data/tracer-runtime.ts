@@ -4,12 +4,15 @@
  * @brief  Creates the request-scoped Tracer runtime.
  *
  * @description
- *  Resolves Cloudflare bindings, PostgreSQL, transactional email, and Better
- *  Auth for server routes before closing the request-scoped pool.
+ *  Resolves Cloudflare bindings, PostgreSQL, transactional email, Better
+ *  Auth, the Recording processing port, and the private Recording bucket
+ *  for server routes before closing the request-scoped pool.
  *
  * @remarks
  *  The runtime preserves the explicit non-production E2E email fake while
- *  keeping production provider requirements enforced.
+ *  keeping production provider requirements enforced. Recording processing
+ *  triggers the Trigger.dev transfer task when TRIGGER_SECRET_KEY is set;
+ *  without it accepted Recordings stay Pending for the recovery sweep.
  *
  * @see
  *  data/tracer-auth.ts
@@ -26,6 +29,8 @@ import { rememberE2eOtp } from "@/data/e2e-auth-fake";
 import { schema } from "@/data/schema";
 import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
 import { type ProviderConfiguration } from "@/data/provider-health";
+import type { RecordingProcessing } from "@/data/recording";
+import { createTriggerRecordingProcessing } from "@/data/recording-processing";
 import {
   createCloudflareTransactionalEmail,
   type SendEmail,
@@ -36,7 +41,8 @@ interface AuthBindings {
   HYPERDRIVE?: { connectionString: string };
   EMAIL?: SendEmail;
   TWILIO_CREDENTIAL_MASTER_KEY?: string;
-  R2?: unknown;
+  R2?: R2Bucket;
+  R2_BUCKET?: string;
   OPENAI_API_KEY?: string;
   TRIGGER_SECRET_KEY?: string;
   AUTH_EMAIL_FROM?: string;
@@ -58,6 +64,8 @@ export interface TracerRuntime {
   providerConfiguration: ProviderConfiguration;
   baseURL: string;
   backgroundTask: (promise: Promise<unknown>) => void;
+  recordingProcessing: RecordingProcessing;
+  recordingBucket: R2Bucket | undefined;
 }
 
 function requiredBinding(bindings: AuthBindings, name: keyof AuthBindings): string {
@@ -115,6 +123,7 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
     const baseURL = requiredBinding(bindings, "BETTER_AUTH_URL");
     const allowed = allowedRecipients(bindings.AUTH_EMAIL_ALLOWED_RECIPIENTS ?? process.env.AUTH_EMAIL_ALLOWED_RECIPIENTS);
     const masterKey = bindings.TWILIO_CREDENTIAL_MASTER_KEY ?? process.env.TWILIO_CREDENTIAL_MASTER_KEY;
+    const triggerSecretKey = bindings.TRIGGER_SECRET_KEY ?? process.env.TRIGGER_SECRET_KEY;
     const providerConfiguration: ProviderConfiguration = {
       twilioMasterKey: Boolean(masterKey),
       hyperdrive: Boolean(connectionString),
@@ -122,8 +131,9 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       emailFrom,
       emailAllowlistCount: allowed.size,
       r2: Boolean(bindings.R2),
+      r2Bucket: bindings.R2_BUCKET ?? null,
       openai: Boolean(bindings.OPENAI_API_KEY ?? process.env.OPENAI_API_KEY),
-      triggerdev: Boolean(bindings.TRIGGER_SECRET_KEY ?? process.env.TRIGGER_SECRET_KEY),
+      triggerdev: Boolean(triggerSecretKey),
     };
     const auth = createTracerAuth({
       database,
@@ -145,6 +155,8 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       providerConfiguration,
       baseURL,
       backgroundTask: (promise) => ctx.waitUntil(promise),
+      recordingProcessing: createTriggerRecordingProcessing({ secretKey: triggerSecretKey }),
+      recordingBucket: bindings.R2,
     });
   } finally {
     await pool.end();
