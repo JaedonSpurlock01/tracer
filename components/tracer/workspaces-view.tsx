@@ -49,6 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { recordingDisclosureText, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
@@ -185,6 +186,7 @@ export default function WorkspacesView({
     setNumberSearch("");
     setDialogOpen(true);
   }, []);
+  const flowManaged = Boolean(workspace?.publishedFlowVersion);
   const openResume = useCallback((value: WorkspaceRecord) => {
     setWorkspace(value);
     setStep(2);
@@ -251,7 +253,7 @@ export default function WorkspacesView({
     event.preventDefault();
     setActionError("");
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/workspaces", {
+    const response = await mutationFetch("/api/workspaces", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -283,7 +285,7 @@ export default function WorkspacesView({
     if (!workspace) return;
     setBusy(true);
     setActionError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/routing`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/routing`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...routing, analysisEnabled: routing.recordingEnabled && routing.analysisEnabled }),
@@ -315,7 +317,7 @@ export default function WorkspacesView({
     if (!workspace || !selectedNumberId) return;
     setBusy(true);
     setReviewError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/activate`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/activate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ twilioNumberId: selectedNumberId }),
@@ -625,6 +627,7 @@ export default function WorkspacesView({
                   <span>Spam gate enabled</span>
                   <Switch
                     checked={routing.spamGateEnabled}
+                    disabled={flowManaged}
                     onCheckedChange={(checked) => setRouting((current) => ({ ...current, spamGateEnabled: checked }))}
                   />
                 </label>
@@ -632,14 +635,24 @@ export default function WorkspacesView({
                   <span>Whisper enabled</span>
                   <Switch
                     checked={routing.whisperEnabled}
+                    disabled={flowManaged}
                     onCheckedChange={(checked) => setRouting((current) => ({ ...current, whisperEnabled: checked }))}
                   />
                 </label>
+                {flowManaged && workspace ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">Spam gate and whisper are managed in the published Call Flow.</p>
+                    <Button variant="outline" size="sm" render={<Link href={`/workspaces/${workspace.id}/flow`} />}>
+                      Edit Flow
+                    </Button>
+                  </div>
+                ) : null}
                 {routing.whisperEnabled ? (
                   <Field>
                     <FieldLabel htmlFor="whisper-message">Whisper message</FieldLabel>
                     <Textarea
                       id="whisper-message"
+                      disabled={flowManaged}
                       value={routing.whisperMessage ?? ""}
                       onChange={(event) => setRouting((current) => ({ ...current, whisperMessage: event.target.value }))}
                     />

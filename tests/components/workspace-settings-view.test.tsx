@@ -19,6 +19,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { refreshClientCache } = vi.hoisted(() => ({ refreshClientCache: vi.fn(async () => undefined) }));
+vi.mock("@/data/client-cache", () => ({ refreshClientCache }));
+
 import WorkspaceSettingsView from "@/components/tracer/workspace-settings-view";
 import type { OperatorRecord } from "@/data/operator-administration";
 
@@ -65,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  refreshClientCache.mockClear();
 });
 
 describe("WorkspaceSettingsView", () => {
@@ -202,6 +206,7 @@ describe("WorkspaceSettingsView", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Replacement" }));
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Twilio could not complete the replacement. The current Tracking Number is unchanged.");
       expect(within(document.getElementById("number")!).getByText("+14155550101")).toBeVisible();
+      expect(refreshClientCache).not.toHaveBeenCalled();
     });
 
     it("offers replacement only for an Active Workspace", () => {
@@ -229,6 +234,7 @@ describe("WorkspaceSettingsView", () => {
       expect(await screen.findByText("Tracking Number detached. Activate the Workspace on a number to resume routing.")).toBeVisible();
       expect(screen.getByText("No Tracking Number")).toBeVisible();
       expect(screen.getByText("Setup Required")).toBeVisible();
+      expect(refreshClientCache).toHaveBeenCalledTimes(1);
     });
 
     it("keeps the Tracking Number when detaching fails", async () => {

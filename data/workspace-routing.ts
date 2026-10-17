@@ -440,6 +440,22 @@ export function createWorkspaceRouting(options: {
           if (validateDraft(publishedGraph, true).issues.some((issue) => issue.code === "disclosure_required"))
             throw new RoutingError("disclosure_required");
         }
+        let flowSettings = { spamGateEnabled: settings.spamGateEnabled, whisperEnabled: settings.whisperEnabled, whisperMessage: settings.whisperMessage };
+        if (published) {
+          let graph = requireGraph(published.graph);
+          if (workspace.state === "Setup Required") {
+            const existingDraft = await draft(client, workspaceId);
+            const base = existingDraft ? requireGraph(existingDraft.graph) : graph;
+            graph = {
+              ...base,
+              nodes: base.nodes.map((node) => (node.type === "forward_call" ? { ...node, destinationNumber: settings.destinationNumber } : node)),
+            };
+            if (base.nodes.some((node) => node.type === "forward_call" && node.destinationNumber !== settings.destinationNumber)) {
+              await saveDraftRow(client, workspaceId, graph, existingDraft?.based_on_version ?? Number(published.version), actorUserId, new Date());
+            }
+          }
+          flowSettings = settingsFromGraph(graph);
+        }
         await client.query(
           `update workspace
               set destination_number = $3, recording_enabled = $4, analysis_enabled = $5,
@@ -451,9 +467,9 @@ export function createWorkspaceRouting(options: {
             settings.destinationNumber,
             settings.recordingEnabled,
             settings.analysisEnabled,
-            settings.spamGateEnabled,
-            settings.whisperEnabled,
-            settings.whisperMessage,
+            flowSettings.spamGateEnabled,
+            flowSettings.whisperEnabled,
+            flowSettings.whisperMessage,
             new Date(),
           ],
         );

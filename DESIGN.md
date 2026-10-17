@@ -75,6 +75,7 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
 - Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
+- Clear the browser's client cache after every successful write, so a prefetched or previously visited page never shows data from before the change; a reload is never required to see it.
 - Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
 - Never nest a Card inside a Frame or a Frame inside a Card.
@@ -538,6 +539,8 @@ Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from 
 - Whisper enabled or disabled, with message when enabled
 
 These options generate the initial constrained Call Flow. The visual Flow canvas is not embedded in the wizard.
+
+When Resume Setup reopens a Workspace that already has a published Flow Version, such as after Detach Number, the wizard keeps that Flow. A new Destination Number is written into its Forward Call step in a draft, so activation dials the new number and keeps the rest of the Flow. Spam gate and whisper show the Flow's state read-only with an Edit Flow link, as in Workspace Settings.
 
 #### Step 4: Review
 
