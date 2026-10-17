@@ -237,6 +237,20 @@ describe("WorkspaceSettingsView", () => {
       expect(refreshClientCache).toHaveBeenCalledTimes(1);
     });
 
+    it("shows a successful detach without waiting for the client cache to clear", async () => {
+      refreshClientCache.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(JSON.stringify({ workspace: { ...activeWorkspace, state: "Setup Required", trackingNumber: null } }), { status: 200 })),
+      );
+      render(<WorkspaceSettingsView initialWorkspace={activeWorkspace} section="number" />);
+      fireEvent.click(screen.getByRole("button", { name: "Detach Number" }));
+      const dialog = await screen.findByRole("alertdialog", { name: "Detach +14155550101?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Detach Number" }));
+      expect(await screen.findByText("Tracking Number detached. Activate the Workspace on a number to resume routing.")).toBeVisible();
+      expect(refreshClientCache).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the Tracking Number when detaching fails", async () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "provider_unavailable" }), { status: 502 })));
       render(<WorkspaceSettingsView initialWorkspace={activeWorkspace} section="number" />);
