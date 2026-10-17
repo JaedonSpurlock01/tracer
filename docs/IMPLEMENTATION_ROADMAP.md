@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M11 - Durable Recording Transfer
+- **Current milestone:** None; M12 is next
 - **Next milestone:** M12 - Waveform Playback and Call Detail
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-16
+- **Last roadmap review:** 2026-10-17
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 - Durable Recording Transfer is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. No milestone is In Progress.
 
 ## Status model
 
@@ -178,7 +178,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Complete | Staging | M9 |
-| M11 | Durable Recording Transfer | In Progress | Staging | M10 |
+| M11 | Durable Recording Transfer | Complete | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
 | M13 | Transcript, Lead Assessment, and Lead Review | Not Started | Staging | M12 |
 | M14 | Calls and Activity Operations | Not Started | Preview and Staging | M13 |
@@ -705,7 +705,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M11 - Durable Recording Transfer
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Connected recordings and voicemail audio move durably from Twilio to private R2 through idempotent Trigger.dev workflows.
 - **Depends on:** M10
 - **Target environment:** Staging
@@ -747,6 +747,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Task, contract, integration, and authorization tests pass.
 - Staging proves one connected call and one voicemail transfer.
 - Failure injection proves Twilio cleanup does not run early.
+- The Product Owner marked M11 Complete on 2026-10-17 after the task, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed, integration failure injection proved Twilio cleanup waits for a verified R2 object, and two Staging connected calls transferred through the local Trigger.dev Dev runner with matching R2 size and SHA-256 and their Twilio copies deleted. The Staging voicemail transfer is deferred to a later Product Owner check.
 
 #### Exit criteria
 
