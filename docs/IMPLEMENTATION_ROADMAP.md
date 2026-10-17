@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M11 is next
+- **Current milestone:** None; M11 is planned for the next sprint
 - **Next milestone:** M11 - Durable Recording Transfer
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-16
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete on `milestone/m10-first-release-call-routing`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner marked M10 Complete before its live Staging call checks ran and will run them before merging; no milestone is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. No milestone is In Progress; M11 starts in the next sprint.
 
 ## Status model
 
@@ -694,7 +694,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Staging exercises each branch with non-sensitive test calls.
 - Carried from M9: one real Staging call is answered and one non-answer outcome is observed, `pnpm smoke:staging-call --replay` leaves state unchanged, and Staging replaces the test number after a completed Call and verifies historical attribution.
 - Provider costs from branch smoke checks are recorded.
-- The Product Owner marked M10 Complete on 2026-10-16 after the domain, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed, and before the live Staging checks above ran; the Product Owner runs them, including provider cost recording, before merging the pull request.
+- The Product Owner marked M10 Complete on 2026-10-16 after the domain, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed, and before the live Staging checks above ran. The Product Owner then verified the Staging branch checks before merging on 2026-10-16. Provider costs from those checks were not recorded.
 
 #### Exit criteria
 
