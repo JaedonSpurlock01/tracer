@@ -25,6 +25,7 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     ".open-next/**",
+    ".trigger/**",
     "cloudflare-env.d.ts",
     "coverage/**",
     "playwright-report/**",
