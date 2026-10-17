@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M12 is next
-- **Next milestone:** M12 - Waveform Playback and Call Detail
+- **Current milestone:** M12 - Waveform Playback and Call Detail
+- **Next milestone:** M13 - Transcript, Lead Assessment, and Lead Review
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-17
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. No milestone is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is In Progress on `milestone/m12-waveform-playback-call-detail`.
 
 ## Status model
 
@@ -179,7 +179,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Complete | Staging | M9 |
 | M11 | Durable Recording Transfer | Complete | Staging | M10 |
-| M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
+| M12 | Waveform Playback and Call Detail | In Progress | Preview and Staging | M11 |
 | M13 | Transcript, Lead Assessment, and Lead Review | Not Started | Staging | M12 |
 | M14 | Calls and Activity Operations | Not Started | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Not Started | Preview and Staging | M14 |
@@ -756,10 +756,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M12 - Waveform Playback and Call Detail
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Authorized users can inspect a Call and play retained audio through an accessible interactive waveform.
 - **Depends on:** M11
 - **Target environment:** Preview and Staging
+- **Execution note:** Calls and Activity remain placeholders until M14, so M12 adds Call Detail at `/workspaces/{workspaceId}/calls/{callId}` and the Workspace Overview Recent Calls list (five newest Calls) from DESIGN as its entry point. The player uses wavesurfer.js over precomputed peaks and streams audio only through the M11 Workspace-authorized Recording route; peaks are served through the same Workspace authorization. Download MP3 and Export Call wait for M16, so M12 offers playback only. Transcript, Lead Assessment, and Lead Review wait for M13, and previous and next Call navigation waits for the M14 Calls list. Recording media counts as Expired 12 months after the Call starts: the audio and peaks routes refuse it and Call Detail labels it Expired, while the Call, its facts, Recording metadata, and analytics remain indefinitely. The Purged state, its timestamp, and Purge Media wait for M17, where the purge action that writes them is built.
 
 #### Vertical slices
 

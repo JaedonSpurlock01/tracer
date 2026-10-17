@@ -1,12 +1,14 @@
 /**
  * -------------------------------------------------------------------------
  * @file   r2-objects.ts
- * @brief  Stores and inspects Recording objects through the R2 S3 API.
+ * @brief  Stores, inspects, and reads Recording objects through the R2 S3 API.
  *
  * @description
- *  Uploads a Recording's WAV bytes to a private R2 bucket with a signed PUT
- *  and reads back the stored size and SHA-256 checksum with a signed HEAD,
- *  so the transfer workflow can verify the object before Twilio cleanup.
+ *  Uploads a Recording's WAV bytes or derived waveform peaks to a private R2
+ *  bucket with a signed PUT, reads back the stored size and SHA-256 checksum
+ *  with a signed HEAD so the transfer workflow can verify the object before
+ *  Twilio cleanup, and reads a stored object's bytes with a signed GET so
+ *  the waveform workflow can derive peaks from the WAV.
  *
  * @remarks
  *  The Trigger.dev task runs outside Cloudflare, so it reaches R2 through
@@ -18,6 +20,7 @@
  *
  * @see
  *  data/recording-transfer.ts
+ *  data/recording-waveform.ts
  *  https://developers.cloudflare.com/r2/api/s3/api/
  *
  * @author Jaedon Spurlock
@@ -32,7 +35,13 @@ export interface StoredObject {
 
 export interface RecordingObjects {
   head(key: string): Promise<StoredObject | null>;
-  put(key: string, body: Uint8Array, object: StoredObject): Promise<void>;
+  put(key: string, body: Uint8Array, object: StoredObject, contentType?: string): Promise<void>;
+  get(key: string): Promise<Uint8Array | null>;
+}
+
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export class R2ObjectError extends Error {
@@ -73,11 +82,11 @@ export function createR2RecordingObjects(options: {
       };
     },
 
-    async put(key, body, object) {
+    async put(key, body, object, contentType = "audio/wav") {
       const response = await send(key, {
         method: "PUT",
         headers: {
-          "content-type": "audio/wav",
+          "content-type": contentType,
           "x-amz-content-sha256": object.sha256,
           "x-amz-checksum-sha256": btoa(String.fromCharCode(...(object.sha256.match(/../g) ?? []).map((pair) => Number.parseInt(pair, 16)))),
           "x-amz-meta-sha256": object.sha256,
@@ -85,6 +94,13 @@ export function createR2RecordingObjects(options: {
         body: body as unknown as BodyInit,
       });
       if (!response.ok) throw new R2ObjectError(response.status);
+    },
+
+    async get(key) {
+      const response = await send(key, { method: "GET" });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new R2ObjectError(response.status);
+      return new Uint8Array(await response.arrayBuffer());
     },
   };
 }

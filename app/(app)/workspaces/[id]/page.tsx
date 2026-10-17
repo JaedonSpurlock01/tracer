@@ -5,7 +5,8 @@
  *
  * @description
  *  Resolves one Workspace the actor may read and renders the setup-aware
- *  overview. Client Viewers see a read-only Overview of granted Workspaces.
+ *  overview with its Recent Calls. Client Viewers see a read-only Overview
+ *  of granted Workspaces.
  *
  * @remarks
  *  Organization and Access Grant scoping are enforced by the central
@@ -21,6 +22,7 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
+import { createCallDetails } from "@/data/call-details";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { createWorkspaceRoutingFromRuntime } from "@/data/workspace-routing-runtime";
 import { withTracerRuntime } from "@/data/tracer-runtime";
@@ -33,7 +35,8 @@ export default async function WorkspacePage({ params }: { params: Promise<{ id: 
     const workspace = await createReadableWorkspaces(runtime.pool, actor).find(id);
     if (!workspace) return null;
     const routing = createWorkspaceRoutingFromRuntime(runtime, actor.organizationId);
-    return { workspace, flow: await routing.getFlow(id) };
+    const [flow, recentCalls] = await Promise.all([routing.getFlow(id), createCallDetails(runtime.pool, actor).listRecent(id)]);
+    return { workspace, flow, recentCalls: recentCalls ?? [] };
   });
   if (!data) notFound();
   return (
@@ -41,6 +44,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ id: 
       workspace={data.workspace}
       flow={{ published: data.flow.published }}
       readOnly={!canManageWorkspaces(actor)}
+      recentCalls={data.recentCalls}
     />
   );
 }

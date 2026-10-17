@@ -112,7 +112,24 @@ it("migrates a clean database to the latest authentication and Organization sche
     "recording_stored_metadata_check",
     "recording_transfer_state_check",
     "recording_twilio_cleanup_state_check",
+    "recording_waveform_requires_stored_check",
+    "recording_waveform_state_check",
+    "recording_waveform_stored_metadata_check",
   ]);
+  const waveformColumns = await pool.query<{ column_name: string; column_default: string | null; is_nullable: string }>(
+    `select column_name, column_default, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = 'recording' and column_name like 'waveform_%'
+      order by column_name`,
+  );
+  expect(waveformColumns.rows).toEqual([
+    { column_name: "waveform_failure_reason", column_default: null, is_nullable: "YES" },
+    { column_name: "waveform_generated_at", column_default: null, is_nullable: "YES" },
+    { column_name: "waveform_object_key", column_default: null, is_nullable: "YES" },
+    { column_name: "waveform_state", column_default: "'Pending'::text", is_nullable: "NO" },
+  ]);
+  const waveformRecoveryIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_waveform_unfinished_created_at_idx'");
+  expect(waveformRecoveryIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(waveform_state <> 'Stored'::text\)$/) }]);
   const recoveryIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_unfinished_created_at_idx'");
   expect(recoveryIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(twilio_cleanup_state <> 'Deleted'::text\)$/) }]);
   const foreignKeys = await pool.query<{ constraint_name: string }>(
@@ -138,7 +155,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(14);
+  expect(Number(result.rows[0].count)).toBe(15);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {

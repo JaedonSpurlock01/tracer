@@ -4,8 +4,9 @@
  * @brief  Renders the Workspace Overview and routing health.
  *
  * @description
- *  Displays Workspace identity, routing metadata, setup requirements, and the
- *  published Call Flow summary for Operators.
+ *  Displays Workspace identity, routing metadata, setup requirements, the
+ *  published Call Flow summary for Operators, and the five Recent Calls
+ *  linking to Call Detail.
  *
  * @remarks
  *  Provider health and inbound Call metrics remain deferred to later milestones.
@@ -21,7 +22,10 @@ import Link from "next/link";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
+import { formatCallTime, formatClock } from "@/components/tracer/call-format";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
+import type { RecentCall } from "@/data/call-details";
 import type { CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceRecord } from "@/data/workspaces";
 import { describeSetupChecklist } from "@/data/workspace-policy";
@@ -30,6 +34,7 @@ interface WorkspaceOverviewProps {
   workspace: WorkspaceRecord;
   flow?: { published: { version: number; graph: CallFlowGraph } | null };
   readOnly?: boolean;
+  recentCalls?: RecentCall[];
 }
 
 function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "success-light" | "destructive-light" {
@@ -38,7 +43,37 @@ function stateVariant(state: WorkspaceRecord["state"]): "primary-light" | "succe
   return "primary-light";
 }
 
-export default function WorkspaceOverview({ workspace, flow, readOnly = false }: WorkspaceOverviewProps) {
+function RecentCalls({ workspace, calls }: { workspace: WorkspaceRecord; calls: RecentCall[] }) {
+  return (
+    <Frame>
+      <FramePanel className="flex flex-col gap-4">
+        <h2 id="recent-calls-title" className="font-semibold">Recent Calls</h2>
+        {calls.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No Calls yet. Calls appear after the first inbound Call reaches the Tracking Number.</p>
+        ) : (
+          <ul aria-labelledby="recent-calls-title" className="flex flex-col divide-y divide-border">
+            {calls.map((call) => (
+              <li key={call.id}>
+                <Link
+                  href={`/workspaces/${workspace.id}/calls/${call.id}`}
+                  prefetch
+                  className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 py-2 text-sm transition-colors hover:bg-muted/50 sm:grid-cols-[8rem_1fr_auto_4rem]"
+                >
+                  <span><CallOutcomeBadge outcome={call.outcome} /></span>
+                  <span className="font-medium tabular-nums">{call.callerNumber ?? "Unknown caller"}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{formatCallTime(call.startedAt, workspace.reportingTimezone)}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums sm:text-right">{call.connectedDurationSeconds === null ? "-" : formatClock(call.connectedDurationSeconds)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </FramePanel>
+    </Frame>
+  );
+}
+
+export default function WorkspaceOverview({ workspace, flow, readOnly = false, recentCalls }: WorkspaceOverviewProps) {
   const checklist = describeSetupChecklist(workspace);
   const published = flow?.published ?? null;
 
@@ -114,6 +149,7 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false }:
           )}
         </FramePanel>
       </Frame>
+      {recentCalls ? <RecentCalls workspace={workspace} calls={recentCalls} /> : null}
       {workspace.state === "Setup Required" && !readOnly ? (
         <Frame>
           <FramePanel className="flex flex-col gap-4">

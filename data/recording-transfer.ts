@@ -7,8 +7,8 @@
  *  Downloads a Recording's WAV from Twilio with its Organization's
  *  credential, uploads it to R2 under a deterministic key, verifies the
  *  stored size and SHA-256 checksum, and records the Recording as Stored.
- *  Only after Stored is committed does it delete the Twilio copy and record
- *  the cleanup. A rerun skips finished stages, reuses a matching object at
+ *  Only after Stored is committed does it request waveform generation and
+ *  then delete the Twilio copy and record the cleanup. A rerun skips finished stages, reuses a matching object at
  *  the same key, and replaces a mismatched one.
  *
  * @remarks
@@ -18,11 +18,15 @@
  *  run before the verified copy is durable. A failed stage is rolled back
  *  to a savepoint and recorded under the same lock with a secret-free
  *  reason before the error is rethrown for Trigger.dev to retry. The WAV is
- *  buffered in memory, which suits voicemail and connected-call lengths.
+ *  buffered in memory, which suits voicemail and connected-call lengths. A
+ *  failed waveform request is ignored so it never blocks the transfer or
+ *  cleanup; the recovery sweep re-requests it. The request reuses one
+ *  Recording-derived idempotency key so reruns map to one waveform run.
  *
  * @see
  *  data/r2-objects.ts
  *  data/twilio-client.ts
+ *  data/recording-waveform.ts
  *  trigger/recording-transfer.ts
  *
  * @author Jaedon Spurlock
@@ -31,7 +35,8 @@
 import type { Pool, PoolClient } from "pg";
 
 import { decryptSecret } from "@/data/credential-encryption";
-import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import { R2ObjectError, sha256Hex, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import type { RecordingProcessing } from "@/data/recording";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
 
 export interface RecordingTransferDependencies {
@@ -39,6 +44,7 @@ export interface RecordingTransferDependencies {
   masterKey: string;
   twilio: TwilioRecordingMedia;
   objects: RecordingObjects;
+  waveform: RecordingProcessing;
   now: () => Date;
 }
 
@@ -68,11 +74,6 @@ export class RecordingTransferError extends Error {
 
 export function recordingObjectKey(recording: { id: string; organizationId: string; workspaceId: string; callId: string }): string {
   return `organizations/${recording.organizationId}/workspaces/${recording.workspaceId}/calls/${recording.callId}/recordings/${recording.id}.wav`;
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function matches(stored: StoredObject | null, object: StoredObject): boolean {
@@ -175,9 +176,14 @@ async function withLockedRecording(
 }
 
 export async function transferRecording(deps: RecordingTransferDependencies, recordingId: string): Promise<void> {
+  let storedOrganizationId: string | null = null;
   await withLockedRecording(deps, recordingId, async (client, row, progress) => {
     if (row.transfer_state !== "Stored") await store(deps, client, row, progress);
+    storedOrganizationId = row.organization_id;
   });
+  if (storedOrganizationId) {
+    await deps.waveform.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-waveform:${recordingId}` }).catch(() => undefined);
+  }
   await withLockedRecording(deps, recordingId, async (client, row, progress) => {
     if (row.transfer_state === "Stored" && row.twilio_cleanup_state !== "Deleted") await cleanUp(deps, client, row, progress);
   });
