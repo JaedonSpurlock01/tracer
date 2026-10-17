@@ -64,6 +64,11 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M10 - Complete First-Release Call Routing for Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration, and the Workspace Overview Flow summary, carrying M9's live Staging call checks.
+- Made voicemail capture independent of the Workspace recording setting, which now governs connected conversations only, because a caller who leaves a message consents by doing so; a Voicemail with no usable capture ends as Missed after a Forward Call Missed branch and Abandoned after Business Hours Closed, and Keypad Gate replays its prompt once before Blocked.
+- Made Resume Setup write a new Destination Number into the published Call Flow's Forward Call step instead of only the Workspace, because activation republished the old Flow and reverted the number after a detach; spam gate and whisper stay managed in the Flow, as in Workspace Settings.
+- Cleared the browser's client cache after every successful write because pages prefetched in full kept showing pre-mutation data for up to five minutes, such as a detached Tracking Number still shown as attached after navigating away and back.
+- Allowed a Business Hours window to end at 24:00 so overnight hours can be entered as one segment per calendar day, made a date override replace that date's weekly windows, and required every Whisper to lead directly to a Forward Call so it is heard only by the answering business.
 - Moved M9's live Staging call checks into M10's verification gate because the Product Owner closed M9 before they ran; M10 cannot complete until a real answered and non-answer Call, callback replay, and number replacement are verified on Staging.
 - Started M9 - Minimal Inbound Call Tracer Bullet for signed Twilio voice and status webhooks, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement.
 - Added an encrypted Twilio Auth Token to the Organization Twilio connection because Twilio signs webhooks with the Auth Token and the M5 API key credential cannot validate them, and refused Workspace activation until that Auth Token is configured so no live Tracking Number routes Calls Tracer cannot authenticate.
@@ -112,6 +117,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Completed
 
+- Completed M10 - Complete First-Release Call Routing after the domain, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed with migration 0011 adding pending Call Outcomes, voicemail capture, and the new provider event kinds. The Product Owner verified the Staging branch checks and carried M9 call checks before merging; provider costs from those checks were not recorded.
 - Completed M9 - Minimal Inbound Call Tracer Bullet after the domain, contract, integration, component, browser, typecheck, lint, build, and Staging database smoke gates passed with migrations 0008 through 0010 applied to Staging. The Product Owner waived the live Staging call gate (an answered and a non-answer call, signed callback replay, and number replacement with historical attribution); it moves to M10's Staging verification.
 - Completed M8 - Workspace Access Grants after the domain, contract, integration, component, and Access Grant browser gates passed in a full-verification run on `main`, including direct-route, API denial, and revocation from an existing session, and migration 0007 with its `access_grant` runtime grants was confirmed in the Staging database.
 - Completed M7 - Call Flow Publication and Workspace Activation after the domain, contract, integration, component, and Workspace and Flow browser gates passed and the Product Owner confirmed the live Staging attach, activate, archive, and restore check on the dedicated test number.

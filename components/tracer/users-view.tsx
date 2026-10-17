@@ -39,6 +39,7 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { CanonicalRole, UserState } from "@/data/auth-policy";
 import type { OperatorRecord } from "@/data/operator-administration";
 
@@ -200,7 +201,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
       setActionError(updateErrors.access_grant_required);
       return;
     }
-    const response = await fetch("/api/users", {
+    const response = await mutationFetch("/api/users", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(
@@ -245,7 +246,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
 
   async function applyUserUpdate(path: string, init: RequestInit, message: string) {
     setActionError("");
-    const response = await fetch(path, init).catch(() => null);
+    const response = await mutationFetch(path, init).catch(() => null);
     if (!response?.ok) {
       setActionError(await updateError(response));
       return;
@@ -279,7 +280,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
   }
 
   async function resend(user: OperatorRecord) {
-    const response = await fetch(`/api/users/${user.id}/resend-access`, { method: "POST" }).catch(() => null);
+    const response = await mutationFetch(`/api/users/${user.id}/resend-access`, { method: "POST" }).catch(() => null);
     if (response?.ok) {
       setDeliveryWarning(null);
       setStatus("Access email sent.");
@@ -290,7 +291,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
 
   async function updateState(user: OperatorRecord, nextState: "Active" | "Disabled") {
     setActionError("");
-    const response = await fetch(`/api/users/${user.id}/state`, {
+    const response = await mutationFetch(`/api/users/${user.id}/state`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state: nextState }),

@@ -75,6 +75,7 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
 - Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
+- Clear the browser's client cache after every successful write, so a prefetched or previously visited page never shows data from before the change; a reload is never required to see it.
 - Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
 - Never nest a Card inside a Frame or a Frame inside a Card.
@@ -539,6 +540,8 @@ Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from 
 
 These options generate the initial constrained Call Flow. The visual Flow canvas is not embedded in the wizard.
 
+When Resume Setup reopens a Workspace that already has a published Flow Version, such as after Detach Number, the wizard keeps that Flow. A new Destination Number is written into its Forward Call step in a draft, so activation dials the new number and keeps the rest of the Flow. Spam gate and whisper show the Flow's state read-only with an Edit Flow link, as in Workspace Settings.
+
 #### Step 4: Review
 
 - Summarize all settings and the generated Call Flow
@@ -680,9 +683,9 @@ Selecting a node opens its configuration in the right Frame. Changes save to the
 1. **Incoming Call:** Fixed start node; exactly one
 2. **Recording Disclosure:** System-managed and required when Workspace recording is enabled
 3. **Business Hours:** Optional Open and Closed branches
-4. **Keypad Gate:** Optional Pass and Blocked branches
+4. **Keypad Gate:** Optional Pass and Blocked branches; a wrong digit or timeout replays the prompt once, then follows Blocked, and a caller hang-up during the gate is Blocked
 5. **Forward Call:** Required destination routing with Answered, Missed, and Failed paths
-6. **Whisper:** Optional text-to-speech message for the business before caller connection
+6. **Whisper:** Optional text-to-speech message for the business before caller connection; it must lead directly to a Forward Call and is heard only by the business after it answers
 7. **Voicemail:** Optional terminal capture reached from Closed or Missed paths
 8. **Outcome:** Fixed terminal nodes for Answered, Voicemail, Missed, Abandoned, Blocked, and Failed
 
@@ -692,7 +695,10 @@ Selecting a node opens its configuration in the right Frame. Changes save to the
 - Support recurring weekly open windows
 - Use English text-to-speech prompts in the first release
 - Support explicit date overrides for one-off open or closed periods
-- Enter overnight windows as segments on their respective calendar days
+- Enter overnight windows as segments on their respective calendar days; a window may end at 24:00 so an overnight segment reaches midnight
+- Choose window and override times in 15-minute steps; a window includes its start and excludes its end
+- A date override replaces that date's weekly windows: a Closed override closes the whole day, and several Open overrides on one date combine
+- Evaluate open or closed once, when the Call starts
 - Do not integrate external calendars or recurring holiday libraries in the first release
 
 ### Text-to-speech prompts
@@ -701,7 +707,7 @@ Disclosure, keypad instructions, whisper, and voicemail greeting use text-to-spe
 
 - Editable text with concise character guidance
 - Small supported voice list
-- Preview action
+- Preview action using the browser's speech synthesis, labeled as an approximation of the selected Twilio voice
 - No uploaded prompt audio in the first release
 - Recording disclosure includes required compliance wording whenever recording is enabled
 
@@ -711,7 +717,8 @@ Disclosure, keypad instructions, whisper, and voicemail greeting use text-to-spe
 - Caller-only Recording with a single waveform lane
 - Maximum capture length of 120 seconds
 - Stop after 5 seconds of detectable silence or when the caller presses `#`
-- Successful capture produces the Voicemail Call Outcome
+- Successful capture, a completed recording with at least 1 second of audio, produces the Voicemail Call Outcome
+- Without a usable capture the Call is Missed after a Forward Call Missed branch and Abandoned after Business Hours Closed; a Twilio recording error is Failed
 - At least 15 seconds of captured speech makes it eligible for Transcript and Lead Assessment
 - Recording, Transcript, and derived waveform peaks follow the same 12-month retention policy
 
@@ -723,6 +730,7 @@ A draft is publishable only when:
 - Every possible path reaches exactly one valid Outcome
 - It contains no cycles
 - Recording Disclosure is present when recording is enabled
+- Every Whisper leads directly to a Forward Call
 - Business Hours has both Open and Closed paths
 - Keypad Gate has both Pass and Blocked paths
 - Forward Call has Answered, Missed, and Failed handling
@@ -1153,7 +1161,7 @@ Detach Number is available for any Active Workspace when no replacement number i
 - Read-only 15-second eligibility threshold
 - Read-only 12-month Recording and Transcript retention policy
 
-Recording may be enabled while automatic analysis is disabled. Analysis cannot be enabled while recording is disabled. The disclosure sentence cannot be edited or removed while recording is enabled.
+Recording may be enabled while automatic analysis is disabled. Analysis cannot be enabled while recording is disabled. The disclosure sentence cannot be edited or removed while recording is enabled. The recording setting governs connected conversations only; a Voicemail step captures the caller's message whether or not recording is enabled.
 
 ### Access
 

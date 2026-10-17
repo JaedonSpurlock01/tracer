@@ -359,6 +359,56 @@ describe("WorkspaceFlowEditor", () => {
     expect(screen.getAllByDisplayValue("09:00").length).toBeGreaterThan(1);
   });
 
+  function renderDraft(extra: CallFlowGraph["nodes"]): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ validation: { valid: true, issues: [] } }), { status: 200 })),
+    );
+    render(
+      <WorkspaceFlowEditor
+        workspace={workspace}
+        initialFlow={flow({
+          draft: { graph: { version: 1, nodes: [...graph.nodes, ...extra], edges: graph.edges }, basedOnVersion: 1, updatedAt: "2026-01-02T00:00:00.000Z" },
+          validation: { valid: true, issues: [] },
+        })}
+      />,
+    );
+  }
+
+  it("edits Business Hours in the Workspace timezone and ends a window at 24:00", () => {
+    renderDraft([{ id: "hours", type: "business_hours", position: { x: 0, y: 0 }, weeklyWindows: [{ day: 5, start: "22:00", end: "23:00" }], dateOverrides: [] }]);
+    fireEvent.click(screen.getByRole("button", { name: "hours" }));
+    expect(screen.getByText("Times use the America/Chicago timezone. Enter overnight hours as one window per day, ending at 24:00.")).toBeVisible();
+    fireEvent.change(screen.getByRole("combobox", { name: "Window 1 end" }), { target: { value: "24:00" } });
+    expect(screen.getByRole("combobox", { name: "Window 1 end" })).toHaveValue("24:00");
+    expect(screen.getByRole("combobox", { name: "Window 1 start" })).toHaveValue("22:00");
+  });
+
+  it("shows character guidance for a text-to-speech prompt", () => {
+    renderDraft([{ id: "greeting-node", type: "voicemail", position: { x: 0, y: 0 }, greeting: "Leave a message.", voice: "Polly.Joanna" }]);
+    fireEvent.click(screen.getByRole("button", { name: "greeting-node" }));
+    expect(screen.getByText("16 / 500 characters")).toBeVisible();
+  });
+
+  it("previews a text-to-speech prompt with the browser voice as an approximation", () => {
+    const speak = vi.fn();
+    const cancel = vi.fn();
+    vi.stubGlobal("speechSynthesis", { speak, cancel });
+    vi.stubGlobal(
+      "SpeechSynthesisUtterance",
+      class {
+        lang = "";
+        constructor(public text: string) {}
+      },
+    );
+    renderDraft([{ id: "whisper-node", type: "whisper", position: { x: 0, y: 0 }, message: "Tracer lead", voice: "Polly.Matthew" }]);
+    fireEvent.click(screen.getByRole("button", { name: "whisper-node" }));
+    expect(screen.getByText("Preview uses your browser's voice, which only approximates Polly.Matthew.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(cancel).toHaveBeenCalled();
+    expect(speak).toHaveBeenCalledWith(expect.objectContaining({ text: "Tracer lead", lang: "en-US" }));
+  });
+
   it("keeps the Incoming Call node when a remove change targets it", () => {
     render(
       <WorkspaceFlowEditor

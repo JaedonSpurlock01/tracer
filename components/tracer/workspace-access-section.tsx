@@ -30,6 +30,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
@@ -82,7 +83,7 @@ export default function WorkspaceAccessSection({
   async function update(path: string, init: RequestInit) {
     setBusy(true);
     setError("");
-    const response = await fetch(path, init).catch(() => null);
+    const response = await mutationFetch(path, init).catch(() => null);
     if (!response?.ok) {
       const body = response ? ((await response.json().catch(() => ({}))) as { error?: string }) : {};
       setError(body.error === "last_access_grant" ? lastGrantMessage : "Access could not be updated.");

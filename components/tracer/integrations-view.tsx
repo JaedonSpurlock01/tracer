@@ -31,6 +31,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
 import type { ProviderHealth, ProviderState } from "@/data/provider-health";
 
@@ -169,7 +170,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError("");
-    const response = await fetch("/api/integrations/twilio/connect", {
+    const response = await mutationFetch("/api/integrations/twilio/connect", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(form),
@@ -193,7 +194,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
     event.preventDefault();
     setFormError("");
     setTwilioAction("rotate");
-    const response = await fetch("/api/integrations/twilio/rotate", {
+    const response = await mutationFetch("/api/integrations/twilio/rotate", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ apiKeySid: form.apiKeySid, apiKeySecret: form.apiKeySecret }),
@@ -220,7 +221,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
     event.preventDefault();
     setFormError("");
     setTwilioAction("authToken");
-    const response = await fetch("/api/integrations/twilio/auth-token", {
+    const response = await mutationFetch("/api/integrations/twilio/auth-token", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authToken }),
@@ -247,7 +248,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
     setTwilioAction("test");
     setTwilioError("");
     setTwilioRetry(false);
-    const response = await fetch("/api/integrations/twilio/test", { method: "POST" }).catch(() => null);
+    const response = await mutationFetch("/api/integrations/twilio/test", { method: "POST" }).catch(() => null);
     if (response?.ok) {
       setStatus("Twilio connection verified.");
     } else {
@@ -262,7 +263,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
   async function syncTwilio() {
     setTwilioAction("sync");
     setTwilioError("");
-    const response = await fetch("/api/integrations/twilio/sync-numbers", { method: "POST" }).catch(() => null);
+    const response = await mutationFetch("/api/integrations/twilio/sync-numbers", { method: "POST" }).catch(() => null);
     if (response?.ok) {
       const body = await responseBody(response);
       setNumbers(Array.isArray(body.numbers) ? body.numbers as TwilioNumberRecord[] : []);
@@ -278,7 +279,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
   async function disconnect() {
     setTwilioAction("disconnect");
     setTwilioError("");
-    const response = await fetch("/api/integrations/twilio/disconnect", { method: "POST" }).catch(() => null);
+    const response = await mutationFetch("/api/integrations/twilio/disconnect", { method: "POST" }).catch(() => null);
     if (response?.ok) {
       setDisconnectOpen(false);
       await reload();
@@ -297,7 +298,7 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
   async function testProvider(id: "hyperdrive" | "email") {
     setProviderAction(id);
     setProviderErrors((current) => ({ ...current, [id]: "" }));
-    const response = await fetch(`/api/integrations/${id}/test`, { method: "POST" }).catch(() => null);
+    const response = await mutationFetch(`/api/integrations/${id}/test`, { method: "POST" }).catch(() => null);
     const body = response ? await responseBody(response) : {};
     if (response?.ok && id === "hyperdrive") {
       setProviderMessages((current) => ({ ...current, hyperdrive: `Connection verified at ${formatDate(typeof body.checkedAt === "string" ? body.checkedAt : null)}` }));

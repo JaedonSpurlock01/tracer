@@ -222,6 +222,8 @@ beforeAll(async () => {
     ["routing-number-n", "PNnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn", "+14155550114", true],
     ["routing-number-o", "PNoooooooooooooooooooooooooooooooo", "+14155550115", true],
     ["routing-number-p", "PNpppppppppppppppppppppppppppppppp", "+14155550116", true],
+    ["routing-number-q", "PNqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", "+14155550117", true],
+    ["routing-number-r", "PNrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", "+14155550118", true],
   ]) {
     await pool.query(
       `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, released_at, first_seen_at, last_seen_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, now(), now(), now(), now())`,
@@ -936,6 +938,43 @@ describe.sequential("Workspace routing", () => {
     );
     expect(reactivated.response.status).toBe(200);
     expect(reactivated.body.workspace).toMatchObject({ state: "Active", trackingNumber: "+14155550116" });
+  });
+
+  it("resumes setup after a detach with a new Destination Number written into the published Call Flow", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = await createWorkspace(cookie, "Resume Destination Workspace");
+    const routing = (destinationNumber: string, spamGateEnabled: boolean) =>
+      json(
+        new Request(`${baseURL}/api/workspaces/${workspaceId}/routing`, {
+          method: "PATCH",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ destinationNumber, recordingEnabled: false, analysisEnabled: false, spamGateEnabled, whisperEnabled: false, whisperMessage: null }),
+        }),
+      );
+    const activate = (twilioNumberId: string) =>
+      json(
+        new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ twilioNumberId }),
+        }),
+      );
+    await routing("+14155550101", false);
+    expect((await activate("routing-number-q")).response.status).toBe(200);
+    const customized = (await pool!.query("select graph from flow_version where workspace_id = $1", [workspaceId])).rows[0].graph as CallFlowGraph;
+    customized.nodes = customized.nodes.map((node) => (node.type === "forward_call" ? { ...node, timeoutSeconds: 45 } : node));
+    await pool!.query("update flow_version set graph = $2 where workspace_id = $1", [workspaceId, JSON.stringify(customized)]);
+    expect((await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }))).response.status).toBe(200);
+
+    const resumed = await routing("+14155550199", true);
+    expect(resumed.response.status).toBe(200);
+    expect(resumed.body.workspace).toMatchObject({ destinationNumber: "+14155550199", spamGateEnabled: false, hasDraft: true });
+    const reactivated = await activate("routing-number-r");
+    expect(reactivated.response.status).toBe(200);
+    expect(reactivated.body.workspace).toMatchObject({ state: "Active", trackingNumber: "+14155550118", destinationNumber: "+14155550199", spamGateEnabled: false });
+    const latest = (await pool!.query("select graph from flow_version where workspace_id = $1 order by version desc limit 1", [workspaceId])).rows[0].graph as CallFlowGraph;
+    expect(latest.nodes.filter((node) => node.type === "forward_call")).toEqual([expect.objectContaining({ destinationNumber: "+14155550199", timeoutSeconds: 45 })]);
+    expect(latest.nodes.some((node) => node.type === "keypad_gate")).toBe(false);
   });
 
   it("keeps the Workspace Active when restoring the detached number fails", async () => {

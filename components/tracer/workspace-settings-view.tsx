@@ -46,6 +46,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -89,7 +90,7 @@ export default function WorkspaceSettingsView({
   async function saveGeneral() {
     setBusy(true);
     setError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, reportingTimezone: timezone }),
@@ -123,7 +124,7 @@ export default function WorkspaceSettingsView({
   async function replaceNumber() {
     setBusy(true);
     setReplaceError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/replace-number`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/replace-number`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ twilioNumberId: replaceNumberId }),
@@ -146,7 +147,7 @@ export default function WorkspaceSettingsView({
   async function archive() {
     setBusy(true);
     setDangerError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/archive`, { method: "POST" }).catch(() => null);
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/archive`, { method: "POST" }).catch(() => null);
     if (!response?.ok) {
       setDangerError(
         response?.status === 502
@@ -165,7 +166,7 @@ export default function WorkspaceSettingsView({
   async function saveRouting() {
     setBusy(true);
     setRoutingError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/routing`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/routing`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -194,7 +195,7 @@ export default function WorkspaceSettingsView({
   async function detachNumber() {
     setBusy(true);
     setDetachError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/detach-number`, { method: "POST" }).catch(() => null);
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/detach-number`, { method: "POST" }).catch(() => null);
     if (!response?.ok) {
       setDetachError(
         response?.status === 502
@@ -213,7 +214,7 @@ export default function WorkspaceSettingsView({
   async function restore() {
     setBusy(true);
     setDangerError("");
-    const response = await fetch(`/api/workspaces/${workspace.id}/restore`, { method: "POST" }).catch(() => null);
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/restore`, { method: "POST" }).catch(() => null);
     if (!response?.ok) {
       setDangerError("Workspace could not be restored.");
     } else {

@@ -230,6 +230,32 @@ describe("WorkspacesView", () => {
     expect(await screen.findByText("+14155550100")).toBeVisible();
   });
 
+  it("keeps a resumed Workspace's published spam gate and whisper managed in the Call Flow", async () => {
+    const detached = { ...workspace, destinationNumber: "+17604503906", spamGateEnabled: true, publishedFlowVersion: { version: 2, publishedAt: "2026-01-02T00:00:00.000Z" } };
+    useSearchParamsMock.mockReturnValue(new URLSearchParams(`resume=${detached.id}`));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: RequestInfo | URL) => {
+        if (String(request).endsWith("/api/workspaces/numbers"))
+          return new Response(
+            JSON.stringify({ numbers: [{ id: "number-1", twilioSid: "PN1", phoneNumber: "+14155550100", friendlyName: "Support", voiceUrl: null, assignedWorkspace: null }] }),
+            { status: 200 },
+          );
+        return new Response(JSON.stringify({ ...result, workspaces: [detached] }), { status: 200 });
+      }),
+    );
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [detached] }} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("radio", { name: "+14155550100" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const destination = await screen.findByLabelText("Destination Number");
+    fireEvent.change(destination, { target: { value: "+17407511192" } });
+    expect(destination).toHaveValue("+17407511192");
+    expect(screen.getByRole("switch", { name: "Spam gate enabled" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("switch", { name: "Whisper enabled" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Spam gate and whisper are managed in the published Call Flow.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", `/workspaces/${detached.id}/flow`);
+  });
+
   it("posts Basics when creating a Workspace and renders name conflicts", async () => {
     const fetch = vi
       .fn()

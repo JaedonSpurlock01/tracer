@@ -47,6 +47,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { fromReactFlow, toReactFlow } from "@/components/tracer/flow/graph-adapter";
 import FlowNodeView from "@/components/tracer/flow/flow-nodes";
 import FlowInspector from "@/components/tracer/flow/flow-inspector";
+import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { validateCallFlow, type CallFlowGraph, type FlowNode, type FlowNodeType, type ValidationIssue } from "@/data/call-flow";
 import type { FlowState } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -186,7 +187,7 @@ function EditorBody({ workspace, initialFlow }: Props) {
   }
   async function beginEditing() {
     if (!graph) return;
-    const response = await fetch(`/api/workspaces/${workspace.id}/flow`, {
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ graph }),
@@ -198,7 +199,7 @@ function EditorBody({ workspace, initialFlow }: Props) {
     setReadOnlyVersion(null);
   }
   async function publish() {
-    const response = await fetch(`/api/workspaces/${workspace.id}/flow/publish`, { method: "POST" });
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow/publish`, { method: "POST" });
     if (!response.ok) {
       if (response.status === 422) {
         const body = (await response.json()) as { issues?: ValidationIssue[] };
@@ -220,7 +221,7 @@ function EditorBody({ workspace, initialFlow }: Props) {
     setReadOnlyVersion(body.workspace.publishedFlowVersion?.version ?? null);
   }
   async function discard() {
-    await fetch(`/api/workspaces/${workspace.id}/flow`, { method: "DELETE" });
+    await mutationFetch(`/api/workspaces/${workspace.id}/flow`, { method: "DELETE" });
     setEditing(false);
     setDiscardDialog(false);
     const publishedGraph = initialFlow.published?.graph ?? null;
@@ -347,6 +348,7 @@ function EditorBody({ workspace, initialFlow }: Props) {
           nodes={nodes.map((candidate) => candidate.data)}
           issues={selectedIssues}
           editing={editing}
+          timeZone={workspace.reportingTimezone}
           onChange={(nextNode) =>
             setNodes((current) => current.map((candidate) => (candidate.id === nextNode.id ? { ...candidate, data: nextNode } : candidate)))
           }

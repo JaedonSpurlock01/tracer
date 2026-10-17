@@ -5,10 +5,16 @@
  *
  * @description
  *  Provides type-specific editing controls, inline node issues, and keyboard
- *  branch rewiring for the selected editor node.
+ *  branch rewiring for the selected editor node. Business Hours times are
+ *  chosen in 15-minute steps in the Workspace timezone, and text-to-speech
+ *  prompts show character guidance and a browser Preview.
  *
  * @remarks
- *  Native selects keep keyboard editing reliable in the dense builder surface.
+ *  Native selects keep keyboard editing reliable in the dense builder surface
+ *  and, unlike a time input, can offer 24:00 as the end of an overnight
+ *  segment. Preview uses the browser's speech synthesis because Twilio's
+ *  voices cannot be heard without placing a call, so it only approximates
+ *  the selected voice.
  *
  * @see
  *  components/tracer/workspace-flow-editor.tsx
@@ -24,11 +30,13 @@ import { Frame, FramePanel } from "@/components/reui/frame";
 import {
   nodeHandles,
   outcomeKinds,
+  promptMaxLength,
   recordingDisclosureText,
   ttsVoices,
   voicemailLimits,
   type EdgeHandle,
   type FlowNode,
+  type TtsVoice,
   type ValidationIssue,
 } from "@/data/call-flow";
 
@@ -37,12 +45,21 @@ interface Props {
   nodes: FlowNode[];
   issues: ValidationIssue[];
   editing: boolean;
+  timeZone: string;
   onChange: (node: FlowNode) => void;
   onConnectHandle: (handle: EdgeHandle, targetId: string | null) => void;
   onDelete: () => void;
 }
 
 const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+const quarterHours = Array.from({ length: 97 }, (_, index) => `${String(Math.floor(index / 4)).padStart(2, "0")}:${String((index % 4) * 15).padStart(2, "0")}`);
+const startTimes = quarterHours.slice(0, -1);
+const endTimes = quarterHours.slice(1);
+
+function timeOptions(times: string[], current: string): Array<{ value: string; label: string }> {
+  return (times.includes(current) ? times : [...times, current].sort()).map((time) => ({ value: time, label: time }));
+}
 
 function InspectorSelect({
   label,
@@ -74,7 +91,61 @@ function InspectorSelect({
   );
 }
 
-export default function FlowInspector({ node, nodes, issues, editing, onChange, onConnectHandle, onDelete }: Props) {
+function previewPrompt(text: string): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  window.speechSynthesis.speak(utterance);
+}
+
+function PromptField({
+  label,
+  text,
+  voice,
+  editing,
+  editableText = true,
+  onTextChange,
+  onVoiceChange,
+}: {
+  label: string;
+  text: string;
+  voice: TtsVoice;
+  editing: boolean;
+  editableText?: boolean;
+  onTextChange?: (text: string) => void;
+  onVoiceChange: (voice: TtsVoice) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      {editableText ? (
+        <>
+          <Textarea aria-label={label} value={text} maxLength={promptMaxLength} disabled={!editing} onChange={(event) => onTextChange?.(event.target.value)} />
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {text.trim().length} / {promptMaxLength} characters
+          </p>
+        </>
+      ) : (
+        <p className="rounded border p-2 text-sm">{text}</p>
+      )}
+      <InspectorSelect
+        label="Voice"
+        value={voice}
+        disabled={!editing}
+        options={ttsVoices.map((option) => ({ value: option, label: option }))}
+        onChange={(value) => onVoiceChange(value as TtsVoice)}
+      />
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={!text.trim()} onClick={() => previewPrompt(text)}>
+          Preview
+        </Button>
+        <p className="text-xs text-muted-foreground">Preview uses your browser&apos;s voice, which only approximates {voice}.</p>
+      </div>
+    </div>
+  );
+}
+
+export default function FlowInspector({ node, nodes, issues, editing, timeZone, onChange, onConnectHandle, onDelete }: Props) {
   if (!node)
     return (
       <Frame>
@@ -84,7 +155,6 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
       </Frame>
     );
   const patch = (value: Partial<FlowNode>) => onChange({ ...node, ...value } as FlowNode);
-  const voiceOptions = ttsVoices.map((voice) => ({ value: voice, label: voice }));
   return (
     <Frame>
       <FramePanel className="grid gap-4">
@@ -93,30 +163,11 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
           {node.type.replaceAll("_", " ")} <span className="sr-only">{node.type}</span>
         </p>
         {node.type === "recording_disclosure" ? (
-          <>
-            <InspectorSelect
-              label="Voice"
-              value={node.voice}
-              options={voiceOptions}
-              onChange={(value) => patch({ voice: value as typeof node.voice })}
-            />
-            <p className="rounded border p-2 text-sm">{recordingDisclosureText}</p>
-          </>
+          <PromptField label="Disclosure" text={recordingDisclosureText} voice={node.voice} editing={editing} editableText={false} onVoiceChange={(voice) => patch({ voice })} />
         ) : null}
         {node.type === "keypad_gate" ? (
           <>
-            <Textarea
-              aria-label="Prompt"
-              value={node.prompt}
-              disabled={!editing}
-              onChange={(event) => patch({ prompt: event.target.value })}
-            />
-            <InspectorSelect
-              label="Voice"
-              value={node.voice}
-              options={voiceOptions}
-              onChange={(value) => patch({ voice: value as typeof node.voice })}
-            />
+            <PromptField label="Prompt" text={node.prompt} voice={node.voice} editing={editing} onTextChange={(prompt) => patch({ prompt })} onVoiceChange={(voice) => patch({ voice })} />
             <InspectorSelect
               label="Digit"
               value={node.digit}
@@ -147,25 +198,11 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
           </>
         ) : null}
         {node.type === "whisper" ? (
-          <>
-            <Textarea aria-label="Message" value={node.message} onChange={(event) => patch({ message: event.target.value })} />
-            <InspectorSelect
-              label="Voice"
-              value={node.voice}
-              options={voiceOptions}
-              onChange={(value) => patch({ voice: value as typeof node.voice })}
-            />
-          </>
+          <PromptField label="Message" text={node.message} voice={node.voice} editing={editing} onTextChange={(message) => patch({ message })} onVoiceChange={(voice) => patch({ voice })} />
         ) : null}
         {node.type === "voicemail" ? (
           <>
-            <Textarea aria-label="Greeting" value={node.greeting} onChange={(event) => patch({ greeting: event.target.value })} />
-            <InspectorSelect
-              label="Voice"
-              value={node.voice}
-              options={voiceOptions}
-              onChange={(value) => patch({ voice: value as typeof node.voice })}
-            />
+            <PromptField label="Greeting" text={node.greeting} voice={node.voice} editing={editing} onTextChange={(greeting) => patch({ greeting })} onVoiceChange={(voice) => patch({ voice })} />
             <p className="text-xs text-muted-foreground">
               Maximum {voicemailLimits.maxSeconds}s, silence {voicemailLimits.silenceTimeoutSeconds}s, finish with{" "}
               {voicemailLimits.finishOnKey}
@@ -174,11 +211,14 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
         ) : null}
         {node.type === "business_hours" ? (
           <div className="grid gap-2">
+            <p className="text-xs text-muted-foreground">
+              Times use the {timeZone} timezone. Enter overnight hours as one window per day, ending at 24:00.
+            </p>
             <strong>Weekly windows</strong>
             {node.weeklyWindows.map((window, index) => (
               <div className="grid gap-1" key={`${window.day}-${index}`}>
                 <InspectorSelect
-                  label="Day"
+                  label={`Window ${index + 1} day`}
                   value={String(window.day)}
                   options={days.map((day, dayIndex) => ({ value: String(dayIndex), label: day }))}
                   onChange={(value) => {
@@ -187,21 +227,23 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
                     patch({ weeklyWindows });
                   }}
                 />
-                <Input
-                  type="time"
+                <InspectorSelect
+                  label={`Window ${index + 1} start`}
                   value={window.start}
-                  onChange={(event) => {
+                  options={timeOptions(startTimes, window.start)}
+                  onChange={(start) => {
                     const weeklyWindows = [...node.weeklyWindows];
-                    weeklyWindows[index] = { ...window, start: event.target.value };
+                    weeklyWindows[index] = { ...window, start };
                     patch({ weeklyWindows });
                   }}
                 />
-                <Input
-                  type="time"
+                <InspectorSelect
+                  label={`Window ${index + 1} end`}
                   value={window.end}
-                  onChange={(event) => {
+                  options={timeOptions(endTimes, window.end)}
+                  onChange={(end) => {
                     const weeklyWindows = [...node.weeklyWindows];
-                    weeklyWindows[index] = { ...window, end: event.target.value };
+                    weeklyWindows[index] = { ...window, end };
                     patch({ weeklyWindows });
                   }}
                 />
@@ -225,6 +267,7 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
             {node.dateOverrides.map((override, index) => (
               <div className="grid gap-1" key={`${override.date}-${index}`}>
                 <Input
+                  aria-label={`Override ${index + 1} date`}
                   type="date"
                   value={override.date}
                   onChange={(event) => {
@@ -239,30 +282,30 @@ export default function FlowInspector({ node, nodes, issues, editing, onChange, 
                     checked={override.open}
                     onCheckedChange={(open) => {
                       const dateOverrides = [...node.dateOverrides];
-                      dateOverrides[index] = { ...override, open };
+                      dateOverrides[index] = open ? { ...override, open, start: override.start ?? "09:00", end: override.end ?? "17:00" } : { date: override.date, open };
                       patch({ dateOverrides });
                     }}
                   />
                 </label>
                 {override.open ? (
                   <>
-                    <Input
-                      aria-label="Override start"
-                      type="time"
+                    <InspectorSelect
+                      label={`Override ${index + 1} start`}
                       value={override.start ?? "09:00"}
-                      onChange={(event) => {
+                      options={timeOptions(startTimes, override.start ?? "09:00")}
+                      onChange={(start) => {
                         const dateOverrides = [...node.dateOverrides];
-                        dateOverrides[index] = { ...override, start: event.target.value };
+                        dateOverrides[index] = { ...override, start };
                         patch({ dateOverrides });
                       }}
                     />
-                    <Input
-                      aria-label="Override end"
-                      type="time"
+                    <InspectorSelect
+                      label={`Override ${index + 1} end`}
                       value={override.end ?? "17:00"}
-                      onChange={(event) => {
+                      options={timeOptions(endTimes, override.end ?? "17:00")}
+                      onChange={(end) => {
                         const dateOverrides = [...node.dateOverrides];
-                        dateOverrides[index] = { ...override, end: event.target.value };
+                        dateOverrides[index] = { ...override, end };
                         patch({ dateOverrides });
                       }}
                     />

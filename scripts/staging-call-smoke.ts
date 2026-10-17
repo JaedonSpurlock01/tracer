@@ -5,10 +5,11 @@
  *
  * @description
  *  Prints the newest Calls placed to a Tracking Number with their state,
- *  Call Outcome, and provider events, and fails unless the newest Call is
- *  Completed. With --replay it resends that Call's accepted Forward Call and
- *  status callbacks to the Staging Worker as freshly signed Twilio requests
- *  and fails unless the Call is unchanged.
+ *  Call Outcome, voicemail capture length, and provider events, and fails
+ *  unless the newest Call is Completed. With --replay it resends that Call's
+ *  accepted Keypad Gate, Forward Call, voicemail recording, and status
+ *  callbacks to the Staging Worker as freshly signed Twilio requests and
+ *  fails unless the Call is unchanged.
  *
  * @remarks
  *  Usage: pnpm smoke:staging-call --tracking-number +14155550100 [--limit 5] [--replay]
@@ -52,7 +53,7 @@ try {
   const calls = await reportTrackingNumberCalls(pool, trackingNumber, Number(values.limit));
   for (const call of calls) {
     console.log(
-      `call=${call.twilioCallSid} state=${call.state} outcome=${call.outcome ?? "-"} reason=${call.outcomeReason ?? "-"} forward=${call.forwardStatus ?? "-"} duration=${call.durationSeconds ?? "-"} started=${call.startedAt}`,
+      `call=${call.twilioCallSid} state=${call.state} outcome=${call.outcome ?? "-"} reason=${call.outcomeReason ?? "-"} forward=${call.forwardStatus ?? "-"} duration=${call.durationSeconds ?? "-"} voicemail=${call.voicemailDurationSeconds ?? "-"} started=${call.startedAt}`,
     );
     for (const event of call.events) console.log(`  event=${event.kind} status=${event.status ?? "-"} disposition=${event.disposition} at=${event.receivedAt}`);
   }

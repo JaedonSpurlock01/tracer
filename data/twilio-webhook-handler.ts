@@ -6,9 +6,10 @@
  * @description
  *  Resolves the Organization from the Number Assignment in the webhook URL,
  *  validates the X-Twilio-Signature with that Organization's Auth Token, and
- *  hands accepted voice, Forward Call, and status callbacks to the Call
- *  lifecycle. Voice and Forward Call action requests receive TwiML; status
- *  callbacks receive an empty 204.
+ *  hands accepted voice, Keypad Gate, Whisper, Forward Call, voicemail, and
+ *  status callbacks to the Call lifecycle. Voice, gather, whisper, Forward
+ *  Call, and voicemail action requests receive TwiML; status and recording
+ *  status callbacks receive an empty 204.
  *
  * @remarks
  *  Twilio signs the exact URL Tracer configured, including its query string,
@@ -30,6 +31,7 @@ import type { Pool } from "pg";
 import { decryptSecret } from "@/data/credential-encryption";
 import { createInboundCalls } from "@/data/inbound-calls";
 import { isValidTwilioSignature } from "@/data/twilio-signature";
+import type { VoiceUrls } from "@/data/voice-response";
 
 export interface TwilioWebhookHandlerOptions {
   pool: Pool;
@@ -37,7 +39,7 @@ export interface TwilioWebhookHandlerOptions {
   baseURL: string;
 }
 
-const webhookRoute = /^\/api\/twilio\/(voice|forward|forward-status|status)\/([^/]+)$/;
+const webhookRoute = /^\/api\/twilio\/(voice|gather|whisper|forward|forward-status|voicemail|voicemail-status|status)\/([^/]+)$/;
 
 function twiml(document: string): Response {
   return new Response(document, {
@@ -86,19 +88,34 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
       return forbidden();
     }
     const calls = createInboundCalls({ pool: options.pool });
-    const forwardNodeId = url.searchParams.get("node") ?? "";
-    if (kind === "voice" || kind === "forward") {
+    const nodeId = url.searchParams.get("node") ?? "";
+    const urls: VoiceUrls = {
+      forwardAction: (node) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(node)}`,
+      forwardStatus: (node) => `${baseURL}/api/twilio/forward-status/${assignmentId}?node=${encodeURIComponent(node)}`,
+      whisper: (node) => `${baseURL}/api/twilio/whisper/${assignmentId}?node=${encodeURIComponent(node)}`,
+      voicemailAction: (node) => `${baseURL}/api/twilio/voicemail/${assignmentId}?node=${encodeURIComponent(node)}`,
+      voicemailStatus: (node) => `${baseURL}/api/twilio/voicemail-status/${assignmentId}?node=${encodeURIComponent(node)}`,
+      gatherAction: (node, attempt) => `${baseURL}/api/twilio/gather/${assignmentId}?node=${encodeURIComponent(node)}&attempt=${attempt}`,
+    };
+    if (kind === "whisper") {
+      const result = await calls.receiveWhisper(assignmentId, nodeId, params);
+      return result.kind === "twiml" ? twiml(result.twiml) : forbidden();
+    }
+    if (kind === "voice" || kind === "gather" || kind === "forward" || kind === "voicemail") {
       const result = kind === "voice"
-        ? await calls.receiveVoiceWebhook(assignmentId, params, {
-            forwardAction: (nodeId) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
-            forwardStatus: (nodeId) => `${baseURL}/api/twilio/forward-status/${assignmentId}?node=${encodeURIComponent(nodeId)}`,
-          })
-        : await calls.receiveForwardAction(assignmentId, forwardNodeId, params);
+        ? await calls.receiveVoiceWebhook(assignmentId, params, urls)
+        : kind === "gather"
+          ? await calls.receiveGatherAction(assignmentId, nodeId, Number.parseInt(url.searchParams.get("attempt") ?? "", 10) || 1, params, urls)
+          : kind === "forward"
+            ? await calls.receiveForwardAction(assignmentId, nodeId, params, urls)
+            : await calls.receiveVoicemailAction(assignmentId, nodeId, params);
       return result.kind === "twiml" ? twiml(result.twiml) : forbidden();
     }
     const result = kind === "forward-status"
-      ? await calls.receiveForwardStatus(assignmentId, forwardNodeId, params)
-      : await calls.receiveCallStatus(assignmentId, params);
+      ? await calls.receiveForwardStatus(assignmentId, nodeId, params, urls)
+      : kind === "voicemail-status"
+        ? await calls.receiveVoicemailStatus(assignmentId, nodeId, params)
+        : await calls.receiveCallStatus(assignmentId, params);
     return result.kind === "recorded" ? new Response(null, { status: 204 }) : forbidden();
   };
 }
