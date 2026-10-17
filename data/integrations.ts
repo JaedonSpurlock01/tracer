@@ -4,8 +4,9 @@
  * @brief  Provides Organization-scoped provider integration operations.
  *
  * @description
- *  Stores encrypted Twilio credentials, verifies provider access, and syncs
- *  incoming number inventory while isolating every query by Organization.
+ *  Stores encrypted Twilio credentials, verifies provider access, syncs
+ *  incoming number inventory, and reads Recording transfer health while
+ *  isolating every query by Organization.
  *
  * @remarks
  *  PostgreSQL advisory locks serialize credential and inventory mutations.
@@ -23,6 +24,7 @@ import type { Pool, PoolClient } from "pg";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
+import type { RecordingTransferHealth } from "@/data/provider-health";
 import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 
 export interface TwilioConnectionRecord {
@@ -99,6 +101,7 @@ export interface Integrations {
   disconnectTwilio(): Promise<void>;
   syncTwilioNumbers(): Promise<{ numbers: TwilioNumberRecord[]; syncedAt: string; skipped: number }>;
   listTwilioNumbers(): Promise<TwilioNumberRecord[]>;
+  getRecordingTransferHealth(): Promise<RecordingTransferHealth>;
 }
 
 type ConnectionRow = {
@@ -480,6 +483,24 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
         [options.organizationId],
       );
       return result.rows.map(toNumberRecord);
+    },
+
+    async getRecordingTransferHealth() {
+      const stored = await options.pool.query<{ last_stored_at: Date | null }>(
+        "select max(stored_at) as last_stored_at from recording where organization_id = $1",
+        [options.organizationId],
+      );
+      const failures = await options.pool.query<{ failure_stage: string; failure_reason: string; updated_at: Date }>(
+        `select failure_stage, failure_reason, updated_at from recording
+          where organization_id = $1 and failure_stage is not null
+          order by updated_at desc, id
+          limit 5`,
+        [options.organizationId],
+      );
+      return {
+        lastStoredAt: stored.rows[0].last_stored_at?.toISOString() ?? null,
+        recentFailures: failures.rows.map((row) => ({ stage: row.failure_stage, reason: row.failure_reason, at: row.updated_at.toISOString() })),
+      };
     },
   };
 }

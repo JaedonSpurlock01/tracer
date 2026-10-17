@@ -8,7 +8,8 @@
  *  latest published Flow Version when the Call starts, records every accepted
  *  provider event exactly once, and derives one canonical Call Outcome from
  *  the Keypad Gate, Forward Call, and voicemail recording results and the end
- *  of the Incoming Call.
+ *  of the Incoming Call. A completed connected or voicemail recording creates
+ *  one Recording and then requests its processing.
  *
  * @remarks
  *  Idempotency comes from natural keys: the Call is unique per Organization
@@ -29,7 +30,10 @@
  *  allowlist of Twilio fields; caller numbers live on the Call. A voice
  *  webhook for an ended Number Assignment or a non-Active Workspace is
  *  rejected with TwiML Reject, creates no Call, and is kept as a rejected
- *  provider event for diagnosis.
+ *  provider event for diagnosis. A Recording is unique per Organization and
+ *  Twilio RecordingSid, and its processing is requested only after the
+ *  transaction that created it commits; a failed request leaves the
+ *  Recording Pending for targeted recovery instead of failing the callback.
  *
  * @see
  *  data/twilio-webhook-handler.ts
@@ -43,6 +47,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
 import { parseCallFlowGraph, type CallFlowGraph } from "@/data/call-flow";
+import { completedRecording, type CompletedRecording, type RecordingProcessing } from "@/data/recording";
 import {
   correctableOutcomeReasons,
   renderCallStart,
@@ -67,12 +72,17 @@ export interface InboundCalls {
   receiveForwardStatus(assignmentId: string, forwardNodeId: string, params: Readonly<Record<string, string>>, urls: VoiceUrls): Promise<CallbackResult>;
   receiveVoicemailAction(assignmentId: string, voicemailNodeId: string, params: Readonly<Record<string, string>>): Promise<TwimlResult>;
   receiveVoicemailStatus(assignmentId: string, voicemailNodeId: string, params: Readonly<Record<string, string>>): Promise<CallbackResult>;
+  receiveRecordingStatus(assignmentId: string, forwardNodeId: string, params: Readonly<Record<string, string>>): Promise<CallbackResult>;
   receiveCallStatus(assignmentId: string, params: Readonly<Record<string, string>>): Promise<CallbackResult>;
 }
 
-type EventKind = "voice" | "gather" | "whisper" | "forward" | "forward_status" | "voicemail" | "voicemail_status" | "status";
+type EventKind = "voice" | "gather" | "whisper" | "forward" | "forward_status" | "voicemail" | "voicemail_status" | "recording_status" | "status";
 
-type AssignmentRow = { organization_id: string; workspace_id: string; phone_number: string; reporting_timezone: string; active: boolean };
+type StoredRecording = { id: string; organizationId: string };
+
+type Received = { result: CallbackResult; recording: StoredRecording | null };
+
+type AssignmentRow = { organization_id: string; workspace_id: string; phone_number: string; reporting_timezone: string; recording_enabled: boolean; active: boolean };
 
 type CallRow = {
   id: string;
@@ -135,7 +145,7 @@ async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) =>
 
 async function findAssignment(client: PoolClient, assignmentId: string): Promise<AssignmentRow | undefined> {
   const result = await client.query<AssignmentRow>(
-    `select a.organization_id, a.workspace_id, a.phone_number, w.reporting_timezone, a.ended_at is null and w.state = 'Active' as active
+    `select a.organization_id, a.workspace_id, a.phone_number, w.reporting_timezone, w.recording_enabled, a.ended_at is null and w.state = 'Active' as active
        from number_assignment a
        join workspace w on w.id = a.workspace_id
       where a.id = $1`,
@@ -172,6 +182,29 @@ async function recordEvent(
   return result.rowCount === 1;
 }
 
+async function insertRecording(client: PoolClient, callId: string, recording: CompletedRecording | null): Promise<StoredRecording | null> {
+  if (!recording) return null;
+  const result = await client.query<{ id: string; organization_id: string }>(
+    `insert into recording
+       (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, created_at, updated_at)
+     select $1, c.organization_id, c.workspace_id, c.id, $3, $4, $5, $6, now(), now()
+       from call c
+      where c.id = $2
+     on conflict (organization_id, twilio_recording_sid) do nothing
+     returning id, organization_id`,
+    [randomUUID(), callId, recording.twilioRecordingSid, recording.source, recording.channels, recording.durationSeconds],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, organizationId: row.organization_id } : null;
+}
+
+async function requestProcessing(processing: RecordingProcessing, received: Received): Promise<CallbackResult> {
+  if (received.recording) {
+    await processing.request({ ...received.recording, idempotencyKey: `recording-processing:${received.recording.id}` }).catch(() => undefined);
+  }
+  return received.result;
+}
+
 async function finalize(client: PoolClient, callId: string): Promise<void> {
   await client.query(
     "update call set state = 'Completed', updated_at = now() where id = $1 and state <> 'Completed' and ended_at is not null and outcome is not null",
@@ -180,7 +213,7 @@ async function finalize(client: PoolClient, callId: string): Promise<void> {
 }
 
 function voiceContext(assignment: AssignmentRow, call: CallRow, urls: VoiceUrls): VoiceContext {
-  return { urls, at: call.started_at, timeZone: assignment.reporting_timezone };
+  return { urls, at: call.started_at, timeZone: assignment.reporting_timezone, recordingEnabled: assignment.recording_enabled };
 }
 
 async function applyStep(client: PoolClient, callId: string, step: VoiceStep): Promise<void> {
@@ -199,7 +232,9 @@ async function applyStep(client: PoolClient, callId: string, step: VoiceStep): P
 
 const unreadableFlow: VoiceStep = { twiml: hangup, forwardNodeId: null, outcome: { outcome: "Failed", reason: "flow_unreadable" }, pending: null };
 
-export function createInboundCalls(options: { pool: Pool }): InboundCalls {
+const recorded: CallbackResult = { kind: "recorded" };
+
+export function createInboundCalls(options: { pool: Pool; recordingProcessing: RecordingProcessing }): InboundCalls {
   return {
     async receiveVoiceWebhook(assignmentId, params, urls) {
       return withTransaction(options.pool, async (client) => {
@@ -316,17 +351,17 @@ export function createInboundCalls(options: { pool: Pool }): InboundCalls {
     },
 
     async receiveVoicemailStatus(assignmentId, voicemailNodeId, params) {
-      return withTransaction(options.pool, async (client) => {
+      return requestProcessing(options.recordingProcessing, await withTransaction(options.pool, async (client): Promise<Received> => {
         const assignment = await findAssignment(client, assignmentId);
-        if (!assignment) return { kind: "unknown_assignment" };
+        if (!assignment) return { result: { kind: "unknown_assignment" }, recording: null };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
         const status = params.RecordingStatus ?? "";
         const key = `${params.CallSid}:voicemail_status:${voicemailNodeId}:${status}`;
         if (!call) {
           await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: null, key, kind: "voicemail_status", disposition: "rejected", detail: "unknown_call", params });
-          return { kind: "recorded" };
+          return { result: recorded, recording: null };
         }
-        if (!(await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: call.id, key, kind: "voicemail_status", params }))) return { kind: "recorded" };
+        if (!(await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: call.id, key, kind: "voicemail_status", params }))) return { result: recorded, recording: null };
         const duration = Number.parseInt(params.RecordingDuration ?? "", 10);
         const capture = voicemailCaptureOutcome(status, Number.isFinite(duration) ? duration : 0);
         await client.query(
@@ -339,9 +374,25 @@ export function createInboundCalls(options: { pool: Pool }): InboundCalls {
             where id = $1`,
           [call.id, status === "completed" ? params.RecordingSid || null : null, status === "completed" && Number.isFinite(duration) ? duration : null, capture?.outcome ?? null, capture?.reason ?? null, correctableReasons],
         );
+        const recording = await insertRecording(client, call.id, capture?.outcome === "Voicemail" ? completedRecording("voicemail", params) : null);
         await finalize(client, call.id);
-        return { kind: "recorded" };
-      });
+        return { result: recorded, recording };
+      }));
+    },
+
+    async receiveRecordingStatus(assignmentId, forwardNodeId, params) {
+      return requestProcessing(options.recordingProcessing, await withTransaction(options.pool, async (client): Promise<Received> => {
+        const assignment = await findAssignment(client, assignmentId);
+        if (!assignment) return { result: { kind: "unknown_assignment" }, recording: null };
+        const call = await findCall(client, assignment.organization_id, params.CallSid);
+        const key = `${params.CallSid}:recording_status:${forwardNodeId}:${params.RecordingStatus ?? ""}`;
+        if (!call) {
+          await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: null, key, kind: "recording_status", disposition: "rejected", detail: "unknown_call", params });
+          return { result: recorded, recording: null };
+        }
+        if (!(await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: call.id, key, kind: "recording_status", params }))) return { result: recorded, recording: null };
+        return { result: recorded, recording: await insertRecording(client, call.id, completedRecording("connected", params)) };
+      }));
     },
 
     async receiveCallStatus(assignmentId, params) {

@@ -46,7 +46,7 @@ it("migrates a clean database to the latest authentication and Organization sche
     `select table_name
        from information_schema.tables
       where table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event', 'recording')
       order by table_name`,
   );
   expect(result.rows.map(({ table_name }) => table_name)).toEqual([
@@ -60,6 +60,7 @@ it("migrates a clean database to the latest authentication and Organization sche
     "number_assignment",
     "organization",
     "provider_event",
+    "recording",
     "session",
     "twilio_connection",
     "twilio_number",
@@ -98,6 +99,22 @@ it("migrates a clean database to the latest authentication and Organization sche
       where constraint_name = 'workspace_state_check'`,
   );
   expect(workspaceStateConstraint.rows).toEqual([{ constraint_name: "workspace_state_check" }]);
+  const recordingConstraints = await pool.query<{ constraint_name: string }>(
+    `select constraint_name
+       from information_schema.check_constraints
+      where constraint_name like 'recording_%'
+      order by constraint_name`,
+  );
+  expect(recordingConstraints.rows.map(({ constraint_name }) => constraint_name)).toEqual([
+    "recording_channels_check",
+    "recording_cleanup_requires_stored_check",
+    "recording_source_check",
+    "recording_stored_metadata_check",
+    "recording_transfer_state_check",
+    "recording_twilio_cleanup_state_check",
+  ]);
+  const recoveryIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_unfinished_created_at_idx'");
+  expect(recoveryIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(twilio_cleanup_state <> 'Deleted'::text\)$/) }]);
   const foreignKeys = await pool.query<{ constraint_name: string }>(
     `select constraint_name
        from information_schema.table_constraints
@@ -121,7 +138,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(12);
+  expect(Number(result.rows[0].count)).toBe(14);
 }, 30_000);
 
 it("creates and reads an Organization by its generated ID", async () => {
@@ -155,7 +172,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
        from information_schema.role_table_grants
       where grantee = $1
         and table_schema = 'public'
-        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event')
+        and table_name in ('organization', 'user', 'session', 'account', 'verification', 'member', 'invitation', 'twilio_connection', 'twilio_number', 'workspace', 'number_assignment', 'call_flow_draft', 'flow_version', 'access_grant', 'call', 'provider_event', 'recording')
       order by table_name, privilege_type`,
     [runtimeRole],
   );
@@ -181,6 +198,10 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "provider_event", privilege_type: "INSERT" });
   expect(grants.rows).not.toContainEqual({ table_name: "provider_event", privilege_type: "UPDATE" });
   expect(grants.rows).not.toContainEqual({ table_name: "provider_event", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "recording", privilege_type: "SELECT" });
+  expect(grants.rows).toContainEqual({ table_name: "recording", privilege_type: "INSERT" });
+  expect(grants.rows).toContainEqual({ table_name: "recording", privilege_type: "UPDATE" });
+  expect(grants.rows).not.toContainEqual({ table_name: "recording", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "INSERT" });
   expect(grants.rows).toContainEqual({ table_name: "access_grant", privilege_type: "DELETE" });

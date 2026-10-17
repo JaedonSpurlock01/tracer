@@ -1,0 +1,1 @@
+CREATE INDEX "recording_unfinished_created_at_idx" ON "recording" USING btree ("created_at") WHERE "recording"."twilio_cleanup_state" <> 'Deleted';

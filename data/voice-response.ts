@@ -11,7 +11,8 @@
  *  Blocked, a Whisper spoken only to the answering business leg, Forward
  *  Call, Voicemail capture within its limits, and Hangup at a terminal
  *  Outcome step. Each step reports the Call Outcome that applies if the
- *  caller hangs up during it.
+ *  caller hangs up during it. Forward Call records the answered leg in dual
+ *  channel when the Workspace records connected conversations.
  *
  * @remarks
  *  The forwarded call's own status callback is the reliable Forward Call
@@ -19,7 +20,11 @@
  *  the caller hangs up first. Reaching Voicemail never reports Voicemail by
  *  itself: only a completed recording with captured audio does, so a
  *  Voicemail step reports Missed or Abandoned by its entry path until the
- *  recording callback corrects it.
+ *  recording callback corrects it. A connected conversation is recorded only
+ *  when the pinned Flow Version plays the Recording Disclosure right after
+ *  Incoming Call, the same rule publication enforces, because a Call keeps
+ *  its pinned Flow Version even if recording is enabled after a later
+ *  publication.
  *
  * @see
  *  data/call-flow.ts
@@ -39,12 +44,14 @@ export interface VoiceUrls {
   voicemailAction(nodeId: string): string;
   voicemailStatus(nodeId: string): string;
   gatherAction(nodeId: string, attempt: number): string;
+  recordingStatus(nodeId: string): string;
 }
 
 export interface VoiceContext {
   urls: VoiceUrls;
   at: Date;
   timeZone: string;
+  recordingEnabled: boolean;
 }
 
 export interface StepOutcome {
@@ -100,6 +107,18 @@ function record(node: Extract<FlowNode, { type: "voicemail" }>, context: VoiceCo
   );
 }
 
+function disclosesRecording(graph: CallFlowGraph): boolean {
+  const incoming = graph.nodes.find((node) => node.type === "incoming_call");
+  return incoming !== undefined && nextNode(graph, incoming.id, "next")?.type === "recording_disclosure";
+}
+
+function dialRecording(forwardNodeId: string, context: VoiceContext): string {
+  return (
+    ` record="record-from-answer-dual" recordingStatusCallback="${escapeXml(context.urls.recordingStatus(forwardNodeId))}" ` +
+    'recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed absent"'
+  );
+}
+
 const gateNotCompleted: StepOutcome = { outcome: "Blocked", reason: "gate_not_completed" };
 export const correctableOutcomeReasons = ["ended_before_forward", "voicemail_not_captured"] as const;
 
@@ -132,7 +151,7 @@ function walk(graph: CallFlowGraph, start: FlowNode | undefined, context: VoiceC
         break;
       case "forward_call":
         verbs.push(
-          `<Dial action="${escapeXml(context.urls.forwardAction(node.id))}" method="POST" timeout="${node.timeoutSeconds}">` +
+          `<Dial action="${escapeXml(context.urls.forwardAction(node.id))}" method="POST" timeout="${node.timeoutSeconds}"${context.recordingEnabled && disclosesRecording(graph) ? dialRecording(node.id, context) : ""}>` +
             `<Number ${whisperNodeId ? `url="${escapeXml(context.urls.whisper(whisperNodeId))}" method="POST" ` : ""}statusCallback="${escapeXml(context.urls.forwardStatus(node.id))}" statusCallbackEvent="initiated answered completed" statusCallbackMethod="POST">${escapeXml(node.destinationNumber)}</Number>` +
             "</Dial>",
         );

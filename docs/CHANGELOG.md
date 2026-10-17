@@ -64,6 +64,13 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M11 - Durable Recording Transfer for signed Recording callbacks, idempotent Trigger.dev Recording transfer from Twilio to private R2, verified Twilio cleanup, Recording processing states, and Trigger.dev integration health.
+- Added dual-channel connected-conversation recording to M11 because M10 records voicemail only and M11's outcome requires connected Recordings, and added the Workspace-authorized Recording stream route to M11 so private media has one tested read path before M12 playback.
+- Chose Twilio WAV as the authoritative R2 Recording format and private Staging and Production R2 buckets for M11, because WAV keeps separate Caller and Business channels for waveform lanes and transcription; Preview uses the Staging bucket because it already shares the Staging database.
+- Ran Tracer Staging and Preview Recording processing in the Trigger.dev Dev environment through a locally run `pnpm trigger:dev`, instead of a Trigger.dev Staging environment, because Trigger.dev Staging requires a paid plan; requests carry a 7-day queue lifetime so Recordings wait for the dev server, and Tracer Production keeps the Trigger.dev Production environment for isolation.
+- Limited M11's R2 and Trigger.dev Integrations health to configuration, last successful Recording transfer, and recent transfer failures read from Tracer's own state, deferring live Trigger.dev run status and provider test cycles to avoid another provider contract.
+- Chose a 12-hour Trigger.dev sweep to recover Recordings left Pending or Failed, bounded to Recordings under 7 days old, because recovery is rarely needed and a frequent sweep would keep the Neon compute awake.
+- Added `@trigger.dev/sdk` and the `trigger.dev` CLI at 4.7.2 and `aws4fetch` 1.0.20 for M11, imported only by Trigger.dev tasks; the Worker triggers runs through Trigger.dev's REST API so neither the SDK nor the R2 signing client enters the Worker bundle.
 - Started M10 - Complete First-Release Call Routing for Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration, and the Workspace Overview Flow summary, carrying M9's live Staging call checks.
 - Made voicemail capture independent of the Workspace recording setting, which now governs connected conversations only, because a caller who leaves a message consents by doing so; a Voicemail with no usable capture ends as Missed after a Forward Call Missed branch and Abandoned after Business Hours Closed, and Keypad Gate replays its prompt once before Blocked.
 - Made Resume Setup write a new Destination Number into the published Call Flow's Forward Call step instead of only the Workspace, because activation republished the old Flow and reverted the number after a detach; spam gate and whisper stay managed in the Flow, as in Workspace Settings.
@@ -104,6 +111,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Security
 
+- Gave the Trigger.dev Recording-processing task direct access through a bucket-scoped R2 S3 API token, a Neon runtime-role connection string, and the Twilio credential master key as Trigger.dev environment secrets, because the task runs outside the Worker bindings and later waveform and transcription stages need the same R2 access.
 - Authorized every Client Viewer Workspace read through `data/workspace-authorization.ts` against current Access Grants on each request, so grant removal blocks an existing session's next read, and returned Not Found for ungranted Workspaces so they cannot be discovered (M8).
 - Encrypted the Organization Twilio API key secret with AES-256-GCM under the `TWILIO_CREDENTIAL_MASTER_KEY` deployment secret, verified credentials before storage or rotation, and excluded secret material from every application response; see ADR 0005.
 

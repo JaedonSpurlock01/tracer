@@ -5,7 +5,8 @@
  *
  * @description
  *  Renders server-provided provider health, manages Twilio credentials and
- *  numbers, and exposes safe Hyperdrive and Email Service test actions.
+ *  numbers, exposes safe Hyperdrive and Email Service test actions, and
+ *  lists recent Recording transfer failures for R2 and Trigger.dev.
  *
  * @remarks
  *  Provider actions remain behind the authenticated HTTP boundary. The first
@@ -33,7 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
-import type { ProviderHealth, ProviderState } from "@/data/provider-health";
+import type { ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
 
 type IntegrationResponse = {
   providers: ProviderHealth[];
@@ -96,7 +97,7 @@ function ProviderDetails({ provider }: { provider: ProviderHealth }) {
           <dd>{provider.identifier ?? "Not available"}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Last successful check</dt>
+          <dt className="text-muted-foreground">{provider.recentFailures ? "Last successful Recording transfer" : "Last successful check"}</dt>
           <dd>{formatDate(provider.lastSuccessAt)}</dd>
         </div>
         <div>
@@ -105,8 +106,22 @@ function ProviderDetails({ provider }: { provider: ProviderHealth }) {
         </div>
         {provider.lastFailureDetail ? <div><dt className="text-muted-foreground">Failure detail</dt><dd>{provider.lastFailureDetail}</dd></div> : null}
       </dl>
+      {provider.recentFailures ? <RecordingTransferFailures failures={provider.recentFailures} /> : null}
       {provider.note ? <p className="text-sm text-muted-foreground">{provider.note}</p> : null}
     </>
+  );
+}
+
+function RecordingTransferFailures({ failures }: { failures: RecordingTransferFailure[] }) {
+  if (!failures.length) return <p className="text-sm text-muted-foreground">No Recording transfer failures.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table aria-label="Recent transfer failures" className="w-full text-sm">
+        <caption className="sr-only">Recent transfer failures</caption>
+        <thead><tr className="border-b text-left"><th className="px-2 py-2">Stage</th><th className="px-2 py-2">Reason</th><th className="px-2 py-2">Failed at</th></tr></thead>
+        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b"><td className="px-2 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-2 py-2">{failure.reason}</td><td className="px-2 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
+      </table>
+    </div>
   );
 }
 

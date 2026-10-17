@@ -30,6 +30,8 @@ interface HyperdriveBinding {
 interface EnvironmentBindings {
   hyperdrive?: HyperdriveBinding[];
   send_email?: SendEmailBinding[];
+  r2_buckets?: unknown[];
+  vars?: Record<string, unknown>;
   services?: unknown[];
 }
 
@@ -76,4 +78,13 @@ it("keeps Preview and Staging Hyperdrive bindings isolated from Production", () 
   expect(configuration.send_email).toEqual([{ name: "EMAIL", remote: true }]);
   expect(configuration.previews?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
   expect(configuration.env?.staging?.send_email).toEqual([{ name: "EMAIL", remote: true }]);
+});
+
+it("binds Production to the Production Recording bucket and Staging and Preview to the Staging bucket", () => {
+  expect(configuration.r2_buckets).toEqual([{ binding: "R2", bucket_name: "tracer-recordings-production" }]);
+  expect(configuration.env?.staging?.r2_buckets).toEqual([{ binding: "R2", bucket_name: "tracer-recordings-staging" }]);
+  expect(configuration.previews?.r2_buckets).toEqual([{ binding: "R2", bucket_name: "tracer-recordings-staging" }]);
+  expect(configuration.vars).toEqual({ R2_BUCKET: "tracer-recordings-production" });
+  expect(configuration.env?.staging?.vars).toEqual({ R2_BUCKET: "tracer-recordings-staging" });
+  expect(configuration.previews?.vars).toEqual({ R2_BUCKET: "tracer-recordings-staging" });
 });

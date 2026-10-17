@@ -4,8 +4,9 @@
  * @brief  Verifies the Twilio REST provider contract mapping.
  *
  * @description
- *  Exercises request authentication, pagination, response mapping, and safe
- *  provider errors using fake fetch responses and contract fixtures.
+ *  Exercises request authentication, pagination, response mapping, Recording
+ *  media download and delete, and safe provider errors using fake fetch
+ *  responses and contract fixtures.
  *
  * @remarks
  *  Fixture credentials and identifiers are synthetic test data.
@@ -16,14 +17,19 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { readFileSync } from "node:fs";
+
 import account from "./fixtures/twilio/account.json";
 import authenticationError from "./fixtures/twilio/authentication-error.json";
 import incomingPhoneNumber from "./fixtures/twilio/incoming-phone-number.json";
 import pageOne from "./fixtures/twilio/incoming-phone-numbers-page-1.json";
 import pageTwo from "./fixtures/twilio/incoming-phone-numbers-page-2.json";
+import recordingNotFound from "./fixtures/twilio/recording-not-found.json";
 import { describe, expect, it, vi } from "vitest";
 
-import { createTwilioRestClient, TwilioClientError } from "@/data/twilio-client";
+import { createTwilioRecordingMedia, createTwilioRestClient, TwilioClientError } from "@/data/twilio-client";
+
+const wav = readFileSync(new URL("./fixtures/twilio/recording.wav", import.meta.url));
 
 const credential = {
   accountSid: account.sid,
@@ -157,5 +163,62 @@ describe("Twilio REST client", () => {
     const client = createTwilioRestClient({ fetch, baseUrl: "https://twilio.test" });
 
     await expect(client.fetchAccount(credential)).rejects.toMatchObject({ code: "unavailable", status: null });
+  });
+});
+
+describe("Twilio Recording media", () => {
+  const recordingSid = "RE00000000000000000000000000000001";
+  const authorization = `Basic ${btoa(`${credential.apiKeySid}:${credential.apiKeySecret}`)}`;
+
+  it("downloads the Recording WAV with the exact media URL and Basic authorization", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(wav, { status: 200, headers: { "content-type": "audio/x-wav" } }));
+    const media = createTwilioRecordingMedia({ fetch, baseUrl: "https://twilio.test" });
+
+    const bytes = await media.downloadRecording(credential, recordingSid);
+
+    expect(Buffer.from(bytes).equals(wav)).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      `https://twilio.test/2010-04-01/Accounts/${credential.accountSid}/Recordings/${recordingSid}.wav`,
+      { headers: { Authorization: authorization } },
+    );
+  });
+
+  it("maps a failed Recording download to a safe error without credential material", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(authenticationError, 401));
+    const media = createTwilioRecordingMedia({ fetch, baseUrl: "https://twilio.test" });
+
+    const error = await media.downloadRecording(credential, recordingSid).catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ code: "authentication_failed", status: 401 });
+    expect((error as Error).message).not.toContain(credential.apiKeySecret);
+    expect((error as Error).message).not.toContain("Basic");
+  });
+
+  it("deletes the Twilio Recording with an exact DELETE request", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const media = createTwilioRecordingMedia({ fetch, baseUrl: "https://twilio.test" });
+
+    await expect(media.deleteRecording(credential, recordingSid)).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(
+      `https://twilio.test/2010-04-01/Accounts/${credential.accountSid}/Recordings/${recordingSid}.json`,
+      { method: "DELETE", headers: { Authorization: authorization } },
+    );
+  });
+
+  it("treats a Recording Twilio no longer has as already deleted", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(recordingNotFound, 404));
+    const media = createTwilioRecordingMedia({ fetch, baseUrl: "https://twilio.test" });
+
+    await expect(media.deleteRecording(credential, recordingSid)).resolves.toBeUndefined();
+  });
+
+  it("rejects other Recording delete failures without credential material", async () => {
+    const fetch = vi.fn().mockResolvedValue(response({ message: "server error" }, 500));
+    const media = createTwilioRecordingMedia({ fetch, baseUrl: "https://twilio.test" });
+
+    const error = await media.deleteRecording(credential, recordingSid).catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ code: "request_failed", status: 500 });
+    expect((error as Error).message).not.toContain(credential.apiKeySecret);
   });
 });

@@ -4,12 +4,15 @@
  * @brief  Describes configured provider health for the Integrations surface.
  *
  * @description
- *  Converts runtime configuration and persisted Twilio state into stable
- *  provider health records without contacting external services.
+ *  Converts runtime configuration, persisted Twilio state, and persisted
+ *  Recording transfer outcomes into stable provider health records without
+ *  contacting external services.
  *
  * @remarks
  *  Deferred provider tests remain explicitly non-testable until their owning
- *  milestones add connection actions.
+ *  milestones add connection actions. R2 and Trigger.dev report Tracer's own
+ *  Recording transfer history instead of calling either provider, and are
+ *  degraded while the newest transfer failure follows the last success.
  *
  * @see
  *  data/integrations.ts
@@ -32,6 +35,18 @@ export interface ProviderHealth {
   lastFailureDetail: string | null;
   testable: boolean;
   note: string | null;
+  recentFailures?: RecordingTransferFailure[];
+}
+
+export interface RecordingTransferFailure {
+  stage: string;
+  reason: string;
+  at: string;
+}
+
+export interface RecordingTransferHealth {
+  lastStoredAt: string | null;
+  recentFailures: RecordingTransferFailure[];
 }
 
 export interface ProviderConfiguration {
@@ -41,12 +56,13 @@ export interface ProviderConfiguration {
   emailFrom: string | null;
   emailAllowlistCount: number;
   r2: boolean;
+  r2Bucket: string | null;
   openai: boolean;
   triggerdev: boolean;
 }
 
 function staticProvider(
-  id: Exclude<ProviderId, "twilio" | "email" | "hyperdrive">,
+  id: "openai",
   name: string,
   configured: boolean,
   identifier: string,
@@ -64,7 +80,34 @@ function staticProvider(
   };
 }
 
-export function describeProviderHealth(configuration: ProviderConfiguration, twilio: TwilioConnectionRecord | null): ProviderHealth[] {
+function recordingTransferProvider(
+  id: "r2" | "triggerdev",
+  name: string,
+  configured: boolean,
+  identifier: string | null,
+  transfers: RecordingTransferHealth,
+): ProviderHealth {
+  const latestFailure = transfers.recentFailures[0];
+  const failedSinceSuccess = Boolean(latestFailure && (!transfers.lastStoredAt || latestFailure.at > transfers.lastStoredAt));
+  return {
+    id,
+    name,
+    state: !configured ? "not_configured" : failedSinceSuccess ? "degraded" : "configured",
+    identifier,
+    lastSuccessAt: transfers.lastStoredAt,
+    lastFailureAt: latestFailure?.at ?? null,
+    lastFailureDetail: latestFailure?.reason ?? null,
+    testable: false,
+    note: "Test Connection arrives with its milestone",
+    recentFailures: transfers.recentFailures,
+  };
+}
+
+export function describeProviderHealth(
+  configuration: ProviderConfiguration,
+  twilio: TwilioConnectionRecord | null,
+  recordingTransfers: RecordingTransferHealth,
+): ProviderHealth[] {
   const twilioHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
         id: "twilio",
@@ -130,8 +173,8 @@ export function describeProviderHealth(configuration: ProviderConfiguration, twi
     twilioHealth,
     hyperdrive,
     email,
-    staticProvider("r2", "Cloudflare R2", configuration.r2, "R2"),
+    recordingTransferProvider("r2", "Cloudflare R2", configuration.r2, configuration.r2Bucket, recordingTransfers),
     staticProvider("openai", "OpenAI", configuration.openai, "OPENAI_API_KEY"),
-    staticProvider("triggerdev", "Trigger.dev", configuration.triggerdev, "TRIGGER_SECRET_KEY"),
+    recordingTransferProvider("triggerdev", "Trigger.dev", configuration.triggerdev, "TRIGGER_SECRET_KEY", recordingTransfers),
   ];
 }

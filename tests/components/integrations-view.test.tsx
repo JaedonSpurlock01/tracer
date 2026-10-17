@@ -236,4 +236,43 @@ describe("IntegrationsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
+
+  it("shows the R2 bucket and the Recording transfer history for R2 and Trigger.dev before any transfer", async () => {
+    const transferProviders = providers.map((provider) => provider.id === "r2"
+      ? { ...provider, state: "configured" as const, identifier: "tracer-recordings-staging", recentFailures: [] }
+      : provider.id === "triggerdev" ? { ...provider, state: "configured" as const, recentFailures: [] } : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: transferProviders })));
+    render(<IntegrationsView initial={initialData({ providers: transferProviders })} />);
+    const r2Region = await screen.findByRole("region", { name: "Cloudflare R2" });
+    expect(within(r2Region).getByText("tracer-recordings-staging")).toBeVisible();
+    for (const region of [r2Region, screen.getByRole("region", { name: "Trigger.dev" })]) {
+      expect(within(region).getByText("Last successful Recording transfer")).toBeVisible();
+      expect(within(region).getByText("No Recording transfer failures.")).toBeVisible();
+      expect(within(region).queryByText("Last successful check")).not.toBeInTheDocument();
+    }
+  });
+
+  it("lists recent Recording transfer failures with their stage, reason, and time on a degraded provider", async () => {
+    const recentFailures = [
+      { stage: "upload", reason: "R2 request failed (HTTP 503)", at: "2026-10-14T05:30:00.000Z" },
+      { stage: "cleanup", reason: "Twilio request failed (HTTP 500)", at: "2026-10-14T04:30:00.000Z" },
+    ];
+    const failingProviders = providers.map((provider) => provider.id === "r2" || provider.id === "triggerdev"
+      ? { ...provider, state: "degraded" as const, lastSuccessAt: "2026-10-14T01:00:00.000Z", lastFailureAt: recentFailures[0].at, lastFailureDetail: recentFailures[0].reason, recentFailures }
+      : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: failingProviders })));
+    render(<IntegrationsView initial={initialData({ providers: failingProviders })} />);
+    const r2Region = await screen.findByRole("region", { name: "Cloudflare R2" });
+    expect(within(r2Region).getByText("Degraded")).toBeVisible();
+    const table = within(r2Region).getByRole("table", { name: "Recent transfer failures" });
+    const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+    const time = (value: string) => new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+    expect(rows).toEqual([
+      ["Upload", "R2 request failed (HTTP 503)", time(recentFailures[0].at)],
+      ["Cleanup", "Twilio request failed (HTTP 500)", time(recentFailures[1].at)],
+    ]);
+    expect(within(r2Region).queryByText("No Recording transfer failures.")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Trigger.dev" })).getByRole("table", { name: "Recent transfer failures" })).toBeVisible();
+    expect(document.body.textContent).not.toContain("organizations/");
+  });
 });
