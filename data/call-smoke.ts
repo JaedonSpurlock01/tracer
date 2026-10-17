@@ -5,16 +5,18 @@
  *
  * @description
  *  Reports the newest Calls placed to a Tracking Number with their canonical
- *  state, Call Outcome, voicemail capture, and provider events, and replays a
- *  Call's accepted Keypad Gate, Forward Call, voicemail recording, and status
- *  callbacks as freshly signed Twilio requests to prove that duplicate
- *  delivery leaves the Call unchanged.
+ *  state, Call Outcome, voicemail capture, provider events, and Recordings,
+ *  and replays a Call's accepted Keypad Gate, Forward Call, voicemail
+ *  recording, connected Recording, and status callbacks as freshly signed
+ *  Twilio requests to prove that duplicate delivery leaves the Call
+ *  unchanged.
  *
  * @remarks
  *  Replay resends only the allowlisted fields Tracer stored for each event,
  *  which is everything the callback handlers read. The node and Keypad Gate
  *  attempt come from the event's idempotency key because Tracer does not
- *  store the request URL.
+ *  store the request URL. Recordings are reported by state only, never by
+ *  object key or Twilio Recording SID.
  *
  * @see
  *  scripts/staging-call-smoke.ts
@@ -34,6 +36,14 @@ export interface SmokeEvent {
   receivedAt: string;
 }
 
+export interface SmokeRecording {
+  source: string;
+  channels: number;
+  transferState: string;
+  twilioCleanupState: string;
+  failureStage: string | null;
+}
+
 export interface SmokeCall {
   id: string;
   twilioCallSid: string;
@@ -46,6 +56,7 @@ export interface SmokeCall {
   startedAt: string;
   endedAt: string | null;
   events: SmokeEvent[];
+  recordings: SmokeRecording[];
 }
 
 type CallRow = {
@@ -71,6 +82,25 @@ type EventRow = {
   received_at: Date;
 };
 
+type RecordingRow = {
+  call_id: string;
+  source: string;
+  channels: number;
+  transfer_state: string;
+  twilio_cleanup_state: string;
+  failure_stage: string | null;
+};
+
+async function callRecordings(pool: Pool, callIds: string[]): Promise<RecordingRow[]> {
+  const result = await pool.query<RecordingRow>(
+    `select call_id, source, channels, transfer_state, twilio_cleanup_state, failure_stage
+       from recording where call_id = any($1::text[])
+      order by created_at, id`,
+    [callIds],
+  );
+  return result.rows;
+}
+
 async function callEvents(pool: Pool, callIds: string[]): Promise<EventRow[]> {
   const result = await pool.query<EventRow>(
     `select call_id, number_assignment_id, idempotency_key, kind, disposition, payload, received_at
@@ -90,6 +120,7 @@ export async function reportTrackingNumberCalls(pool: Pool, trackingNumber: stri
     [trackingNumber, limit],
   );
   const events = await callEvents(pool, calls.rows.map((call) => call.id));
+  const recordings = await callRecordings(pool, calls.rows.map((call) => call.id));
   return calls.rows.map((call) => ({
     id: call.id,
     twilioCallSid: call.twilio_call_sid,
@@ -104,6 +135,15 @@ export async function reportTrackingNumberCalls(pool: Pool, trackingNumber: stri
     events: events
       .filter((event) => event.call_id === call.id)
       .map((event) => ({ kind: event.kind, disposition: event.disposition, status: event.payload.CallStatus ?? event.payload.RecordingStatus ?? null, receivedAt: event.received_at.toISOString() })),
+    recordings: recordings
+      .filter((recording) => recording.call_id === call.id)
+      .map((recording) => ({
+        source: recording.source,
+        channels: recording.channels,
+        transferState: recording.transfer_state,
+        twilioCleanupState: recording.twilio_cleanup_state,
+        failureStage: recording.failure_stage,
+      })),
   }));
 }
 
@@ -122,6 +162,7 @@ function replayPath(event: EventRow): string | null {
   const last = parts[parts.length - 1];
   if (event.kind === "forward_status") return `/api/twilio/forward-status/${event.number_assignment_id}?node=${node}`;
   if (event.kind === "voicemail_status") return `/api/twilio/voicemail-status/${event.number_assignment_id}?node=${node}`;
+  if (event.kind === "recording_status") return `/api/twilio/recording-status/${event.number_assignment_id}?node=${node}`;
   if (event.kind === "gather") return `/api/twilio/gather/${event.number_assignment_id}?node=${node}&attempt=${last}`;
   return null;
 }

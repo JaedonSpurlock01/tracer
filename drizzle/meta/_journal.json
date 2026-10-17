@@ -85,6 +85,20 @@
       "when": 1792192606682,
       "tag": "0011_early_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792207162109,
+      "tag": "0012_special_professor_monster",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792208378726,
+      "tag": "0013_old_blonde_phantom",
+      "breakpoints": true
     }
   ]
 }

@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M11 is planned for the next sprint
-- **Next milestone:** M11 - Durable Recording Transfer
+- **Current milestone:** M11 - Durable Recording Transfer
+- **Next milestone:** M12 - Waveform Playback and Call Detail
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-16
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. No milestone is In Progress; M11 starts in the next sprint.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 - Durable Recording Transfer is In Progress.
 
 ## Status model
 
@@ -148,7 +148,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Isolated Neon branch or database
 - Isolated R2 bucket
 - Staging Cloudflare bindings and secrets
-- Trigger.dev Staging environment
+- Trigger.dev Dev environment, executed by a locally run `pnpm trigger:dev` pointed at Staging resources, because a Trigger.dev Staging environment is a paid plan
 - Dedicated Twilio test number
 - OpenAI test budget and non-sensitive audio fixtures
 - Cloudflare Email Service test recipients
@@ -178,7 +178,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M8 | Workspace Access Grants | Complete | Preview and Staging | M7 |
 | M9 | Minimal Inbound Call Tracer Bullet | Complete | Staging | M8 |
 | M10 | Complete First-Release Call Routing | Complete | Staging | M9 |
-| M11 | Durable Recording Transfer | Not Started | Staging | M10 |
+| M11 | Durable Recording Transfer | In Progress | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Not Started | Preview and Staging | M11 |
 | M13 | Transcript, Lead Assessment, and Lead Review | Not Started | Staging | M12 |
 | M14 | Calls and Activity Operations | Not Started | Preview and Staging | M13 |
@@ -705,19 +705,22 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M11 - Durable Recording Transfer
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Connected recordings and voicemail audio move durably from Twilio to private R2 through idempotent Trigger.dev workflows.
 - **Depends on:** M10
 - **Target environment:** Staging
+- **Execution note:** M10 records voicemail only; Forward Call's Dial does not record connected conversations, so M11 adds dual-channel recording from answer to Forward Call when Workspace recording is enabled. The Recording-processing task runs in Trigger.dev Cloud, outside the Worker bindings, so it reaches R2 through a bucket-scoped S3 API token, PostgreSQL through a Neon runtime-role connection string, and Twilio by decrypting the Organization credential with the Twilio credential master key held as a Trigger.dev environment secret; M12 waveform and M13 transcription need the same direct R2 access. M11 also adds the Workspace-authorized Recording stream route as the only read path for private media, so M12 playback consumes an already-tested authorization boundary. R2 stores Twilio's WAV as the authoritative copy because it is lossless and keeps the Caller and Business channels separate for M12 waveform lanes and M13 transcription; MP3 downloads are derived later. Staging and Production each have a private bucket (`tracer-recordings-staging`, `tracer-recordings-production`) with no public or `r2.dev` access; Tracer Staging and Preview use the Trigger.dev Dev environment and the Staging bucket, because a Trigger.dev Staging environment requires a paid plan and Preview already shares the Staging database; Dev runs execute only while `pnpm trigger:dev` runs locally against Staging resources, so each Recording-processing request carries a 7-day queue lifetime instead of Dev's 10-minute default and Staging verification requires the local dev server. Tracer Production uses the Trigger.dev Production environment, preserving Production isolation. Integrations reports R2 and Trigger.dev health from Tracer's own Recording state (configuration, last successful transfer, recent transfer failures) without calling the Trigger.dev API; the live run status, task version, and test-cycle items in DESIGN remain later scope. A Recording left Pending or Failed is recovered by a Trigger.dev scheduled sweep every 12 hours that re-requests processing with the same idempotency key for Recordings between 1 hour and 7 days old; a shorter interval would keep the Neon compute from scaling to zero for a failure the Product Owner expects to be rare.
 
 #### Vertical slices
 
-1. Accept and persist a signed Recording callback.
-2. Trigger one idempotent Recording-processing run.
-3. Download dual-channel or caller-only media from Twilio.
-4. Upload the private object to R2 and verify size and checksum metadata.
-5. Delete the Twilio copy only after verification.
-6. Retry failed stages without duplicating objects or deleting the only valid copy.
+1. Record connected conversations with separate Caller and Business channels when Workspace recording is enabled.
+2. Accept and persist a signed Recording callback.
+3. Trigger one idempotent Recording-processing run.
+4. Download dual-channel or caller-only media from Twilio.
+5. Upload the private object to R2 and verify size and checksum metadata.
+6. Delete the Twilio copy only after verification.
+7. Retry failed stages without duplicating objects or deleting the only valid copy.
+8. Stream a Recording only through current Workspace authorization.
 
 #### Test-first behaviors
 
@@ -726,6 +729,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Retry after upload reuses or safely replaces the expected object.
 - Partial failures preserve enough state for targeted recovery.
 - Private objects cannot be accessed without current authorization.
+- A recording-enabled Workspace records the answered Forward Call leg in dual channel, and a recording-disabled Workspace never records it.
 
 #### Deliverables
 
@@ -735,6 +739,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Twilio cleanup operation
 - Recording processing states
 - Trigger.dev integration health in Integrations
+- Dual-channel Forward Call recording and its signed status callback
+- Workspace-authorized Recording stream route
 
 #### Verification gate
 

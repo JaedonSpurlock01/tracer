@@ -1,0 +1,9 @@
+{
+  "taskIdentifier": "recording-transfer",
+  "request": {
+    "payload": { "recordingId": "8f6f2f0e-4a7c-4c3b-9d65-2f1b8f9c0a11" },
+    "options": { "idempotencyKey": "recording-processing:8f6f2f0e-4a7c-4c3b-9d65-2f1b8f9c0a11", "ttl": "7d" }
+  },
+  "response": { "id": "run_cm1a2b3c4d5e6f7g8h9i0j1k2" },
+  "unauthorized": { "error": "Invalid API Key" }
+}

@@ -62,5 +62,25 @@
     "RecordingSid": "RE55555555555555555555555555555555",
     "RecordingSource": "RecordVerb",
     "RecordingStatus": "failed"
+  },
+  "dialRecordingStatusCompleted": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "CallSid": "CA11111111111111111111111111111111",
+    "RecordingChannels": "2",
+    "RecordingDuration": "96",
+    "RecordingSid": "RE66666666666666666666666666666666",
+    "RecordingSource": "DialVerb",
+    "RecordingStartTime": "Fri, 16 Oct 2026 19:00:12 +0000",
+    "RecordingStatus": "completed",
+    "RecordingUrl": "https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Recordings/RE66666666666666666666666666666666"
+  },
+  "dialRecordingStatusAbsent": {
+    "AccountSid": "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "CallSid": "CA11111111111111111111111111111111",
+    "RecordingChannels": "2",
+    "RecordingDuration": "0",
+    "RecordingSid": "RE77777777777777777777777777777777",
+    "RecordingSource": "DialVerb",
+    "RecordingStatus": "absent"
   }
 }

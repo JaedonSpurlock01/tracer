@@ -6,11 +6,14 @@
  * @description
  *  Signs in a real Client Viewer and exercises the Workspaces server
  *  interface to prove granted reads, ungranted denials, Operator-only
- *  mutations, Workspace State rules, and immediate revocation.
+ *  mutations, Workspace State rules, and immediate revocation, including
+ *  for streamed Recording audio.
  *
  * @remarks
  *  Revocation is checked with a session created before the grant is removed,
- *  because Access Grant checks must not wait for a new sign-in.
+ *  because Access Grant checks must not wait for a new sign-in. The R2
+ *  bucket is faked at its binding boundary; tests/workers/recording-audio
+ *  covers real R2 range reads.
  *
  * @see
  *  data/workspace-authorization.ts
@@ -28,6 +31,8 @@ import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { schema } from "@/data/schema";
+import type { RecordingAudioBucket } from "@/data/recording-audio";
+import { recordingObjectKey } from "@/data/recording-transfer";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
@@ -57,6 +62,17 @@ const auth = () => createTracerAuth({
   baseURL: "http://localhost:3000",
 });
 
+const storedAudio = new Map<string, Uint8Array>();
+const recordingBucket: RecordingAudioBucket = {
+  async get(key, options) {
+    const bytes = storedAudio.get(key);
+    if (!bytes) return null;
+    const offset = options?.range?.offset ?? 0;
+    const length = options?.range?.length ?? bytes.byteLength - offset;
+    return { body: new Blob([bytes.slice(offset, offset + length)]).stream() };
+  },
+};
+
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
   database: database(),
@@ -64,6 +80,7 @@ const workspacesHandler = () => createWorkspacesHandler({
   twilio: fakeTwilio,
   integrations: (id) => createIntegrations({ pool: pool!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", activeWorkspaceCount: async () => 0 }),
   baseURL: "http://localhost:3000",
+  recordingBucket,
 });
 
 const usersHandler = () => createOperatorAdministrationHandler({
@@ -167,5 +184,151 @@ describe.sequential("Workspace access", () => {
     expect((await workspaces("/granted-archived", clientCookie)).response.status).toBe(404);
     const list = await workspaces("", clientCookie);
     expect((list.body.workspaces as { id: string }[]).map((workspace) => workspace.id)).toEqual(["granted-active"]);
+  });
+});
+
+let seededCalls = 0;
+
+async function seedRecording(workspaceId: string, recordingId: string, transferState: "Stored" | "Pending" = "Stored"): Promise<{ key: string; bytes: Uint8Array }> {
+  seededCalls += 1;
+  const sequence = String(seededCalls).padStart(32, "0");
+  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const callId = `${recordingId}-call`;
+  await pool!.query(
+    `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
+     values ($1, $2, $3, $4, 'Recording Number', true, now(), now(), now(), now())`,
+    [`${callId}-number`, workspace.organization_id, `PN${sequence}`, `+1415555${String(seededCalls).padStart(4, "0")}`],
+  );
+  await pool!.query(
+    `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
+     values ($1, $2, $3, $4, $5, now(), now(), 'replaced', now())`,
+    [`${callId}-assignment`, workspace.organization_id, workspaceId, `${callId}-number`, `+1415555${String(seededCalls).padStart(4, "0")}`],
+  );
+  await pool!.query(
+    `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
+     values ($1, $2, $3, $4, '{}', now())`,
+    [`${callId}-flow`, workspace.organization_id, workspaceId, seededCalls],
+  );
+  await pool!.query(
+    `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, now(), now(), now())`,
+    [callId, workspace.organization_id, workspaceId, `${callId}-assignment`, `${callId}-flow`, `CA${sequence}`, `+1415555${String(seededCalls).padStart(4, "0")}`],
+  );
+  const key = recordingObjectKey({ id: recordingId, organizationId: workspace.organization_id, workspaceId, callId });
+  const bytes = new TextEncoder().encode(`RIFF synthetic recording ${recordingId}`);
+  await pool!.query(
+    `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, 'connected', 2, $6, $7, $8, 'checksum', $9, now(), now())`,
+    [recordingId, workspace.organization_id, workspaceId, callId, `RE${sequence}`, transferState, transferState === "Stored" ? key : null, transferState === "Stored" ? bytes.byteLength : null, transferState === "Stored" ? new Date() : null],
+  );
+  if (transferState === "Stored") storedAudio.set(key, bytes);
+  return { key, bytes };
+}
+
+async function recordingAudio(workspaceId: string, recordingId: string, cookie: string, headers: Record<string, string> = {}) {
+  return workspacesHandler()(new Request(`http://localhost:3000/api/workspaces/${workspaceId}/recordings/${recordingId}/audio`, { headers: { cookie, ...headers } }));
+}
+
+describe.sequential("Recording stream", () => {
+  let operatorCookie = "";
+  let activeRecording: { key: string; bytes: Uint8Array } = { key: "", bytes: new Uint8Array() };
+
+  let clientCookie = "";
+
+  beforeAll(async () => {
+    operatorCookie = await signIn("operator@example.com");
+    clientCookie = await signIn("client@example.com");
+    activeRecording = await seedRecording("granted-active", "active-recording");
+    await seedRecording("ungranted-active", "ungranted-recording");
+    await seedRecording("other-organization-workspace", "other-organization-recording");
+  });
+
+  it("streams a Stored Recording to an Operator as private uncached WAV audio without revealing its object key", async () => {
+    const response = await recordingAudio("granted-active", "active-recording", operatorCookie);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(response.headers.get("content-length")).toBe(String(activeRecording.bytes.byteLength));
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(activeRecording.bytes);
+    expect(JSON.stringify([...response.headers])).not.toContain(activeRecording.key);
+  });
+
+  it("streams a Stored Recording to a Client Viewer with a current Access Grant", async () => {
+    const response = await recordingAudio("granted-active", "active-recording", clientCookie);
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(activeRecording.bytes);
+  });
+
+  it("answers Not Found for a Recording in an ungranted Workspace, through another Workspace's path, or in another Organization", async () => {
+    for (const [workspaceId, recordingId, cookie] of [
+      ["ungranted-active", "ungranted-recording", clientCookie],
+      ["granted-active", "ungranted-recording", clientCookie],
+      ["other-organization-workspace", "other-organization-recording", clientCookie],
+      ["granted-active", "other-organization-recording", clientCookie],
+      ["other-organization-workspace", "other-organization-recording", operatorCookie],
+      ["granted-active", "other-organization-recording", operatorCookie],
+    ]) {
+      const response = await recordingAudio(workspaceId, recordingId, cookie);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    }
+  });
+
+  it.each([
+    ["bytes=0-3", 0, 3],
+    ["bytes=5-", 5, -1],
+    ["bytes=-6", -6, -1],
+  ])("answers a single %s Range request with the partial audio so playback can seek", async (range, start, end) => {
+    const size = activeRecording.bytes.byteLength;
+    const first = start < 0 ? size + start : start;
+    const last = end < 0 ? size - 1 : end;
+    const response = await recordingAudio("granted-active", "active-recording", operatorCookie, { range });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("content-range")).toBe(`bytes ${first}-${last}/${size}`);
+    expect(response.headers.get("content-length")).toBe(String(last - first + 1));
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(activeRecording.bytes.slice(first, last + 1));
+  });
+
+  it.each(["bytes=1000-", "bytes=1000-2000"])("answers an unsatisfiable %s Range request with 416 and the Recording size", async (range) => {
+    const response = await recordingAudio("granted-active", "active-recording", operatorCookie, { range });
+    expect(response.status).toBe(416);
+    expect(response.headers.get("content-range")).toBe(`bytes */${activeRecording.bytes.byteLength}`);
+    expect(await response.text()).toBe("");
+  });
+
+  it("answers Not Found for a Recording whose transfer to R2 is not Stored", async () => {
+    await seedRecording("granted-active", "pending-recording", "Pending");
+    const response = await recordingAudio("granted-active", "pending-recording", operatorCookie);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+  });
+
+  it("answers Not Found when a Stored Recording's object is missing from R2", async () => {
+    const missing = await seedRecording("granted-active", "missing-object-recording");
+    storedAudio.delete(missing.key);
+    const response = await recordingAudio("granted-active", "missing-object-recording", operatorCookie);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+  });
+
+  it("rejects an unauthenticated Recording stream request", async () => {
+    const response = await recordingAudio("granted-active", "active-recording", "");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
+  });
+
+  it("answers Not Found to an existing Client Viewer session after its Access Grant is removed", async () => {
+    const clientId = (await pool!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
+    const removed = await usersHandler()(new Request(`http://localhost:3000/api/users/${clientId}/access-grants/granted-active`, {
+      method: "DELETE",
+      headers: { cookie: operatorCookie },
+    }));
+    expect(removed.status).toBe(200);
+    const response = await recordingAudio("granted-active", "active-recording", clientCookie);
+    expect(response.status).toBe(404);
+    expect((await recordingAudio("granted-active", "active-recording", operatorCookie)).status).toBe(200);
   });
 });

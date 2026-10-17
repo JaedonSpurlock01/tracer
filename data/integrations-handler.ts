@@ -90,7 +90,7 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
       const route = new URL(request.url).pathname.replace(/^\/api\/integrations\/?/, "");
       if (request.method === "GET" && route === "") {
         const twilio = await integrations.getTwilioConnection();
-        return response({ providers: describeProviderHealth(options.configuration, twilio), twilio });
+        return response({ providers: describeProviderHealth(options.configuration, twilio, await integrations.getRecordingTransferHealth()), twilio });
       }
       if (request.method === "GET" && route === "twilio/numbers") {
         return response({ numbers: await integrations.listTwilioNumbers() });

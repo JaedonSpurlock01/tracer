@@ -18,6 +18,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   foreignKey,
@@ -416,11 +417,55 @@ export const providerEvents = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   },
   (table) => [
-    check("provider_event_kind_check", sql`${table.kind} in ('voice', 'forward', 'forward_status', 'status', 'gather', 'whisper', 'voicemail', 'voicemail_status')`),
+    check("provider_event_kind_check", sql`${table.kind} in ('voice', 'forward', 'forward_status', 'status', 'gather', 'whisper', 'voicemail', 'voicemail_status', 'recording_status')`),
     check("provider_event_disposition_check", sql`${table.disposition} in ('accepted', 'rejected')`),
     uniqueIndex("provider_event_organization_key_idx").on(table.organizationId, table.idempotencyKey),
     index("provider_event_organization_id_idx").on(table.organizationId),
     index("provider_event_call_id_idx").on(table.callId),
+  ],
+);
+
+export const recordings = pgTable(
+  "recording",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    twilioRecordingSid: text("twilio_recording_sid").notNull(),
+    source: text().notNull(),
+    channels: integer().notNull(),
+    durationSeconds: integer("duration_seconds"),
+    transferState: text("transfer_state").notNull().default("Pending"),
+    twilioCleanupState: text("twilio_cleanup_state").notNull().default("Pending"),
+    r2ObjectKey: text("r2_object_key"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    sha256: text(),
+    failureStage: text("failure_stage"),
+    failureReason: text("failure_reason"),
+    storedAt: timestamp("stored_at", { withTimezone: true }),
+    twilioDeletedAt: timestamp("twilio_deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("recording_source_check", sql`${table.source} in ('connected', 'voicemail')`),
+    check("recording_channels_check", sql`${table.channels} in (1, 2)`),
+    check("recording_transfer_state_check", sql`${table.transferState} in ('Pending', 'Stored', 'Failed')`),
+    check("recording_twilio_cleanup_state_check", sql`${table.twilioCleanupState} in ('Pending', 'Deleted', 'Failed')`),
+    check("recording_stored_metadata_check", sql`${table.transferState} <> 'Stored' or (${table.r2ObjectKey} is not null and ${table.sizeBytes} is not null and ${table.sha256} is not null and ${table.storedAt} is not null)`),
+    check("recording_cleanup_requires_stored_check", sql`${table.twilioCleanupState} <> 'Deleted' or ${table.transferState} = 'Stored'`),
+    uniqueIndex("recording_organization_recording_sid_idx").on(table.organizationId, table.twilioRecordingSid),
+    index("recording_organization_id_idx").on(table.organizationId),
+    index("recording_workspace_id_idx").on(table.workspaceId),
+    index("recording_call_id_idx").on(table.callId),
+    index("recording_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.twilioCleanupState} <> 'Deleted'`),
   ],
 );
 
@@ -441,4 +486,5 @@ export const schema = {
   accessGrant: accessGrants,
   call: calls,
   providerEvent: providerEvents,
+  recording: recordings,
 };

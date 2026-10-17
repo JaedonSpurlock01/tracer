@@ -4,6 +4,7 @@
   "main": "tests/workers/test-worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [{ "binding": "R2", "bucket_name": "tracer-recordings-test" }],
   "secrets": {
     "required": []
   }

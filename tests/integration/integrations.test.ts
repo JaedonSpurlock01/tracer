@@ -108,6 +108,7 @@ function handler(overrides: { masterKey?: string; activeWorkspaceCount?: () => P
       emailFrom: "auth@example.com",
       emailAllowlistCount: (overrides.allowedRecipients ?? new Set(["operator@example.com"])).size,
       r2: false,
+      r2Bucket: null,
       openai: false,
       triggerdev: false,
     },
@@ -405,5 +406,83 @@ describe.sequential("Organization integrations", () => {
     expect(missing.response.status).toBe(503);
     const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }), handler({ masterKey: undefined }));
     expect((health.body.providers as Array<{ note: string | null }>)[0].note).toContain("TWILIO_CREDENTIAL_MASTER_KEY");
+  });
+
+  it("reports no Recording transfers yet for R2 and Trigger.dev", async () => {
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    const providers = result.body.providers as Array<{ id: string; lastSuccessAt: string | null; recentFailures?: unknown[] }>;
+    for (const id of ["r2", "triggerdev"]) {
+      expect(providers.find((provider) => provider.id === id)).toMatchObject({ lastSuccessAt: null, lastFailureAt: null, recentFailures: [] });
+    }
+  });
+
+  it("reports the last stored Recording transfer and the 5 most recent Organization transfer failures without object keys or Recording SIDs", async () => {
+    for (const organization of [organizationId, "other-organization-id"]) {
+      await pool!.query(
+        `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
+         values ($1, $2, 'Transfer Health', 'UTC', 'Active', now(), now())`,
+        [`${organization}-health-workspace`, organization],
+      );
+      await pool!.query(
+        `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, released_at, created_at, updated_at)
+         values ($1, $2, $3, '+14155550177', 'Health', true, now(), now(), now(), now(), now())`,
+        [`${organization}-health-number`, organization, organization === organizationId ? "PN77777777777777777777777777777777" : "PN88888888888888888888888888888888"],
+      );
+      await pool!.query(
+        `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
+         values ($1, $2, $3, $4, '+14155550177', now(), now(), 'replaced', now())`,
+        [`${organization}-health-assignment`, organization, `${organization}-health-workspace`, `${organization}-health-number`],
+      );
+      await pool!.query(
+        `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, '{}', now())`,
+        [`${organization}-health-flow`, organization, `${organization}-health-workspace`],
+      );
+      await pool!.query(
+        `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, 'CA77777777777777777777777777777777', '+14155550177', now(), now(), now())`,
+        [`${organization}-health-call`, organization, `${organization}-health-workspace`, `${organization}-health-assignment`, `${organization}-health-flow`],
+      );
+    }
+    async function recording(organization: string, id: string, values: { stored?: string; failure?: [string, string, string] }) {
+      await pool!.query(
+        `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at, failure_stage, failure_reason, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, 'voicemail', 1, $6, $7, $8, $9, $10, $11, $12, now(), coalesce($13::timestamptz, now()))`,
+        [
+          id, organization, `${organization}-health-workspace`, `${organization}-health-call`, `RE${id.padStart(32, "0")}`,
+          values.stored ? "Stored" : "Failed", values.stored ? `organizations/${organization}/recordings/${id}.wav` : null, values.stored ? 42 : null, values.stored ? "checksum" : null,
+          values.stored ?? null, values.failure?.[0] ?? null, values.failure?.[1] ?? null, values.failure?.[2] ?? null,
+        ],
+      );
+    }
+    await recording(organizationId, "1", { stored: "2026-10-14T01:00:00.000Z" });
+    await recording(organizationId, "2", { stored: "2026-10-14T05:00:00.000Z" });
+    for (let index = 0; index < 6; index += 1) {
+      await recording(organizationId, String(10 + index), { failure: [index % 2 ? "upload" : "download", index % 2 ? "R2 request failed (HTTP 503)" : "Twilio is unavailable", `2026-10-14T0${index}:30:00.000Z`] });
+    }
+    await recording("other-organization-id", "90", { stored: "2026-10-15T00:00:00.000Z" });
+    await recording("other-organization-id", "91", { failure: ["verify", "R2 object does not match the Twilio download", "2026-10-15T01:00:00.000Z"] });
+
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    const providers = result.body.providers as Array<{ id: string }>;
+    for (const id of ["r2", "triggerdev"]) {
+      expect(providers.find((provider) => provider.id === id)).toMatchObject({
+        lastSuccessAt: "2026-10-14T05:00:00.000Z",
+        lastFailureAt: "2026-10-14T05:30:00.000Z",
+        lastFailureDetail: "R2 request failed (HTTP 503)",
+        recentFailures: [
+          { stage: "upload", reason: "R2 request failed (HTTP 503)", at: "2026-10-14T05:30:00.000Z" },
+          { stage: "download", reason: "Twilio is unavailable", at: "2026-10-14T04:30:00.000Z" },
+          { stage: "upload", reason: "R2 request failed (HTTP 503)", at: "2026-10-14T03:30:00.000Z" },
+          { stage: "download", reason: "Twilio is unavailable", at: "2026-10-14T02:30:00.000Z" },
+          { stage: "upload", reason: "R2 request failed (HTTP 503)", at: "2026-10-14T01:30:00.000Z" },
+        ],
+      });
+    }
+    const serialized = JSON.stringify(result.body);
+    expect(serialized).not.toContain("organizations/");
+    expect(serialized).not.toContain("RE000");
+    expect(serialized).not.toContain("R2 object does not match");
   });
 });

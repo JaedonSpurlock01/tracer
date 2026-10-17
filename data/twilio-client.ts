@@ -4,11 +4,14 @@
  * @brief  Provides a narrow Twilio REST provider boundary.
  *
  * @description
- *  Fetches account metadata and incoming numbers without exposing provider
- *  response bodies or credential material through errors.
+ *  Fetches account metadata and incoming numbers, downloads Recording WAV
+ *  media, and deletes Twilio Recordings without exposing provider response
+ *  bodies or credential material through errors.
  *
  * @remarks
- *  Application services depend on TwilioClient rather than this REST detail.
+ *  Application services depend on TwilioClient and TwilioRecordingMedia
+ *  rather than this REST detail. Deleting a Recording Twilio no longer has
+ *  succeeds, because the goal of cleanup is already met.
  *
  * @see
  *  data/integrations.ts
@@ -193,6 +196,50 @@ export function createTwilioRestClient(options: { fetch?: typeof fetch; baseUrl?
         StatusCallbackMethod: configuration.statusCallbackMethod ?? "",
       });
       return mapIncomingPhoneNumber(payload);
+    },
+  };
+}
+
+export interface TwilioRecordingMedia {
+  downloadRecording(credential: TwilioCredential, recordingSid: string): Promise<Uint8Array>;
+  deleteRecording(credential: TwilioCredential, recordingSid: string): Promise<void>;
+}
+
+export function createTwilioRecordingMedia(options: { fetch?: typeof fetch; baseUrl?: string } = {}): TwilioRecordingMedia {
+  const request = options.fetch ?? globalThis.fetch;
+  const baseUrl = options.baseUrl ?? "https://api.twilio.com";
+
+  async function send(path: string, credential: TwilioCredential, init: RequestInit = {}): Promise<Response> {
+    let response: Response;
+    try {
+      response = await request(requestUrl(baseUrl, path), { ...init, headers: { Authorization: authorization(credential) } });
+    } catch {
+      throw new TwilioClientError("unavailable", null);
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new TwilioClientError("authentication_failed", response.status);
+    }
+    return response;
+  }
+
+  return {
+    async downloadRecording(credential, recordingSid) {
+      const response = await send(`/2010-04-01/Accounts/${credential.accountSid}/Recordings/${recordingSid}.wav`, credential);
+      if (!response.ok) {
+        throw new TwilioClientError("request_failed", response.status);
+      }
+      try {
+        return new Uint8Array(await response.arrayBuffer());
+      } catch {
+        throw new TwilioClientError("unavailable", null);
+      }
+    },
+
+    async deleteRecording(credential, recordingSid) {
+      const response = await send(`/2010-04-01/Accounts/${credential.accountSid}/Recordings/${recordingSid}.json`, credential, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) {
+        throw new TwilioClientError("request_failed", response.status);
+      }
     },
   };
 }

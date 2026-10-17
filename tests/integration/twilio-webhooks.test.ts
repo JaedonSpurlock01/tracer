@@ -6,11 +6,13 @@
  * @description
  *  Sends Twilio-shaped form requests to the webhook handler against a real
  *  PostgreSQL database seeded with an Active Workspace, its Number
- *  Assignment, and its published Flow Version.
+ *  Assignment, and its published Flow Version, and checks the Recordings
+ *  that connected and voicemail recording callbacks create.
  *
  * @remarks
  *  Requests are signed with node:crypto in the test so the expected signature
- *  never depends on Tracer's own signing code.
+ *  never depends on Tracer's own signing code. Recording processing is a fake
+ *  at the Trigger.dev boundary that records each request.
  *
  * @see
  *  data/twilio-webhook-handler.ts
@@ -28,8 +30,11 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow, type CallFlowGraph, type WeeklyWindow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import type { RecordingProcessing } from "@/data/recording";
 import { replayCallCallbacks, reportTrackingNumberCalls } from "@/data/call-smoke";
 import { createTwilioWebhookHandler } from "@/data/twilio-webhook-handler";
+
+import fixtures from "../contracts/fixtures/twilio/voice-callbacks.json";
 
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const authToken = "webhook-auth-token";
@@ -44,6 +49,16 @@ const routingTimeZone = "Pacific/Kiritimati";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+
+const processingRequests: { id: string; organizationId: string; idempotencyKey: string; committed: boolean }[] = [];
+let processingUnavailable = false;
+const recordingProcessing: RecordingProcessing = {
+  async request(recording) {
+    const committed = (await pool!.query("select 1 from recording where id = $1", [recording.id])).rowCount === 1;
+    processingRequests.push({ ...recording, committed });
+    if (processingUnavailable) throw new Error("Trigger.dev unavailable");
+  },
+};
 
 function sign(url: string, params: Record<string, string>, token = authToken): string {
   const payload = url + Object.keys(params).sort().map((name) => name + params[name]).join("");
@@ -68,7 +83,7 @@ function webhookRequest(path: string, params: Record<string, string>, signature:
 }
 
 function handler() {
-  return createTwilioWebhookHandler({ pool: pool!, masterKey, baseURL });
+  return createTwilioWebhookHandler({ pool: pool!, masterKey, baseURL, recordingProcessing });
 }
 
 async function post(path: string, params: Record<string, string>): Promise<Response> {
@@ -620,6 +635,25 @@ describe.sequential("First-release Call routing", () => {
     expect((await pool!.query("select * from call where twilio_call_sid = $1", [callSid])).rows).toEqual(before.rows);
   });
 
+  it("creates exactly one caller-only voicemail Recording for a captured voicemail in a Workspace that does not record connected conversations", async () => {
+    const callSid = "CA00000000000000000000000000000132";
+    expect((await pool!.query("select recording_enabled from workspace where id = 'routing-workspace'")).rows[0].recording_enabled).toBe(false);
+    expect(await callRecordings(callSid)).toEqual([
+      { workspace_id: "routing-workspace", twilio_recording_sid: `RE${callSid.slice(2)}`, source: "voicemail", channels: 1, duration_seconds: 40, transfer_state: "Pending", twilio_cleanup_state: "Pending" },
+    ]);
+    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
+    expect(events.rows[0].count).toBe(1);
+  });
+
+  it.each([
+    ["absent", "CA00000000000000000000000000000133"],
+    ["failed", "CA00000000000000000000000000000134"],
+  ])("creates no Recording but keeps the provider event for an %s voicemail recording", async (_status, callSid) => {
+    expect(await callRecordings(callSid)).toEqual([]);
+    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
+    expect(events.rows[0].count).toBe(1);
+  });
+
   it("replays a gated voicemail Call's signed callbacks without changing it", async () => {
     const gated = gatedFlow();
     const flowWithVoicemail = voicemailFlow("missed");
@@ -653,5 +687,142 @@ describe.sequential("First-release Call routing", () => {
     ]);
     const callId = (await pool!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
     expect(await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 5, rejected: 0, unchanged: true });
+  });
+});
+
+function connectedRecordingStatus(callSid: string, payload: Record<string, string>): Promise<Response> {
+  return routingPost("/api/twilio/recording-status/{assignment}?node=forward", { ...payload, CallSid: callSid, RecordingSid: `RE${callSid.slice(2)}` });
+}
+
+async function callRecordings(callSid: string): Promise<Record<string, unknown>[]> {
+  const result = await pool!.query(
+    `select r.workspace_id, r.twilio_recording_sid, r.source, r.channels, r.duration_seconds, r.transfer_state, r.twilio_cleanup_state
+       from recording r join call c on c.id = r.call_id
+      where c.twilio_call_sid = $1
+      order by r.created_at`,
+    [callSid],
+  );
+  return result.rows;
+}
+
+describe.sequential("Connected conversation Recording", () => {
+  it("records the answered Forward Call leg in dual channel for a recording-enabled Workspace", async () => {
+    await pool!.query("update workspace set recording_enabled = true where id = 'routing-workspace'");
+    await publishRoutingFlow(generateInitialCallFlow({ destinationNumber, recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" }));
+    expect(await startRoutingCall("CA00000000000000000000000000000200")).toContain(
+      `timeout="30" record="record-from-answer-dual" recordingStatusCallback="${baseURL}/api/twilio/recording-status/${routingAssignmentId}?node=forward" recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed absent">`,
+    );
+  });
+
+  it("rejects connected Recording callbacks without a valid Twilio signature", async () => {
+    const path = `/api/twilio/recording-status/${routingAssignmentId}?node=forward`;
+    const params = { ...fixtures.dialRecordingStatusCompleted, CallSid: "CA00000000000000000000000000000200" };
+    expect((await handler()(webhookRequest(path, params, null))).status).toBe(403);
+    expect((await handler()(webhookRequest(path, params, sign(`${baseURL}${path}`, params, "other-auth-token")))).status).toBe(403);
+    expect(await callRecordings("CA00000000000000000000000000000200")).toEqual([]);
+  });
+
+  it("creates one connected dual-channel Recording for the Call from a signed completed callback", async () => {
+    const callSid = "CA00000000000000000000000000000200";
+    expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted)).status).toBe(204);
+    expect(await callRecordings(callSid)).toEqual([
+      { workspace_id: "routing-workspace", twilio_recording_sid: `RE${callSid.slice(2)}`, source: "connected", channels: 2, duration_seconds: 96, transfer_state: "Pending", twilio_cleanup_state: "Pending" },
+    ]);
+    const events = await pool!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    expect(events.rows).toEqual([{ kind: "recording_status", disposition: "accepted" }]);
+  });
+
+  it("creates no second Recording or provider event when the connected Recording callback is delivered again", async () => {
+    const callSid = "CA00000000000000000000000000000200";
+    expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted)).status).toBe(204);
+    expect(await callRecordings(callSid)).toHaveLength(1);
+    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    expect(events.rows[0].count).toBe(1);
+  });
+
+  it("persists the provider event but creates no Recording when the connected recording is absent", async () => {
+    const callSid = "CA00000000000000000000000000000201";
+    await startRoutingCall(callSid);
+    expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusAbsent)).status).toBe(204);
+    expect(await callRecordings(callSid)).toEqual([]);
+    const events = await pool!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    expect(events.rows).toEqual([{ kind: "recording_status", disposition: "accepted" }]);
+  });
+
+  it("requests Recording processing once, after the Recording is committed, with a key derived from the Recording", async () => {
+    const callSid = "CA00000000000000000000000000000202";
+    await startRoutingCall(callSid);
+    processingRequests.length = 0;
+    await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted);
+    await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted);
+    const recording = (await pool!.query("select r.id, r.organization_id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1", [callSid])).rows[0];
+    expect(processingRequests).toEqual([{ id: recording.id, organizationId: recording.organization_id, idempotencyKey: `recording-processing:${recording.id}`, committed: true }]);
+  });
+
+  it("acknowledges the callback and keeps the Recording Pending when Recording processing cannot be requested", async () => {
+    const callSid = "CA00000000000000000000000000000203";
+    await startRoutingCall(callSid);
+    processingUnavailable = true;
+    try {
+      expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted)).status).toBe(204);
+    } finally {
+      processingUnavailable = false;
+    }
+    expect(await callRecordings(callSid)).toMatchObject([{ source: "connected", transfer_state: "Pending" }]);
+  });
+
+  it("requests Recording processing for a captured voicemail Recording", async () => {
+    const callSid = "CA00000000000000000000000000000204";
+    await pool!.query("update workspace set recording_enabled = false where id = 'routing-workspace'");
+    await publishRoutingFlow(voicemailFlow("closed"));
+    await startRoutingCall(callSid);
+    processingRequests.length = 0;
+    await recordingStatus(callSid, "completed", "18");
+    const recording = (await pool!.query("select r.id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1 and r.source = 'voicemail'", [callSid])).rows[0];
+    expect(processingRequests).toEqual([expect.objectContaining({ id: recording.id, idempotencyKey: `recording-processing:${recording.id}`, committed: true })]);
+  });
+
+  it("creates no Recording and requests no processing for a completed voicemail recording shorter than 1 second", async () => {
+    const callSid = "CA00000000000000000000000000000205";
+    await startRoutingCall(callSid);
+    processingRequests.length = 0;
+    expect((await recordingStatus(callSid, "completed", "0")).status).toBe(204);
+    expect(await callRecordings(callSid)).toEqual([]);
+    expect(processingRequests).toEqual([]);
+  });
+});
+
+describe.sequential("Staging Recording smoke", () => {
+  it("reports each Call's Recordings with source, channels, transfer and cleanup state, and failure stage without object keys or caller numbers", async () => {
+    const connectedSid = "CA00000000000000000000000000000200";
+    await pool!.query(
+      `update recording r set transfer_state = 'Stored', r2_object_key = 'organizations/smoke/recordings/connected.wav', size_bytes = 42, sha256 = 'checksum',
+              stored_at = now(), twilio_cleanup_state = 'Failed', failure_stage = 'cleanup', failure_reason = 'Twilio request failed (HTTP 500)'
+         from call c where c.id = r.call_id and c.twilio_call_sid = $1`,
+      [connectedSid],
+    );
+    const calls = await reportTrackingNumberCalls(pool!, routingTrackingNumber, 50);
+    expect(calls.find((call) => call.twilioCallSid === connectedSid)?.recordings).toEqual([
+      { source: "connected", channels: 2, transferState: "Stored", twilioCleanupState: "Failed", failureStage: "cleanup" },
+    ]);
+    expect(calls.find((call) => call.twilioCallSid === "CA00000000000000000000000000000204")?.recordings).toEqual([
+      { source: "voicemail", channels: 1, transferState: "Pending", twilioCleanupState: "Pending", failureStage: null },
+    ]);
+    expect(calls.find((call) => call.twilioCallSid === "CA00000000000000000000000000000201")?.recordings).toEqual([]);
+    const serialized = JSON.stringify(calls);
+    expect(serialized).not.toContain("organizations/");
+    expect(serialized).not.toContain("+14155550123");
+    expect(serialized).not.toContain(`RE${connectedSid.slice(2)}`);
+  });
+
+  it("replays a connected Call's signed Recording callback without a second Recording, provider event, or processing request", async () => {
+    const callSid = "CA00000000000000000000000000000202";
+    const callId = (await pool!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
+    const eventCount = async () => (await pool!.query("select count(*)::int as count from provider_event where call_id = $1", [callId])).rows[0].count as number;
+    const before = { recordings: await callRecordings(callSid), events: await eventCount() };
+    processingRequests.length = 0;
+    expect(await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 1, rejected: 0, unchanged: true });
+    expect({ recordings: await callRecordings(callSid), events: await eventCount() }).toEqual(before);
+    expect(processingRequests).toEqual([]);
   });
 });
