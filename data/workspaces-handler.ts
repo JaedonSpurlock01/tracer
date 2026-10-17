@@ -5,7 +5,8 @@
  *
  * @description
  *  Resolves Active Operators and maps Workspace and routing requests to their
- *  Organization-scoped services. Streams Stored Recording audio to any actor
+ *  Organization-scoped services. Streams available Recording audio and serves
+ *  its waveform peaks, and reads Call Detail and Recent Calls, for any actor
  *  who can currently read its Workspace.
  *
  * @remarks
@@ -15,6 +16,7 @@
  * @see
  *  data/workspace-routing.ts
  *  data/recording-audio.ts
+ *  data/recording-media.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -23,8 +25,10 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
+import { createCallDetails } from "@/data/call-details";
 import type { Integrations } from "@/data/integrations";
-import { findStoredRecordingAudio, recordingAudioResponse, type RecordingAudioBucket } from "@/data/recording-audio";
+import { recordingAudioResponse } from "@/data/recording-audio";
+import { findAvailableRecordingMedia, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
 import type { TwilioClient } from "@/data/twilio-client";
@@ -40,7 +44,7 @@ export interface WorkspacesHandlerOptions {
   twilio: TwilioClient;
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
-  recordingBucket?: RecordingAudioBucket;
+  recordingBucket?: RecordingMediaBucket;
 }
 
 function response(body: unknown, status = 200): Response {
@@ -114,14 +118,34 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
     try {
       const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
-      const audioMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/audio$/);
-      if (request.method === "GET" && audioMatch) {
-        const workspace = await createReadableWorkspaces(options.pool, actor).find(audioMatch[1]);
+      const mediaMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/(audio|peaks)$/);
+      if (request.method === "GET" && mediaMatch) {
+        const workspace = await createReadableWorkspaces(options.pool, actor).find(mediaMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
-        const audio = await findStoredRecordingAudio(options.pool, { organizationId: actor.organizationId, workspaceId: workspace.id, recordingId: audioMatch[2] });
-        const stream = audio && options.recordingBucket ? await recordingAudioResponse(options.recordingBucket, audio, request.headers.get("range")) : null;
-        if (!stream) throw new WorkspacesError("not_found");
-        return stream;
+        const media = await findAvailableRecordingMedia(options.pool, { organizationId: actor.organizationId, workspaceId: workspace.id, recordingId: mediaMatch[2] });
+        const bucket = options.recordingBucket;
+        const served =
+          !media || !bucket
+            ? null
+            : mediaMatch[3] === "audio"
+              ? await recordingAudioResponse(bucket, media.audio, request.headers.get("range"))
+              : media.peaksKey
+                ? await recordingPeaksResponse(bucket, media.peaksKey)
+                : null;
+        if (!served) throw new WorkspacesError("not_found");
+        return served;
+      }
+      const recentCallsMatch = route.match(/^([^/]+)\/calls$/);
+      if (request.method === "GET" && recentCallsMatch) {
+        const calls = await createCallDetails(options.pool, actor).listRecent(recentCallsMatch[1]);
+        if (!calls) throw new WorkspacesError("not_found");
+        return Response.json({ calls }, { headers: { "cache-control": "private, no-store" } });
+      }
+      const callMatch = route.match(/^([^/]+)\/calls\/([^/]+)$/);
+      if (request.method === "GET" && callMatch) {
+        const call = await createCallDetails(options.pool, actor).find(callMatch[1], callMatch[2]);
+        if (!call) throw new WorkspacesError("not_found");
+        return Response.json({ call }, { headers: { "cache-control": "private, no-store" } });
       }
       if (request.method === "GET" && (route === "" || (route !== "numbers" && /^[^/]+$/.test(route)))) {
         const readable = createReadableWorkspaces(options.pool, actor);

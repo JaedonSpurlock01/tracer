@@ -4,14 +4,16 @@
  * @brief  Verifies the Recording recovery sweep.
  *
  * @description
- *  Seeds Recordings in every transfer and cleanup state against a real
- *  PostgreSQL database and checks that the sweep re-requests processing
- *  only for unfinished Recordings idle for over an hour and created within
- *  the last 7 days, and that one failed request does not stop the rest.
+ *  Seeds Recordings in every transfer, cleanup, and waveform state against
+ *  a real PostgreSQL database and checks that the sweep re-requests
+ *  processing for unfinished transfers and waveform generation for
+ *  transferred Recordings without Stored peaks, only when idle for over an
+ *  hour and created within the last 7 days, and that one failed request
+ *  does not stop the rest.
  *
  * @remarks
- *  Recording processing is a fake at the Trigger.dev boundary that records
- *  each request.
+ *  Recording processing and waveform requests are fakes at the Trigger.dev
+ *  boundary that record each request.
  *
  * @see
  *  data/recording-recovery.ts
@@ -39,14 +41,15 @@ let pool: Pool | undefined;
 let organizationId = "";
 let sequence = 0;
 
-async function recording(state: { transfer: string; cleanup: string; createdAt: Date; updatedAt: Date }): Promise<string> {
+async function recording(state: { transfer: string; cleanup: string; waveform?: string; createdAt: Date; updatedAt: Date }): Promise<string> {
   sequence += 1;
   const id = randomUUID();
   const stored = state.transfer === "Stored";
+  const waveformStored = state.waveform === "Stored";
   await pool!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, twilio_cleanup_state,
-                            r2_object_key, size_bytes, sha256, stored_at, created_at, updated_at)
-     values ($1, $2, 'recovery-workspace', 'recovery-call', $3, 'voicemail', 1, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                            r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at, created_at, updated_at)
+     values ($1, $2, 'recovery-workspace', 'recovery-call', $3, 'voicemail', 1, $4, $5, $6, $7, $8, $9, $12, $13, $14, $10, $11)`,
     [
       id,
       organizationId,
@@ -59,9 +62,16 @@ async function recording(state: { transfer: string; cleanup: string; createdAt: 
       stored ? state.updatedAt : null,
       state.createdAt,
       state.updatedAt,
+      state.waveform ?? "Pending",
+      waveformStored ? `recordings/${id}.peaks.json` : null,
+      waveformStored ? state.updatedAt : null,
     ],
   );
   return id;
+}
+
+function sweep(processing: RecordingProcessing, waveform: RecordingProcessing = recordingProcessing()) {
+  return sweepStuckRecordings({ pool: pool!, recordingProcessing: processing, recordingWaveform: waveform }, now);
 }
 
 function recordingProcessing(failingId: string | null = null): RecordingProcessing & { requests: RecordingProcessingRequest[] } {
@@ -125,21 +135,39 @@ describe("Recording recovery sweep", () => {
     const cleanupPending = await recording({ transfer: "Stored", cleanup: "Pending", createdAt: hours(10), updatedAt: hours(2) });
     const cleanupFailed = await recording({ transfer: "Stored", cleanup: "Failed", createdAt: hours(5), updatedAt: hours(2) });
     const processing = recordingProcessing();
+    const waveform = recordingProcessing();
 
-    await expect(sweepStuckRecordings({ pool: pool!, recordingProcessing: processing }, now)).resolves.toEqual({ requested: 4, failed: 0 });
+    await expect(sweep(processing, waveform)).resolves.toEqual({ requested: 4, failed: 0 });
 
     expect(processing.requests).toEqual([pending, failed, cleanupPending, cleanupFailed].map((id) => ({ id, organizationId, idempotencyKey: `recording-processing:${id}` })));
+    expect(waveform.requests).toEqual([]);
   });
 
-  it("skips fresh, older than 7 days, and fully transferred Recordings", async () => {
+  it("re-requests waveform generation for transferred Recordings whose waveform is Pending or Failed and idle for over an hour", async () => {
+    const waveformPending = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Pending", createdAt: hours(30), updatedAt: hours(2) });
+    const waveformFailed = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Failed", createdAt: hours(20), updatedAt: hours(2) });
+    const processing = recordingProcessing();
+    const waveform = recordingProcessing();
+
+    await expect(sweep(processing, waveform)).resolves.toEqual({ requested: 2, failed: 0 });
+
+    expect(waveform.requests).toEqual([waveformPending, waveformFailed].map((id) => ({ id, organizationId, idempotencyKey: `recording-waveform:${id}` })));
+    expect(processing.requests).toEqual([]);
+  });
+
+  it("skips fresh, older than 7 days, and fully processed Recordings", async () => {
     await recording({ transfer: "Pending", cleanup: "Pending", createdAt: hours(1), updatedAt: hours(0.5) });
     await recording({ transfer: "Failed", cleanup: "Pending", createdAt: hours(7 * 24 + 1), updatedAt: hours(7 * 24) });
-    await recording({ transfer: "Stored", cleanup: "Deleted", createdAt: hours(30), updatedAt: hours(2) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", createdAt: hours(30), updatedAt: hours(2) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Failed", createdAt: hours(3), updatedAt: hours(0.5) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Failed", createdAt: hours(7 * 24 + 1), updatedAt: hours(7 * 24) });
     const processing = recordingProcessing();
+    const waveform = recordingProcessing();
 
-    await expect(sweepStuckRecordings({ pool: pool!, recordingProcessing: processing }, now)).resolves.toEqual({ requested: 0, failed: 0 });
+    await expect(sweep(processing, waveform)).resolves.toEqual({ requested: 0, failed: 0 });
 
     expect(processing.requests).toEqual([]);
+    expect(waveform.requests).toEqual([]);
   });
 
   it("keeps requesting the remaining Recordings when one request fails", async () => {
@@ -147,8 +175,18 @@ describe("Recording recovery sweep", () => {
     const second = await recording({ transfer: "Failed", cleanup: "Pending", createdAt: hours(20), updatedAt: hours(2) });
     const processing = recordingProcessing(first);
 
-    await expect(sweepStuckRecordings({ pool: pool!, recordingProcessing: processing }, now)).resolves.toEqual({ requested: 1, failed: 1 });
+    await expect(sweep(processing)).resolves.toEqual({ requested: 1, failed: 1 });
 
     expect(processing.requests.map((request) => request.id)).toEqual([first, second]);
+  });
+
+  it("keeps requesting the remaining waveforms when one waveform request fails", async () => {
+    const first = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Failed", createdAt: hours(30), updatedAt: hours(2) });
+    const second = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Pending", createdAt: hours(20), updatedAt: hours(2) });
+    const waveform = recordingProcessing(first);
+
+    await expect(sweep(recordingProcessing(), waveform)).resolves.toEqual({ requested: 1, failed: 1 });
+
+    expect(waveform.requests.map((request) => request.id)).toEqual([first, second]);
   });
 });

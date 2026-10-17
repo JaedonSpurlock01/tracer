@@ -4,7 +4,8 @@
  * @brief  Requests Recording processing through the Trigger.dev REST API.
  *
  * @description
- *  Triggers one Recording transfer run per Recording by posting its id and
+ *  Triggers one Recording transfer run, or with the waveform task id one
+ *  Recording waveform run, per Recording by posting its id and
  *  Recording-derived idempotency key to Trigger.dev. Without a secret key the
  *  request does nothing, so the Recording stays Pending for the recovery
  *  sweep. A queued run waits up to 7 days, matching the sweep window.
@@ -20,6 +21,7 @@
  * @see
  *  data/recording.ts
  *  trigger/recording-transfer.ts
+ *  trigger/recording-waveform.ts
  *  https://trigger.dev/docs/management/tasks/trigger
  *
  * @author Jaedon Spurlock
@@ -29,20 +31,24 @@ import type { RecordingProcessing } from "@/data/recording";
 
 export const recordingTransferTaskId = "recording-transfer";
 
+export const recordingWaveformTaskId = "recording-waveform";
+
 export function createTriggerRecordingProcessing(options: {
   secretKey: string | undefined;
   fetch?: typeof fetch;
   baseUrl?: string;
   timeoutMs?: number;
+  taskId?: string;
 }): RecordingProcessing {
   const request = options.fetch ?? globalThis.fetch;
   const baseUrl = (options.baseUrl ?? "https://api.trigger.dev").replace(/\/$/, "");
+  const taskId = options.taskId ?? recordingTransferTaskId;
   return {
     async request(recording) {
       if (!options.secretKey) return;
       let response: Response;
       try {
-        response = await request(`${baseUrl}/api/v1/tasks/${recordingTransferTaskId}/trigger`, {
+        response = await request(`${baseUrl}/api/v1/tasks/${taskId}/trigger`, {
           method: "POST",
           headers: { Authorization: `Bearer ${options.secretKey}`, "content-type": "application/json" },
           body: JSON.stringify({ payload: { recordingId: recording.id }, options: { idempotencyKey: recording.idempotencyKey, ttl: "7d" } }),

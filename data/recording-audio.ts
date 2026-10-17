@@ -4,44 +4,24 @@
  * @brief  Streams a Stored Recording's private audio from R2.
  *
  * @description
- *  Loads a Recording scoped to its Organization and Workspace and streams its
- *  WAV object from the R2 binding as private, uncached audio. This is the
- *  only read path for Recording media; callers authorize the Workspace first.
+ *  Streams an available Recording's WAV object from the R2 binding as
+ *  private, uncached audio with single-range support for seeking. This is
+ *  the only read path for Recording audio; callers authorize the Workspace
+ *  and find the available media first.
  *
  * @remarks
  *  The object key never leaves the server, and no presigned or public URL is
  *  issued.
  *
  * @see
+ *  data/recording-media.ts
  *  data/workspaces-handler.ts
  *  https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
-
-export interface RecordingAudioBucket {
-  get(key: string, options?: { range?: { offset: number; length: number } }): Promise<{ body: ReadableStream } | null>;
-}
-
-export interface StoredRecordingAudio {
-  key: string;
-  sizeBytes: number;
-}
-
-export async function findStoredRecordingAudio(
-  pool: Pool,
-  scope: { organizationId: string; workspaceId: string; recordingId: string },
-): Promise<StoredRecordingAudio | null> {
-  const result = await pool.query<{ r2_object_key: string; size_bytes: string }>(
-    `select r2_object_key, size_bytes from recording
-      where id = $1 and organization_id = $2 and workspace_id = $3 and transfer_state = 'Stored'`,
-    [scope.recordingId, scope.organizationId, scope.workspaceId],
-  );
-  const row = result.rows[0];
-  return row ? { key: row.r2_object_key, sizeBytes: Number(row.size_bytes) } : null;
-}
+import type { AvailableRecordingMedia, RecordingMediaBucket } from "@/data/recording-media";
 
 function requestedRange(header: string | null, size: number): { offset: number; length: number } | "unsatisfiable" | null {
   const match = header?.match(/^bytes=(\d*)-(\d*)$/);
@@ -52,7 +32,7 @@ function requestedRange(header: string | null, size: number): { offset: number; 
   return { offset: first, length: last - first + 1 };
 }
 
-export async function recordingAudioResponse(bucket: RecordingAudioBucket, audio: StoredRecordingAudio, rangeHeader: string | null): Promise<Response | null> {
+export async function recordingAudioResponse(bucket: RecordingMediaBucket, audio: AvailableRecordingMedia["audio"], rangeHeader: string | null): Promise<Response | null> {
   const range = requestedRange(rangeHeader, audio.sizeBytes);
   const headers: Record<string, string> = { "content-type": "audio/wav", "cache-control": "private, no-store", "accept-ranges": "bytes" };
   if (range === "unsatisfiable") return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${audio.sizeBytes}` } });

@@ -4,9 +4,10 @@
  * @brief  Verifies the R2 S3 API contract for Recording objects.
  *
  * @description
- *  Checks the signed PUT and HEAD requests Tracer sends to the R2 S3 API for
- *  a Recording object, the stored size and checksum read back from HEAD, and
- *  safe errors that never expose the R2 secret access key.
+ *  Checks the signed PUT, HEAD, and GET requests Tracer sends to the R2 S3
+ *  API for a Recording object, the stored size and checksum read back from
+ *  HEAD, the bytes read back from GET, and safe errors that never expose the
+ *  R2 secret access key.
  *
  * @remarks
  *  Fixture account, bucket, and keys are synthetic test data. The WAV
@@ -62,6 +63,46 @@ describe("R2 Recording objects", () => {
     expect(request.method).toBe("HEAD");
     expect(request.url).toBe(objectUrl);
     expect(request.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
+  });
+
+  it("uploads derived waveform peaks with a signed PUT carrying the JSON content type", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(null, fixture.putObject));
+    const peaks = new TextEncoder().encode(JSON.stringify({ version: 1, peaks: [[0.5]] }));
+    const peaksSha256 = createHash("sha256").update(peaks).digest("hex");
+
+    await objects(fetch).put(fixture.peaksKey, peaks, { sizeBytes: peaks.byteLength, sha256: peaksSha256 }, "application/json");
+
+    const request = fetch.mock.calls[0][0];
+    expect(request.method).toBe("PUT");
+    expect(request.url).toBe(`https://${fixture.accountId}.r2.cloudflarestorage.com/${fixture.bucket}/${fixture.peaksKey}`);
+    expect(request.headers.get("content-type")).toBe("application/json");
+    expect(request.headers.get("x-amz-meta-sha256")).toBe(peaksSha256);
+    expect(new Uint8Array(await request.arrayBuffer())).toEqual(peaks);
+  });
+
+  it("reads a stored object's bytes with a signed GET", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(wav, fixture.getObject));
+
+    await expect(objects(fetch).get(fixture.key)).resolves.toEqual(wav);
+    const request = fetch.mock.calls[0][0];
+    expect(request.method).toBe("GET");
+    expect(request.url).toBe(objectUrl);
+    expect(request.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
+  });
+
+  it("reads an absent object's bytes as missing", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(null, { status: 404 }));
+
+    await expect(objects(fetch).get(fixture.key)).resolves.toBeNull();
+  });
+
+  it("rejects a failed GET without exposing the secret access key", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(fixture.accessDenied.body, { status: fixture.accessDenied.status }));
+
+    const error = await objects(fetch).get(fixture.key).catch((value: unknown) => value);
+
+    expect((error as Error).message).toBe("R2 request failed (HTTP 403)");
+    expect((error as Error).message).not.toContain(credentials.secretAccessKey);
   });
 
   it("reports an absent object as missing", async () => {

@@ -57,6 +57,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Added
 
+- Added a projected monthly Workspace cost and pricing guide to the unscheduled backlog at the Product Owner's request, to show what a Workspace costs across numbers, call minutes, recording, storage, transcription, and hosting.
 - Added `docs/IMPLEMENTATION_ROADMAP.md` as the authoritative incremental path from ideation through Production.
 - Added this project-evolution Changelog and its mandatory update protocol.
 - Added a domain behavior matrix, layered verification policy, and stable verification-script contract to project planning.
@@ -64,6 +65,10 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Changed
 
+- Started M12 - Waveform Playback and Call Detail for Trigger.dev waveform peak generation, aligned Caller and Business or mixed waveform lanes, authorized private Recording playback, Call facts, the processing timeline, and Recording availability states.
+- Gave M12 a Workspace Overview Recent Calls entry point to Call Detail because the Calls list waits for M14, chose wavesurfer.js for the waveform player for playback quality, deferred Download MP3 to M16 and kept playback-only audio, and treated media as Expired 12 months after Call start in M12 while deferring the Purged state to M17, which adds purge.
+- Added `@trigger.dev/build` 4.7.2, pinned to the `@trigger.dev/sdk` version, as a development dependency for M12 so `trigger.config.ts` can add the Audio Waveform build extension that installs `audiowaveform` in deployed task images; it is imported only by the Trigger.dev configuration, so nothing new enters the Worker bundle, and the local Dev runner that serves Staging and Preview needs `audiowaveform` installed itself because the extension skips Dev builds.
+- Added `wavesurfer.js` 7.12.12, pinned to the newest 7.x release at least two weeks old, as a runtime dependency for the M12 Call Detail player, which the Product Owner chose for playback quality; it loads only in the browser on Call Detail, draws precomputed peaks without decoding audio, and leaves streaming and seeking to the Workspace-authorized Range-capable audio route.
 - Started M11 - Durable Recording Transfer for signed Recording callbacks, idempotent Trigger.dev Recording transfer from Twilio to private R2, verified Twilio cleanup, Recording processing states, and Trigger.dev integration health.
 - Added dual-channel connected-conversation recording to M11 because M10 records voicemail only and M11's outcome requires connected Recordings, and added the Workspace-authorized Recording stream route to M11 so private media has one tested read path before M12 playback.
 - Chose Twilio WAV as the authoritative R2 Recording format and private Staging and Production R2 buckets for M11, because WAV keeps separate Caller and Business channels for waveform lanes and transcription; Preview uses the Staging bucket because it already shares the Staging database.
@@ -125,6 +130,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Completed
 
+- Completed M12 - Waveform Playback and Call Detail after the domain, contract, task, integration, Worker, component, browser, typecheck, lint, build, migration validation, and Staging database smoke gates passed with migration 0014 applied to Staging. Existing Staging connected Recordings generated Caller and Business waveform peaks through the local Trigger.dev Dev runner, and the Product Owner verified Call Detail playback on Staging through the Workspace-authorized media routes without a public R2 URL; the Staging voicemail transfer check deferred from M11 remains open.
 - Completed M11 - Durable Recording Transfer after the task, contract, integration, Worker, component, browser, typecheck, lint, build, and Staging database smoke gates passed with migrations 0012 and 0013 applied to Staging. Two Staging connected calls transferred to the private Staging R2 bucket through the local Trigger.dev Dev runner with matching size and SHA-256 before their Twilio copies were deleted; the Product Owner deferred the Staging voicemail transfer check.
 - Completed M10 - Complete First-Release Call Routing after the domain, contract, integration, Worker, component, browser, typecheck, lint, and build gates passed with migration 0011 adding pending Call Outcomes, voicemail capture, and the new provider event kinds. The Product Owner verified the Staging branch checks and carried M9 call checks before merging; provider costs from those checks were not recorded.
 - Completed M9 - Minimal Inbound Call Tracer Bullet after the domain, contract, integration, component, browser, typecheck, lint, build, and Staging database smoke gates passed with migrations 0008 through 0010 applied to Staging. The Product Owner waived the live Staging call gate (an answered and a non-answer call, signed callback replay, and number replacement with historical attribution); it moves to M10's Staging verification.

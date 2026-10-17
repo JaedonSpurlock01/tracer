@@ -5,7 +5,8 @@
  *
  * @description
  *  Every 12 hours, re-requests processing for Recordings whose transfer or
- *  Twilio cleanup stalled.
+ *  Twilio cleanup stalled, and waveform generation for transferred
+ *  Recordings whose waveform stalled.
  *
  * @remarks
  *  Registration stays thin so the sweep is tested as an ordinary function.
@@ -22,7 +23,7 @@
  */
 import { schedules } from "@trigger.dev/sdk";
 
-import { createTriggerRecordingProcessing } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingWaveformTaskId } from "@/data/recording-processing";
 import { sweepStuckRecordings } from "@/data/recording-recovery";
 import { requiredEnvironment, taskPool } from "@/trigger/environment";
 
@@ -38,6 +39,11 @@ export const recordingRecovery = schedules.task({
           recordingProcessing: createTriggerRecordingProcessing({
             secretKey: requiredEnvironment("TRIGGER_SECRET_KEY"),
             baseUrl: process.env.TRIGGER_API_URL,
+          }),
+          recordingWaveform: createTriggerRecordingProcessing({
+            secretKey: requiredEnvironment("TRIGGER_SECRET_KEY"),
+            baseUrl: process.env.TRIGGER_API_URL,
+            taskId: recordingWaveformTaskId,
           }),
         },
         payload.timestamp,

@@ -6,14 +6,16 @@
  * @description
  *  Runs the Recording transfer workflow against a real PostgreSQL database
  *  with fake Twilio media and R2 object boundaries, and checks the stored
- *  object, the persisted transfer and cleanup states, failure recovery, and
- *  that the Twilio copy is never deleted before a verified R2 copy is
- *  recorded.
+ *  object, the persisted transfer and cleanup states, failure recovery, that
+ *  the Twilio copy is never deleted before a verified R2 copy is recorded,
+ *  and that waveform generation is requested once the Recording is Stored
+ *  without its failure affecting the transfer or cleanup.
  *
  * @remarks
  *  The fakes implement the provider interfaces only. The R2 fake computes
  *  the checksum of the bytes it receives so verification proves the bytes
- *  that reached storage match the Twilio download.
+ *  that reached storage match the Twilio download. Waveform requests go to
+ *  a fake at the Trigger.dev boundary that records each request.
  *
  * @see
  *  data/recording-transfer.ts
@@ -32,6 +34,7 @@ import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
 import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import type { RecordingProcessing, RecordingProcessingRequest } from "@/data/recording";
 import { transferRecording, type RecordingTransferDependencies } from "@/data/recording-transfer";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
 
@@ -105,12 +108,27 @@ function fakeR2(): FakeR2 {
       if (r2.putFailure) throw r2.putFailure;
       r2.objects.set(key, { bytes: body, stored: { sizeBytes: body.byteLength, sha256: sha256(body) } });
     },
+    async get(key) {
+      return r2.objects.get(key)?.bytes ?? null;
+    },
   };
   return r2;
 }
 
-function dependencies(twilio: FakeTwilio, r2: FakeR2): RecordingTransferDependencies {
-  return { pool: pool!, masterKey, twilio, objects: r2, now: () => now };
+function fakeWaveform(failure: Error | null = null): RecordingProcessing & { requests: { request: RecordingProcessingRequest; transferState: string }[] } {
+  const requests: { request: RecordingProcessingRequest; transferState: string }[] = [];
+  return {
+    requests,
+    async request(request) {
+      const row = await pool!.query("select transfer_state from recording where id = $1", [request.id]);
+      requests.push({ request, transferState: row.rows[0].transfer_state });
+      if (failure) throw failure;
+    },
+  };
+}
+
+function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform()): RecordingTransferDependencies {
+  return { pool: pool!, masterKey, twilio, objects: r2, waveform, now: () => now };
 }
 
 let sequence = 0;
@@ -213,6 +231,53 @@ describe("Recording transfer", () => {
 
     expect(twilio.deletes).toEqual([{ sid: recording.sid, transferState: "Stored" }]);
     expect(await recordingRow(recording.id)).toMatchObject({ transfer_state: "Stored", twilio_cleanup_state: "Deleted", twilio_deleted_at: now });
+  });
+
+  it("requests waveform generation with its Recording-derived idempotency key once the Recording is Stored", async () => {
+    const recording = await pendingRecording("connected");
+    const twilio = fakeTwilio();
+    const waveform = fakeWaveform();
+    twilio.media.set(recording.sid, recording.bytes);
+
+    await transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id);
+
+    expect(waveform.requests).toEqual([{ request: { id: recording.id, organizationId, idempotencyKey: `recording-waveform:${recording.id}` }, transferState: "Stored" }]);
+  });
+
+  it("still deletes the Twilio copy when the waveform request fails", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const waveform = fakeWaveform(new Error("Trigger.dev is unavailable"));
+    twilio.media.set(recording.sid, recording.bytes);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id)).resolves.toBeUndefined();
+
+    expect(waveform.requests).toHaveLength(1);
+    expect(twilio.deletes).toEqual([{ sid: recording.sid, transferState: "Stored" }]);
+    expect(await recordingRow(recording.id)).toMatchObject({ transfer_state: "Stored", twilio_cleanup_state: "Deleted", failure_stage: null, failure_reason: null });
+  });
+
+  it("requests waveform generation even when Twilio cleanup fails", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const waveform = fakeWaveform();
+    twilio.media.set(recording.sid, recording.bytes);
+    twilio.deleteFailure = new TwilioClientError("unavailable", null);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id)).rejects.toBe(twilio.deleteFailure);
+
+    expect(waveform.requests.map(({ request }) => request.id)).toEqual([recording.id]);
+  });
+
+  it("does not request waveform generation for a Recording that failed to store", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const waveform = fakeWaveform();
+    twilio.downloadFailure = new TwilioClientError("unavailable", null);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id)).rejects.toBe(twilio.downloadFailure);
+
+    expect(waveform.requests).toEqual([]);
   });
 
   it("persists a download failure as Failed with a secret-free reason and rethrows it for retry", async () => {

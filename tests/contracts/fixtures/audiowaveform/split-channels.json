@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "channels": 2,
+  "sample_rate": 8000,
+  "samples_per_pixel": 160,
+  "bits": 8,
+  "length": 4,
+  "data": [-64, 63, -1, 1, -128, 127, -2, 3, -10, 12, -96, 90, 0, 0, -32, 40]
+}

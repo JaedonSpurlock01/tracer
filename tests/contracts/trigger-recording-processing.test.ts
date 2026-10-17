@@ -5,9 +5,9 @@
  *
  * @description
  *  Checks that a Recording processing request triggers the Recording
- *  transfer task through the Trigger.dev REST API with the exact URL,
- *  authorization, payload, and idempotency key, and that failures reject
- *  without exposing the secret key.
+ *  transfer or waveform task through the Trigger.dev REST API with the exact
+ *  URL, authorization, payload, and idempotency key, and that failures
+ *  reject without exposing the secret key.
  *
  * @remarks
  *  Fixture identifiers and the secret key are synthetic test data.
@@ -21,7 +21,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { createTriggerRecordingProcessing } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingWaveformTaskId } from "@/data/recording-processing";
 
 import fixture from "./fixtures/trigger/trigger-task.json";
 
@@ -47,6 +47,17 @@ describe("Trigger.dev Recording processing", () => {
     expect(init.headers).toEqual({ Authorization: `Bearer ${secretKey}`, "content-type": "application/json" });
     expect(JSON.parse(init.body as string)).toEqual(fixture.request);
     expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("triggers one Recording waveform run on the waveform task with its own idempotency key", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(fixture.response));
+    const processing = createTriggerRecordingProcessing({ secretKey, fetch, baseUrl: "https://trigger.test", taskId: recordingWaveformTaskId });
+
+    await processing.request({ ...recording, idempotencyKey: `recording-waveform:${recordingId}` });
+
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://trigger.test/api/v1/tasks/recording-waveform/trigger");
+    expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-waveform:${recordingId}`, ttl: "7d" } });
   });
 
   it("rejects a non-success response without exposing the secret key", async () => {
