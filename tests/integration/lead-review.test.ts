@@ -236,6 +236,25 @@ describe.sequential("Lead Review writes", () => {
     expect(before[0]).toMatchObject({ classification: "Good Lead", score: 82 });
   });
 
+  it("appends a Lead Review added event with its classification and reviewer for every add and update", async () => {
+    await seedCall("review-history-call");
+    await putLeadReview("granted-active", "review-history-call", operatorCookie, { classification: "Not Good Lead", note: "Wrong service area." });
+    await putLeadReview("granted-active", "review-history-call", operatorCookie, { classification: "Good Lead" });
+    const events = await pool!.query(
+      "select kind, detail, actor_user_id, occurred_at from call_event where call_id = 'review-history-call' and kind = 'lead_review_added' order by occurred_at, id",
+    );
+    expect(events.rows).toEqual([
+      { kind: "lead_review_added", detail: { classification: "Not Good Lead" }, actor_user_id: operatorId, occurred_at: expect.any(Date) },
+      { kind: "lead_review_added", detail: { classification: "Good Lead" }, actor_user_id: operatorId, occurred_at: (await storedReviews("review-history-call"))[0].reviewed_at },
+    ]);
+  });
+
+  it("appends no Lead Review event when a Client Viewer's Lead Review is refused", async () => {
+    await putLeadReview("granted-active", "review-history-call", clientCookie, { classification: "Uncertain" });
+    const events = await pool!.query("select count(*)::int as count from call_event where call_id = 'review-history-call' and kind = 'lead_review_added'");
+    expect(events.rows[0].count).toBe(2);
+  });
+
   it("refuses a Client Viewer's Lead Review with the Operator-only refusal and writes nothing", async () => {
     for (const callId of ["unassessed-call", "ungranted-call"]) {
       const { response, body } = await putLeadReview(callId === "ungranted-call" ? "ungranted-active" : "granted-active", callId, clientCookie, { classification: "Good Lead" });

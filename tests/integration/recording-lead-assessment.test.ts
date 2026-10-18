@@ -308,3 +308,28 @@ describe("Recording Lead Assessment", () => {
     expect(await Promise.all(records.map((recording) => recordingRow(recording.id)))).toEqual(before);
   });
 });
+
+describe("Recording Lead Assessment Call events", () => {
+  async function callEvents(callId: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
+    const result = await pool!.query("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+    return result.rows;
+  }
+
+  it("appends one Lead Assessment failed across repeated failures and then Lead Assessment completed with its classification and score", async () => {
+    const recording = await transcribedRecording();
+    const failing = fakeResponder();
+    failing.failure = new OpenAIError("OpenAI request failed (HTTP 429)");
+
+    await expect(assessRecordingLead(dependencies(failing), recording.id)).rejects.toBe(failing.failure);
+    await expect(assessRecordingLead(dependencies(failing), recording.id)).rejects.toBe(failing.failure);
+    expect(await callEvents(recording.callId)).toEqual([{ kind: "lead_assessment_failed", detail: {} }]);
+
+    await assessRecordingLead(dependencies(fakeResponder()), recording.id);
+    await assessRecordingLead(dependencies(fakeResponder()), recording.id);
+
+    expect(await callEvents(recording.callId)).toEqual([
+      { kind: "lead_assessment_failed", detail: {} },
+      { kind: "lead_assessment_completed", detail: { classification: "Good Lead", score: 88 } },
+    ]);
+  });
+});

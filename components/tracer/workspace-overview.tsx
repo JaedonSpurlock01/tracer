@@ -6,7 +6,8 @@
  * @description
  *  Displays Workspace identity, routing metadata, setup requirements, the
  *  published Call Flow summary for Operators, and the five Recent Calls
- *  linking to Call Detail.
+ *  linking to Call Detail, with View Calls opening Workspace Calls. The
+ *  Workspace tabs sit below the header.
  *
  * @remarks
  *  Provider health and inbound Call metrics remain deferred to later milestones.
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallTime, formatClock } from "@/components/tracer/call-format";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
+import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import type { RecentCall } from "@/data/call-details";
 import type { CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -47,7 +49,12 @@ function RecentCalls({ workspace, calls }: { workspace: WorkspaceRecord; calls: 
   return (
     <Frame>
       <FramePanel className="flex flex-col gap-4">
-        <h2 id="recent-calls-title" className="font-semibold">Recent Calls</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="recent-calls-title" className="font-semibold">Recent Calls</h2>
+          <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/calls`} prefetch />}>
+            View Calls
+          </Button>
+        </div>
         {calls.length === 0 ? (
           <p className="text-sm text-muted-foreground">No Calls yet. Calls appear after the first inbound Call reaches the Tracking Number.</p>
         ) : (
@@ -99,6 +106,7 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
           ) : null}
         </div>}
       </div>
+      <WorkspaceTabs workspaceId={workspace.id} operator={!readOnly} current="overview" />
       <Frame>
         <FramePanel className="grid gap-5 sm:grid-cols-3">
           <div>

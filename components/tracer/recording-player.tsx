@@ -23,7 +23,9 @@
  *  and select menus, so they never hijack typing. Reduced motion turns off
  *  playhead auto-centering. The ready player connects its position and
  *  seek to an enclosing PlaybackProvider, so the Transcript can follow and
- *  seek playback without owning the media element.
+ *  seek playback without owning the media element. Auto play starts
+ *  playback once on open for the Calls Play Recording action; a browser
+ *  that blocks it leaves the player paused.
  *
  * @see
  *  data/call-details.ts
@@ -93,7 +95,7 @@ function ProcessingPlayer({ stage }: { stage: "transfer" | "waveform" }) {
   );
 }
 
-function ReadyPlayer({ workspaceId, recording }: { workspaceId: string; recording: ReadyRecording }) {
+function ReadyPlayer({ workspaceId, recording, autoPlay }: { workspaceId: string; recording: ReadyRecording; autoPlay: boolean }) {
   const mediaPath = `/api/workspaces/${workspaceId}/recordings/${recording.id}`;
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
@@ -175,6 +177,10 @@ function ReadyPlayer({ workspaceId, recording }: { workspaceId: string; recordin
   useEffect(() => {
     wavesurferRef.current?.zoom(zoomLevels[zoomIndex]);
   }, [zoomIndex]);
+
+  useEffect(() => {
+    if (autoPlay) void audioRef.current?.play().catch(() => setPlaying(false));
+  }, [autoPlay]);
 
   const seek = useCallback((seconds: number) => {
     const media = audioRef.current;
@@ -366,10 +372,10 @@ function ReadyPlayer({ workspaceId, recording }: { workspaceId: string; recordin
   );
 }
 
-export default function RecordingPlayer({ workspaceId, recording }: { workspaceId: string; recording: RecordingAvailability }) {
+export default function RecordingPlayer({ workspaceId, recording, autoPlay = false }: { workspaceId: string; recording: RecordingAvailability; autoPlay?: boolean }) {
   switch (recording.state) {
     case "Ready":
-      return <ReadyPlayer workspaceId={workspaceId} recording={recording} />;
+      return <ReadyPlayer workspaceId={workspaceId} recording={recording} autoPlay={autoPlay} />;
     case "Processing":
       return <ProcessingPlayer stage={recording.stage} />;
     case "Failed":

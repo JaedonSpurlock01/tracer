@@ -9,17 +9,23 @@
  *  Workspace only while its WAV is Stored and its media has not expired,
  *  returning the WAV and, once the waveform is Stored, its peaks object.
  *  Serves the peaks JSON from the R2 binding as a private, uncached
- *  response. Callers authorize the Workspace first.
+ *  response. Callers authorize the Workspace first. Also states Recording
+ *  availability in SQL so lists can filter on the same Ready, Processing,
+ *  Failed, Unavailable, or Expired state that Call Detail derives.
  *
  * @remarks
  *  Expiry is derived from the Call's start rather than stored, so no row is
  *  written or deleted when media expires; the Call, its facts, and the
- *  Recording metadata remain. Object keys never leave the server.
+ *  Recording metadata remain. Object keys never leave the server. The SQL
+ *  availability state follows the same precedence as `recordingAvailability`
+ *  in data/call-details.ts: no Recording, then Expired, then a failed or
+ *  pending transfer, then a pending waveform.
  *
  * @see
  *  data/recording-audio.ts
  *  data/recording-waveform.ts
  *  data/workspaces-handler.ts
+ *  data/call-details.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -41,6 +47,16 @@ export function recordingMediaExpiresAtSql(callStartedAt: string): string {
 
 export function recordingMediaExpiredSql(callStartedAt: string, now: string): string {
   return `(${recordingMediaExpiresAtSql(callStartedAt)} <= ${now})`;
+}
+
+export function recordingAvailabilitySql(recording: string, callStartedAt: string): string {
+  return `case
+    when ${recording}.id is null then 'Unavailable'
+    when ${recordingMediaExpiredSql(callStartedAt, "now()")} then 'Expired'
+    when ${recording}.transfer_state = 'Failed' then 'Failed'
+    when ${recording}.transfer_state = 'Pending' or ${recording}.waveform_state = 'Pending' then 'Processing'
+    else 'Ready'
+  end`;
 }
 
 export async function findAvailableRecordingMedia(

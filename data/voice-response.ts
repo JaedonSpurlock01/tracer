@@ -175,11 +175,19 @@ export function renderCallStart(graph: CallFlowGraph, context: VoiceContext): Vo
   return walk(graph, graph.nodes.find((node) => node.type === "incoming_call"), context);
 }
 
+export function keypadGateResult(graph: CallFlowGraph, gateNodeId: string, digits: string, attempt: number): "passed" | "failed" | "retry" | null {
+  const gate = graph.nodes.find((node) => node.id === gateNodeId);
+  if (gate?.type !== "keypad_gate") return null;
+  if (digits === gate.digit) return "passed";
+  return attempt < keypadGateAttempts ? "retry" : "failed";
+}
+
 export function renderGatherResult(graph: CallFlowGraph, gateNodeId: string, digits: string, attempt: number, context: VoiceContext): VoiceStep {
   const gate = graph.nodes.find((node) => node.id === gateNodeId);
   if (gate?.type !== "keypad_gate") return ended({ outcome: "Failed", reason: "unknown_step" });
-  if (digits === gate.digit) return walk(graph, nextNode(graph, gate.id, "pass"), context, "pass");
-  if (attempt < keypadGateAttempts) {
+  const result = keypadGateResult(graph, gateNodeId, digits, attempt);
+  if (result === "passed") return walk(graph, nextNode(graph, gate.id, "pass"), context, "pass");
+  if (result === "retry") {
     return { twiml: response(gather(gate, attempt + 1, context)), forwardNodeId: null, outcome: null, pending: gateNotCompleted };
   }
   return walk(graph, nextNode(graph, gate.id, "blocked"), context, "blocked");

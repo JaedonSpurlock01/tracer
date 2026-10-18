@@ -34,10 +34,15 @@
  *  Twilio RecordingSid, and its processing is requested only after the
  *  transaction that created it commits; a failed request leaves the
  *  Recording Pending for targeted recovery instead of failing the callback.
+ *  Each transaction also appends the Call events its state change records:
+ *  Call received, Spam gate passed or failed, Forwarding attempted, and
+ *  Call completed with its outcome, keyed so a replayed callback adds
+ *  nothing and a later outcome correction adds a second Call completed.
  *
  * @see
  *  data/twilio-webhook-handler.ts
  *  data/voice-response.ts
+ *  data/call-events.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -46,10 +51,12 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
+import { appendCallEvent } from "@/data/call-events";
 import { parseCallFlowGraph, type CallFlowGraph } from "@/data/call-flow";
 import { completedRecording, type CompletedRecording, type RecordingProcessing } from "@/data/recording";
 import {
   correctableOutcomeReasons,
+  keypadGateResult,
   renderCallStart,
   renderForwardResult,
   renderGatherResult,
@@ -210,6 +217,14 @@ async function finalize(client: PoolClient, callId: string): Promise<void> {
     "update call set state = 'Completed', updated_at = now() where id = $1 and state <> 'Completed' and ended_at is not null and outcome is not null",
     [callId],
   );
+  await client.query(
+    `insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, detail, idempotency_key)
+     select organization_id, workspace_id, id, 'call_completed', now(), jsonb_build_object('outcome', outcome), 'call_completed:' || id || ':' || outcome
+       from call
+      where id = $1 and state = 'Completed'
+     on conflict (organization_id, idempotency_key) do nothing`,
+    [callId],
+  );
 }
 
 function voiceContext(assignment: AssignmentRow, call: CallRow, urls: VoiceUrls): VoiceContext {
@@ -259,6 +274,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
         const call = await findCall(client, assignment.organization_id, params.CallSid);
         if (!call) return { kind: "twiml", twiml: hangup };
         const recorded = await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: call.id, key: `${params.CallSid}:voice`, kind: "voice", params });
+        await appendCallEvent(client, { callId: call.id, kind: "call_received", key: `call_received:${call.id}`, occurredAt: call.started_at });
         const graph = await pinnedGraph(client, call);
         const step = graph ? renderCallStart(graph, voiceContext(assignment, call, urls)) : unreadableFlow;
         if (recorded) await applyStep(client, call.id, step);
@@ -276,6 +292,10 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
         const graph = await pinnedGraph(client, call);
         const step = graph ? renderGatherResult(graph, gateNodeId, params.Digits ?? "", attempt, voiceContext(assignment, call, urls)) : unreadableFlow;
         if (recorded) await applyStep(client, call.id, step);
+        const gate = graph ? keypadGateResult(graph, gateNodeId, params.Digits ?? "", attempt) : null;
+        if (gate === "passed" || gate === "failed") {
+          await appendCallEvent(client, { callId: call.id, kind: gate === "passed" ? "spam_gate_passed" : "spam_gate_failed", key: `spam_gate:${call.id}` });
+        }
         return { kind: "twiml", twiml: step.twiml };
       });
     },
@@ -318,6 +338,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
         if (!(await recordEvent(client, { organizationId: assignment.organization_id, assignmentId, callId: call.id, key, kind: "forward_status", params }))) return { kind: "recorded" };
         if (status === "initiated") {
           await client.query("update call set forward_started_at = coalesce(forward_started_at, now()), updated_at = now() where id = $1", [call.id]);
+          await appendCallEvent(client, { callId: call.id, kind: "forwarding_attempted", key: `forwarding_attempted:${call.id}` });
         } else if (status === "in-progress") {
           await client.query("update call set answered_at = coalesce(answered_at, now()), updated_at = now() where id = $1", [call.id]);
         } else if (terminalForwardStatuses.has(status)) {
@@ -334,6 +355,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
               where id = $1 and forward_status is null`,
             [call.id, status, outcome?.outcome ?? null, outcome?.reason ?? null, correctableReasons],
           );
+          await appendCallEvent(client, { callId: call.id, kind: "forwarding_attempted", key: `forwarding_attempted:${call.id}` });
           await finalize(client, call.id);
         }
         return { kind: "recorded" };
@@ -416,6 +438,9 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
               ? { outcome: call.pending_outcome, reason: call.pending_outcome_reason }
               : { outcome: "Abandoned", reason: provisionalReason }
           : null;
+        if (endedOutcome?.reason === "gate_not_completed") {
+          await appendCallEvent(client, { callId: call.id, kind: "spam_gate_failed", key: `spam_gate:${call.id}` });
+        }
         await client.query(
           `update call
               set ended_at = coalesce(ended_at, now()),

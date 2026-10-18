@@ -7,7 +7,9 @@
  *  Operators read and manage every Workspace in their Organization. Client
  *  Viewers read only Workspaces they hold a current direct Access Grant for,
  *  and only while those Workspaces are Active or Archived. Every page and
- *  server interface resolves Workspace reads through this module.
+ *  server interface resolves Workspace reads through this module, and
+ *  queries that span Workspaces, such as Calls, filter their `w` Workspace
+ *  alias with its readable Workspace SQL condition.
  *
  * @remarks
  *  Grants are checked against the database on every request, so removing an
@@ -43,4 +45,17 @@ export function createReadableWorkspaces(pool: Pool, actor: Actor): ReadableWork
     grantedToUserId: actor.userId,
     readableStates: workspaceStates.filter(accessGrantAuthorizesRead),
   });
+}
+
+export function readableWorkspaceSql(actor: Actor, values: unknown[]): string {
+  if (actor.state !== "Active") {
+    throw new Error("Workspace reads require an Active actor");
+  }
+  values.push(actor.organizationId);
+  const organization = `w.organization_id = $${values.length}`;
+  if (actor.role === "Operator") return organization;
+  values.push(actor.userId, workspaceStates.filter(accessGrantAuthorizesRead));
+  return `${organization}
+    and exists (select 1 from access_grant g where g.workspace_id = w.id and g.organization_id = w.organization_id and g.user_id = $${values.length - 1})
+    and w.state = any($${values.length}::text[])`;
 }

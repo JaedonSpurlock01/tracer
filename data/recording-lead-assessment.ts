@@ -21,7 +21,9 @@
  *  purge can delete Transcript-derived text while the assessment remains.
  *  A failure is recorded as Failed with a secret-free reason, never model
  *  output or an unexpected error's message, and rethrown for Trigger.dev
- *  to retry; the Transcript, transfer, and waveform are never touched.
+ *  to retry; the Transcript, transfer, and waveform are never touched. The
+ *  Completed commit and the Failed update each append their Call event
+ *  atomically, and a repeated failure keeps its single failed event.
  *
  * @see
  *  data/lead-assessment.ts
@@ -36,6 +38,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 
+import { appendCallEvent } from "@/data/call-events";
 import { LeadAssessmentError, leadAssessmentCostUsd, leadAssessmentModel, leadAssessmentRequest, parseLeadAssessment, type LeadAssessmentResult } from "@/data/lead-assessment";
 import { OpenAIError, type StructuredResponder } from "@/data/openai-client";
 import { recordingMediaExpiredSql } from "@/data/recording-media";
@@ -105,6 +108,13 @@ async function complete(
       );
     }
     await client.query("update recording set lead_assessment_state = 'Completed', lead_assessment_failure_reason = null, updated_at = $2 where id = $1", [row.id, now]);
+    await appendCallEvent(client, {
+      callId: row.call_id,
+      kind: "lead_assessment_completed",
+      key: `lead_assessment_completed:${row.id}`,
+      occurredAt: now,
+      detail: { classification: result.classification, score: result.score },
+    });
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
@@ -133,8 +143,14 @@ export async function assessRecordingLead(deps: RecordingLeadAssessmentDependenc
     await complete(deps, row, parseLeadAssessment(response.text, turns), response);
   } catch (error) {
     await deps.pool.query(
-      `update recording set lead_assessment_state = 'Failed', lead_assessment_failure_reason = $2, updated_at = $3
-        where id = $1 and lead_assessment_state in ('Pending', 'Failed')`,
+      `with failed as (
+         update recording set lead_assessment_state = 'Failed', lead_assessment_failure_reason = $2, updated_at = $3
+          where id = $1 and lead_assessment_state in ('Pending', 'Failed')
+          returning organization_id, workspace_id, call_id
+       )
+       insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
+       select organization_id, workspace_id, call_id, 'lead_assessment_failed', $3, 'lead_assessment_failed:' || $1 from failed
+       on conflict (organization_id, idempotency_key) do nothing`,
       [row.id, failureReason(error), deps.now()],
     );
     throw error;

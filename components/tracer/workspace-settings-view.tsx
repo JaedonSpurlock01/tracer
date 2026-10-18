@@ -7,7 +7,7 @@
  *  Provides General, Number, Recording and AI, Access, and Danger settings,
  *  each on its own page linked from the rail. The Number page replaces or
  *  detaches the Tracking Number. An Archived Workspace keeps only Access and
- *  Restore editable.
+ *  Restore editable. The Workspace tabs sit below the header.
  *
  * @remarks
  *  Each section is a separate route so it can be linked and bookmarked.
@@ -47,6 +47,7 @@ import { Textarea } from "@/components/ui/textarea";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -240,6 +241,7 @@ export default function WorkspaceSettingsView({
           {message ? <p role="status" className="text-sm">{message}</p> : null}
         </div>
       </div>
+      <WorkspaceTabs workspaceId={workspace.id} operator current="settings" />
       <Frame>
         <FramePanel className="grid gap-6 md:grid-cols-[12rem_1fr]">
           <nav aria-label="Workspace settings sections" className="flex gap-1 overflow-x-auto md:flex-col">

@@ -26,7 +26,10 @@
  *  reuses its own Recording-derived idempotency key so reruns map to one
  *  run. Eligibility is decided once, in the Stored transaction, so the
  *  Workspace analysis setting is read when the Recording becomes Stored and
- *  a later change never backfills it.
+ *  a later change never backfills it. The Stored commit appends Recording
+ *  transferred, and Transcript skipped when analysis is skipped, and a
+ *  failed download, upload, or verify appends one Recording transfer
+ *  failed event, so a Twilio cleanup failure never reaches Activity.
  *
  * @see
  *  data/r2-objects.ts
@@ -41,6 +44,7 @@
 import type { Pool, PoolClient } from "pg";
 
 import { analysisEligibility } from "@/data/analysis-eligibility";
+import { appendCallEvent } from "@/data/call-events";
 import { connectedSecondsSql, spamGateResult, type KeypadEvent } from "@/data/call-details";
 import { parseCallFlowGraph, type OutcomeKind } from "@/data/call-flow";
 import { decryptSecret } from "@/data/credential-encryption";
@@ -158,6 +162,10 @@ async function store(deps: RecordingTransferDependencies, client: PoolClient, ro
       where id = $1`,
     [row.id, key, object.sizeBytes, object.sha256, now, transcript.state, transcript.skipReason],
   );
+  await appendCallEvent(client, { callId: row.call_id, kind: "recording_transferred", key: `recording_transferred:${row.id}`, occurredAt: now });
+  if (transcript.state === "Skipped") {
+    await appendCallEvent(client, { callId: row.call_id, kind: "transcript_skipped", key: `transcript_skipped:${row.id}`, occurredAt: now, detail: { reason: transcript.skipReason! } });
+  }
   return transcript.state;
 }
 
@@ -176,13 +184,17 @@ function failureReason(error: unknown, stage: FailureStage): string {
   return error instanceof TwilioClientError || error instanceof R2ObjectError || error instanceof RecordingTransferError ? error.message : `Recording ${stage} failed`;
 }
 
-async function recordFailure(deps: RecordingTransferDependencies, client: PoolClient, recordingId: string, stage: FailureStage, error: unknown): Promise<void> {
+async function recordFailure(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, stage: FailureStage, error: unknown): Promise<void> {
+  const now = deps.now();
   await client.query(
     stage === "cleanup"
       ? "update recording set twilio_cleanup_state = 'Failed', failure_stage = $2, failure_reason = $3, updated_at = $4 where id = $1"
       : "update recording set transfer_state = 'Failed', failure_stage = $2, failure_reason = $3, updated_at = $4 where id = $1",
-    [recordingId, stage, failureReason(error, stage), deps.now()],
+    [row.id, stage, failureReason(error, stage), now],
   );
+  if (stage !== "cleanup") {
+    await appendCallEvent(client, { callId: row.call_id, kind: "recording_transfer_failed", key: `recording_transfer_failed:${row.id}`, occurredAt: now, detail: { stage } });
+  }
 }
 
 async function withLockedRecording(
@@ -202,7 +214,7 @@ async function withLockedRecording(
       } catch (error) {
         if (!progress.stage) throw error;
         await client.query("rollback to savepoint stage");
-        await recordFailure(deps, client, row.id, progress.stage, error);
+        await recordFailure(deps, client, row, progress.stage, error);
         await client.query("commit");
         throw error;
       }

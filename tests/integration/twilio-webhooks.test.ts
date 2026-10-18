@@ -826,3 +826,94 @@ describe.sequential("Staging Recording smoke", () => {
     expect(processingRequests).toEqual([]);
   });
 });
+
+async function callEvents(callSid: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
+  const result = await pool!.query(
+    `select e.kind, e.detail
+       from call_event e
+       join call c on c.id = e.call_id and c.organization_id = e.organization_id and c.workspace_id = e.workspace_id
+      where c.twilio_call_sid = $1
+      order by e.occurred_at, e.id`,
+    [callSid],
+  );
+  return result.rows;
+}
+
+describe.sequential("Call event log", () => {
+  beforeAll(async () => {
+    const graph = generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+    await pool!.query(
+      `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
+       select 'webhook-flow-version-events', organization_id, 'webhook-workspace', 100, $1, now() from workspace where id = 'webhook-workspace'`,
+      [JSON.stringify(graph)],
+    );
+  });
+
+  it("appends Call received exactly once when the voice webhook is delivered twice", async () => {
+    const callSid = "CA00000000000000000000000000000900";
+    await startCall(callSid);
+    await startCall(callSid);
+    expect(await callEvents(callSid)).toEqual([{ kind: "call_received", detail: {} }]);
+  });
+
+  it("appends Forwarding attempted once and Call completed with its outcome when the Call completes", async () => {
+    const callSid = "CA00000000000000000000000000000901";
+    await startCall(callSid);
+    await forwardStatus(callSid, "initiated");
+    await forwardStatus(callSid, "in-progress");
+    await forwardStatus(callSid, "completed");
+    expect((await callEvents(callSid)).map((event) => event.kind)).toEqual(["call_received", "forwarding_attempted"]);
+    await callStatus(callSid, "completed", "42");
+    await callStatus(callSid, "completed", "42");
+    await forwardStatus(callSid, "completed");
+    expect(await callEvents(callSid)).toEqual([
+      { kind: "call_received", detail: {} },
+      { kind: "forwarding_attempted", detail: {} },
+      { kind: "call_completed", detail: { outcome: "Answered" } },
+    ]);
+  });
+
+  it("appends a second Call completed event when a late Forward Call result corrects a provisional outcome", async () => {
+    const callSid = "CA00000000000000000000000000000902";
+    await startCall(callSid);
+    await callStatus(callSid, "completed", "40");
+    await forwardStatus(callSid, "initiated");
+    await forwardStatus(callSid, "completed");
+    expect(await callEvents(callSid)).toEqual([
+      { kind: "call_received", detail: {} },
+      { kind: "call_completed", detail: { outcome: "Abandoned" } },
+      { kind: "forwarding_attempted", detail: {} },
+      { kind: "call_completed", detail: { outcome: "Answered" } },
+    ]);
+  });
+
+  it("appends Spam gate passed once when the caller presses the gate digit", async () => {
+    await publishRoutingFlow(gatedFlow());
+    const callSid = "CA00000000000000000000000000000903";
+    await startRoutingCall(callSid);
+    await gatherAction(callSid, "1", 1);
+    await gatherAction(callSid, "1", 1);
+    expect((await callEvents(callSid)).map((event) => event.kind)).toEqual(["call_received", "spam_gate_passed"]);
+  });
+
+  it("appends Spam gate failed only after the last gate attempt fails", async () => {
+    const callSid = "CA00000000000000000000000000000904";
+    await startRoutingCall(callSid);
+    await gatherAction(callSid, "9", 1);
+    expect((await callEvents(callSid)).map((event) => event.kind)).toEqual(["call_received"]);
+    await gatherAction(callSid, "", 2);
+    await routingCallStatus(callSid, "completed", "20");
+    expect(await callEvents(callSid)).toEqual([
+      { kind: "call_received", detail: {} },
+      { kind: "spam_gate_failed", detail: {} },
+      { kind: "call_completed", detail: { outcome: "Blocked" } },
+    ]);
+  });
+
+  it("appends Spam gate failed when the caller hangs up during the gate", async () => {
+    const callSid = "CA00000000000000000000000000000905";
+    await startRoutingCall(callSid);
+    await routingCallStatus(callSid, "completed", "6");
+    expect((await callEvents(callSid)).map((event) => event.kind)).toEqual(["call_received", "spam_gate_failed", "call_completed"]);
+  });
+});

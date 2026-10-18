@@ -1,22 +1,41 @@
 /**
  * -------------------------------------------------------------------------
  * @file   page.tsx
- * @brief  Renders the authenticated Activity placeholder.
+ * @brief  Renders the guarded global Activity surface.
  *
  * @description
- *  Reserves the Activity surface until Call event delivery is implemented.
+ *  Loads the first page of Activity for every Call the actor may read,
+ *  filtered as the URL's search and Activity filter parameters ask, on the
+ *  server so the timeline renders without a loading Skeleton, together with
+ *  the readable Workspaces the Workspace filter offers.
  *
  * @remarks
- *  The shell protects this page before the placeholder renders.
+ *  Operators see every Organization Workspace and Client Viewers only
+ *  granted Workspaces; the Activity query enforces that scope. Days and
+ *  times render in the user's timezone.
  *
  * @see
- *  components/tracer/page-placeholder.tsx
+ *  data/activity.ts
+ *  components/tracer/activity-view.tsx
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { PagePlaceholder } from "@/components/tracer/page-placeholder";
+import { notFound } from "next/navigation";
 
-export default function ActivityPage() {
-  return <PagePlaceholder title="Activity" description="Call events appear after the first inbound Call." />;
+import { resolveRequestActor } from "@/app/(app)/actor";
+import ActivityView from "@/components/tracer/activity-view";
+import { createActivity } from "@/data/activity";
+import { activityFiltersFromSearchParams } from "@/data/activity-query";
+import { createCallList } from "@/data/calls";
+import { withTracerRuntime } from "@/data/tracer-runtime";
+
+export default async function ActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const actor = await resolveRequestActor();
+  if (actor?.state !== "Active") notFound();
+  const filters = activityFiltersFromSearchParams(await searchParams);
+  const [initialResult, workspaceOptions] = await withTracerRuntime(({ pool }) =>
+    Promise.all([createActivity(pool, actor).list({ filters }), createCallList(pool, actor).workspaceOptions()]),
+  );
+  return <ActivityView initialResult={initialResult} initialFilters={filters} workspaceOptions={workspaceOptions} />;
 }

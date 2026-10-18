@@ -26,7 +26,9 @@
  *  same commit so a crash before the request still leaves it for recovery,
  *  and a failed request is ignored for the same reason. A failure is
  *  recorded as Failed with a secret-free reason, never an unexpected
- *  error's message, and rethrown for Trigger.dev to retry.
+ *  error's message, and rethrown for Trigger.dev to retry. The Completed
+ *  commit and the Failed update each append their Call event atomically,
+ *  and a repeated failure keeps its single Transcript failed event.
  *
  * @see
  *  data/recording-wav.ts
@@ -40,6 +42,7 @@
  */
 import type { Pool } from "pg";
 
+import { appendCallEvent } from "@/data/call-events";
 import { OpenAIError, transcriptionModel, type AudioTranscriber } from "@/data/openai-client";
 import { R2ObjectError, type RecordingObjects } from "@/data/r2-objects";
 import type { RecordingProcessing } from "@/data/recording";
@@ -114,6 +117,7 @@ async function complete(deps: RecordingTranscriptionDependencies, row: Transcrip
         where id = $1`,
       [row.id, result.audioMs, transcriptionCostUsd(result.audioMs), now],
     );
+    await appendCallEvent(client, { callId: row.call_id, kind: "transcript_completed", key: `transcript_completed:${row.id}`, occurredAt: now });
     await client.query("commit");
     return true;
   } catch (error) {
@@ -140,8 +144,14 @@ export async function transcribeRecording(deps: RecordingTranscriptionDependenci
     completed = await complete(deps, row, await transcribe(deps, row));
   } catch (error) {
     await deps.pool.query(
-      `update recording set transcript_state = 'Failed', transcript_failure_reason = $2, updated_at = $3
-        where id = $1 and transcript_state in ('Pending', 'Failed')`,
+      `with failed as (
+         update recording set transcript_state = 'Failed', transcript_failure_reason = $2, updated_at = $3
+          where id = $1 and transcript_state in ('Pending', 'Failed')
+          returning organization_id, workspace_id, call_id
+       )
+       insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
+       select organization_id, workspace_id, call_id, 'transcript_failed', $3, 'transcript_failed:' || $1 from failed
+       on conflict (organization_id, idempotency_key) do nothing`,
       [row.id, failureReason(error), deps.now()],
     );
     throw error;

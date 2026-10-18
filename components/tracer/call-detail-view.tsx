@@ -9,14 +9,20 @@
  *  sticky Recording player Frame, the Transcript, Lead Review, and Lead
  *  Assessment, the Call facts in a dense definition list, and the
  *  processing timeline. The Twilio call SID appears only when the read
- *  model provides it, which it does for Operators.
+ *  model provides it, which it does for Operators. The header links back
+ *  to the list the Call was opened from and steps to the previous and next
+ *  Call in it, with a step disabled at either end of the list.
  *
  * @remarks
  *  A PlaybackProvider spans the player and the analysis regions so the
  *  Transcript and evidence can follow and seek playback. Download MP3,
- *  Export Call, Purge Media, and previous and next Call navigation wait for
- *  later milestones, so none of them render here. Times use the Workspace
- *  reporting timezone.
+ *  Export Call, and Purge Media wait for later milestones, so none of them
+ *  render here. The page resolves the back link and previous and next Call
+ *  hrefs on the server; without them the back link is Workspace Calls and
+ *  both steps are disabled. Previous and next are compact icon buttons so
+ *  the header row fits at 390px. Call Detail is a record-detail page, so
+ *  it renders no Workspace tabs. Times use the Workspace reporting
+ *  timezone.
  *
  * @see
  *  data/call-details.ts
@@ -29,8 +35,11 @@
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineDate, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
 import CallAnalysis from "@/components/tracer/call-analysis";
@@ -111,11 +120,53 @@ function ProcessingTimeline({ call }: { call: CallDetail }) {
   );
 }
 
-export default function CallDetailView({ call, operator }: { call: CallDetail; operator: boolean }) {
+export interface CallDetailNavigation {
+  back: string;
+  previous: string | null;
+  next: string | null;
+}
+
+function StepCall({ label, href, children }: { label: string; href: string | null; children: ReactNode }) {
+  return href ? (
+    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} href={href} prefetch>
+      {children}
+    </Link>
+  ) : (
+    <Button variant="outline" size="icon" aria-label={label} disabled>
+      {children}
+    </Button>
+  );
+}
+
+export default function CallDetailView({
+  call,
+  operator,
+  autoPlay = false,
+  navigation = { back: `/workspaces/${call.workspace.id}/calls`, previous: null, next: null },
+}: {
+  call: CallDetail;
+  operator: boolean;
+  autoPlay?: boolean;
+  navigation?: CallDetailNavigation;
+}) {
   const timeZone = call.workspace.reportingTimezone;
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <Link className={buttonVariants({ variant: "ghost", size: "sm", className: "-ml-2.5" })} href={navigation.back} prefetch>
+            <ChevronLeftIcon data-icon="inline-start" aria-hidden />
+            Back to Calls
+          </Link>
+          <ButtonGroup aria-label="Call navigation">
+            <StepCall label="Previous Call" href={navigation.previous}>
+              <ChevronUpIcon aria-hidden />
+            </StepCall>
+            <StepCall label="Next Call" href={navigation.next}>
+              <ChevronDownIcon aria-hidden />
+            </StepCall>
+          </ButtonGroup>
+        </div>
         <h1 className="text-2xl font-semibold tracking-tight tabular-nums">{call.callerNumber ?? "Unknown caller"}</h1>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <CallOutcomeBadge outcome={call.outcome} />
@@ -137,7 +188,7 @@ export default function CallDetailView({ call, operator }: { call: CallDetail; o
               <FrameTitle><h2 id="call-recording-title">Recording</h2></FrameTitle>
             </FrameHeader>
             <FramePanel>
-              <RecordingPlayer workspaceId={call.workspace.id} recording={call.recording} />
+              <RecordingPlayer workspaceId={call.workspace.id} recording={call.recording} autoPlay={autoPlay} />
             </FramePanel>
           </Frame>
         </section>
