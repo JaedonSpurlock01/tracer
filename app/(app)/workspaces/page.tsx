@@ -7,7 +7,9 @@
  *  Shows Operators the managed Workspace list with setup actions and shows
  *  Client Viewers a read-only list of their granted Workspaces. The requested
  *  page of the list is loaded on the server from the URL's search, state, and
- *  page parameters so the list renders without a loading Skeleton.
+ *  page parameters so the list renders without a loading Skeleton, with
+ *  each listed Workspace's 30-day Calls, Good Leads, last Call, and
+ *  integration health from the analytics service.
  *
  * @remarks
  *  Workspace setup never activates Twilio routing. The list's default page
@@ -15,6 +17,7 @@
  *
  * @see
  *  components/tracer/workspaces-view.tsx
+ *  data/analytics.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -23,6 +26,7 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import WorkspacesView from "@/components/tracer/workspaces-view";
+import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { workspaceListQueryFromSearchParams } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
@@ -31,7 +35,7 @@ export default async function WorkspacesPage({ searchParams }: { searchParams: P
   const actor = await resolveRequestActor();
   if (actor?.state !== "Active") notFound();
   const query = workspaceListQueryFromSearchParams(await searchParams);
-  const initialResult = await withTracerRuntime(({ pool }) => createReadableWorkspaces(pool, actor).list(query));
+  const initialResult = await withTracerRuntime(async ({ pool }) => withWorkspaceListStats(createAnalytics(pool, actor), await createReadableWorkspaces(pool, actor).list(query)));
   return (
     <WorkspacesView
       initialTimezone={actor.timezone}

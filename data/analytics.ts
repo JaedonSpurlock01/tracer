@@ -15,9 +15,11 @@
  *  Good Leads count the effective Lead classification, Lead Review before
  *  Lead Assessment. Average Connected Duration averages the connected
  *  duration of Answered Calls only. Each KPI compares with the immediately
- *  preceding window of equal length, except for All Time; the change is the
- *  relative difference and is null when the prior value is zero or absent,
- *  so a view shows a dash. Trend points count Total Calls, Answered Calls,
+ *  preceding window of equal length, except for All Time. Counts and
+ *  durations change by the relative difference, null when the prior value
+ *  is zero or absent, and Answer Rate changes by the difference in
+ *  percentage points, null when either rate is absent, so a view shows a
+ *  dash. Trend points count Total Calls, Answered Calls,
  *  and Good Leads per zero-filled bucket. Workspace performance lists Total
  *  Calls, Answer Rate, Good Leads, and Lead Rate (Good Leads over Total
  *  Calls) per readable Workspace, Total Calls descending, and is withheld
@@ -72,12 +74,14 @@ import type { Actor } from "@/data/authorization";
 import { connectedSecondsSql } from "@/data/call-details";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { callSource, effectiveClassificationSql, filterConditions } from "@/data/calls";
+import type { WorkspaceListResult } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
 import { createReadableWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
 
 export interface AnalyticsComparison {
   previous: number | null;
   change: number | null;
+  unit: "relative" | "points";
 }
 
 export interface AnalyticsKpi {
@@ -134,6 +138,8 @@ export interface WorkspaceListStats {
   integrationHealth: WebhookHealth;
 }
 
+export type WorkspaceListWithStats = WorkspaceListResult & { stats: Record<string, WorkspaceListStats> };
+
 export interface WorkspaceRoutingHealth {
   lastSuccessfulInboundCallAt: string | null;
   webhook: WebhookHealth;
@@ -166,7 +172,13 @@ function ratio(numerator: number, denominator: number): number | null {
 function kpi(value: number | null, previous: number | null | undefined): AnalyticsKpi {
   if (previous === undefined) return { value, comparison: null };
   const change = value === null || previous === null || previous === 0 ? null : (value - previous) / previous;
-  return { value, comparison: { previous, change } };
+  return { value, comparison: { previous, change, unit: "relative" } };
+}
+
+function rateKpi(value: number | null, previous: number | null | undefined): AnalyticsKpi {
+  if (previous === undefined) return { value, comparison: null };
+  const change = value === null || previous === null ? null : value - previous;
+  return { value, comparison: { previous, change, unit: "points" } };
 }
 
 function kpiValues(row: AggregateRow) {
@@ -182,6 +194,10 @@ function webhookHealth(state: WorkspaceState, lastAccepted: Date | null): Webhoo
   const lastAcceptedVoiceWebhookAt = lastAccepted?.toISOString() ?? null;
   if (state !== "Active") return { status: "Not applicable", lastAcceptedVoiceWebhookAt };
   return { status: lastAccepted ? "Healthy" : "Warning", lastAcceptedVoiceWebhookAt };
+}
+
+export async function withWorkspaceListStats(analytics: Analytics, result: WorkspaceListResult): Promise<WorkspaceListWithStats> {
+  return { ...result, stats: await analytics.workspaceListStats(result.workspaces.map((workspace) => workspace.id)) };
 }
 
 export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () => Date } = {}): Analytics {
@@ -335,7 +351,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
         previousWindow,
         kpis: {
           totalCalls: kpi(values.totalCalls, prior?.totalCalls),
-          answerRate: kpi(values.answerRate, prior?.answerRate),
+          answerRate: rateKpi(values.answerRate, prior?.answerRate),
           goodLeads: kpi(values.goodLeads, prior?.goodLeads),
           averageConnectedSeconds: kpi(values.averageConnectedSeconds, prior?.averageConnectedSeconds),
         },

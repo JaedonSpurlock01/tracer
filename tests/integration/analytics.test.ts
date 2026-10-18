@@ -10,8 +10,9 @@
  *  with a Forwarding attempted event, so Voicemail, Blocked, and spam-gate
  *  failures stay out of it; Good Leads follow Lead Review before Lead
  *  Assessment; and Average Connected Duration averages Answered Calls only.
- *  Each KPI compares with the equal prior window, with none for All Time
- *  and no change against a zero prior. Trend points are zero-filled daily,
+ *  Each KPI compares with the equal prior window, with none for All Time;
+ *  counts and durations change relatively, with no change against a zero
+ *  prior, and Answer Rate changes in percentage points. Trend points are zero-filled daily,
  *  weekly Monday through Sunday, or monthly buckets in the user's or the
  *  Workspace's timezone, including across midnight and a daylight saving
  *  change. Workspace performance appears only for an actor who reads more
@@ -285,21 +286,23 @@ describe("Workspace KPIs", () => {
 
   it("compare each KPI with the immediately preceding window of equal length", async () => {
     const { kpis } = (await analytics(operator).summary({ workspaceId: "north", range: sevenDays }))!;
-    expect(kpis.totalCalls.comparison).toEqual({ previous: 6, change: 11 / 6 });
-    expect(kpis.goodLeads.comparison).toEqual({ previous: 2, change: 1.5 });
+    expect(kpis.totalCalls.comparison).toEqual({ previous: 6, change: 11 / 6, unit: "relative" });
+    expect(kpis.goodLeads.comparison).toEqual({ previous: 2, change: 1.5, unit: "relative" });
     expect(kpis.answerRate.comparison!.previous).toBeCloseTo(3 / 4, 10);
-    expect(kpis.answerRate.comparison!.change).toBeCloseTo((7 / 11 - 3 / 4) / (3 / 4), 10);
+    expect(kpis.answerRate.comparison!.change).toBeCloseTo(7 / 11 - 3 / 4, 10);
+    expect(kpis.answerRate.comparison!.unit).toBe("points");
     expect(kpis.averageConnectedSeconds.comparison!.previous).toBeCloseTo(136 / 3, 10);
     expect(kpis.averageConnectedSeconds.comparison!.change).toBeCloseTo((782 / 7 - 136 / 3) / (136 / 3), 10);
+    expect(kpis.averageConnectedSeconds.comparison!.unit).toBe("relative");
   });
 
   it("report no change against a zero prior window and no rate without a denominator", async () => {
     const { kpis } = (await analytics(operator).summary({ workspaceId: "south", range: sevenDays }))!;
-    expect(kpis.totalCalls).toEqual({ value: 4, comparison: { previous: 0, change: null } });
-    expect(kpis.goodLeads).toEqual({ value: 1, comparison: { previous: 0, change: null } });
+    expect(kpis.totalCalls).toEqual({ value: 4, comparison: { previous: 0, change: null, unit: "relative" } });
+    expect(kpis.goodLeads).toEqual({ value: 1, comparison: { previous: 0, change: null, unit: "relative" } });
     expect(kpis.answerRate.value).toBeCloseTo(2 / 3, 10);
-    expect(kpis.answerRate.comparison).toEqual({ previous: null, change: null });
-    expect(kpis.averageConnectedSeconds.comparison).toEqual({ previous: null, change: null });
+    expect(kpis.answerRate.comparison).toEqual({ previous: null, change: null, unit: "points" });
+    expect(kpis.averageConnectedSeconds.comparison).toEqual({ previous: null, change: null, unit: "relative" });
 
     const empty = (await analytics(operator).summary({ workspaceId: "setup", range: sevenDays }))!;
     expect(empty.kpis.totalCalls.value).toBe(0);

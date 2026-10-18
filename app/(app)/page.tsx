@@ -1,41 +1,72 @@
 /**
  * -------------------------------------------------------------------------
  * @file   page.tsx
- * @brief  Renders the authenticated Tracer Home surface.
+ * @brief  Renders the authenticated Tracer Home dashboard.
  *
  * @description
- *  Provides the Operator landing page while operational dashboards are
- *  delivered by later milestones, and sends Client Viewers to their granted
- *  Workspaces.
+ *  Loads the analytics summary for every Workspace the actor can read over
+ *  the range in the URL, in the actor's timezone, and the five newest Calls
+ *  in the same scope, then renders the Home dashboard. A one-Workspace
+ *  Client Viewer lands on that Workspace Overview instead; Operators and
+ *  multi-Workspace Client Viewers get Home scoped to what they can read.
  *
  * @remarks
- *  Home stays compact until Workspaces receive Calls. Until the scoped Home
- *  dashboard exists, a one-Workspace Client Viewer lands on that Workspace
- *  Overview and any other Client Viewer lands on the Workspaces list.
+ *  The summary and Recent Calls load as separate regions, so a failure in
+ *  one renders that region's Retry while the other still renders. Recent
+ *  Calls read the first page of the global Calls list in its default
+ *  order, the same list a Recent Calls row returns to. View Calls carries
+ *  the range as the Calls Started filter, resolved against today in the
+ *  actor's timezone like the summary.
  *
  * @see
+ *  components/tracer/home-dashboard.tsx
+ *  data/analytics.ts
+ *  data/calls.ts
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
+import HomeDashboard from "@/components/tracer/home-dashboard";
+import { createAnalytics } from "@/data/analytics";
+import { analyticsCallsHref, analyticsRangeFromSearchParams, calendarDateInTimeZone } from "@/data/analytics-range";
+import { defaultCallSort, emptyCallFilters } from "@/data/call-list-query";
+import { createCallList } from "@/data/calls";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
-export default async function Home() {
+function orNull<T>(promise: Promise<T>): Promise<T | null> {
+  return promise.catch(() => null);
+}
+
+export default async function Home({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const actor = await resolveRequestActor();
-  if (actor?.state === "Active" && !canManageWorkspaces(actor)) {
-    const granted = await withTracerRuntime(({ pool }) => createReadableWorkspaces(pool, actor).list({ pageSize: 2 }));
-    redirect(granted.total === 1 ? `/workspaces/${granted.workspaces[0].id}` : "/workspaces");
-  }
+  if (actor?.state !== "Active") notFound();
+  const operator = canManageWorkspaces(actor);
+  const range = analyticsRangeFromSearchParams(await searchParams);
+  const data = await withTracerRuntime(async ({ pool }) => {
+    const readable = await createReadableWorkspaces(pool, actor).list({ pageSize: 2 });
+    if (!operator && readable.total === 1) return { onlyWorkspaceId: readable.workspaces[0].id };
+    if (readable.total === 0) return { workspaceCount: 0, summary: null, recentCalls: null };
+    const [summary, recentCalls] = await Promise.all([
+      orNull(createAnalytics(pool, actor).summary({ range })),
+      orNull(createCallList(pool, actor).list({ page: 1, sort: defaultCallSort, filters: emptyCallFilters })),
+    ]);
+    return { workspaceCount: readable.total, summary, recentCalls };
+  });
+  if ("onlyWorkspaceId" in data) redirect(`/workspaces/${data.onlyWorkspaceId}`);
 
   return (
-    <div className="flex flex-col gap-1">
-      <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
-      <p className="text-sm text-muted-foreground">Operational dashboards arrive once Workspaces receive Calls.</p>
-    </div>
+    <HomeDashboard
+      operator={operator}
+      workspaceCount={data.workspaceCount}
+      range={range}
+      summary={data.summary}
+      recentCalls={data.recentCalls}
+      callsHref={analyticsCallsHref("/calls", range, calendarDateInTimeZone(new Date(), actor.timezone))}
+    />
   );
 }

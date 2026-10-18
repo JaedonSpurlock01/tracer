@@ -13,10 +13,12 @@
  *  a Call Outcome filter keeps it, a non-matching outcome shows the
  *  no-matches state with Clear Filters, and Call Detail opened from the
  *  filtered list returns to the same URL. The responsive tests check
- *  Calls, Workspace Calls, Activity, and Call Detail at 390px, the md
- *  breakpoint, and a wide viewport for horizontal page scroll, grid
- *  scrolling inside its Frame, the Sidebar Sheet below md, and reachable
- *  search, filter, paging, Refresh, Back, and Previous and Next controls.
+ *  Calls, Workspace Calls, Activity, Home, Workspace Overview, and Call
+ *  Detail at 390px, the md breakpoint, and a wide viewport for horizontal
+ *  page scroll, grid scrolling inside its Frame, the Sidebar Sheet below
+ *  md, the KPI grid at one, two, then four columns, a visible chart
+ *  legend, and reachable search, filter, paging, Refresh, date range,
+ *  View Calls, Back, and Previous and Next controls.
  *
  * @remarks
  *  Trigger.dev does not run in the browser suite and no secret key is set,
@@ -235,7 +237,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
   });
 
   for (const viewport of viewports) {
-    test(`Calls, Activity, and Call Detail fit a ${viewport.width}px viewport`, async ({ page, request }) => {
+    test(`Calls, Activity, Home, Workspace Overview, and Call Detail fit a ${viewport.width}px viewport`, async ({ page, request }) => {
       test.setTimeout(120_000);
       expect(simulated).toBeDefined();
       const { assignmentId, workspaceId, callId, callerNumber } = simulated!;
@@ -274,6 +276,27 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await entry.click();
       await expect(todayEntries(page).locator("[data-step-label]").first()).toBeVisible();
       await expectNoHorizontalPageScroll(page);
+
+      for (const path of ["/", `/workspaces/${workspaceId}`]) {
+        await page.goto(path);
+        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+        await expectNoHorizontalPageScroll(page);
+        await expectSidebarLayout(page, viewport);
+        for (const range of ["7 Days", "30 Days", "90 Days", "All Time", "Custom"]) {
+          await expectReachable(page.getByRole("group", { name: "Date range" }).getByRole("button", { name: range }));
+        }
+        const tiles = ["Total Calls", "Answer Rate", "Good Leads", "Average Duration"].map((name) => page.getByRole("group", { name }));
+        for (const tile of tiles) await expect(tile).toBeVisible();
+        const tops = await Promise.all(tiles.map(async (tile) => (await tile.boundingBox())!.y));
+        const columns = tops.filter((top) => Math.abs(top - tops[0]) < 1).length;
+        expect(columns).toBe(viewport.width < 640 ? 1 : viewport.width < 1280 ? 2 : 4);
+        await expect(page.getByRole("region", { name: "Call trends" }).getByRole("list", { name: "Chart legend" })).toBeVisible();
+        await expectReachable(page.getByRole("link", { name: "View Calls" }));
+        await expectNoHorizontalPageScroll(page);
+      }
+      await page.getByRole("group", { name: "Date range" }).getByRole("button", { name: "7 Days" }).click();
+      await expect(page).toHaveURL(/[?&]range=7d/);
+      await expect(page.getByRole("link", { name: "View Calls" })).toHaveAttribute("href", /\/calls\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
 
       await page.goto(`/workspaces/${workspaceId}/calls/${callId}?back=${encodeURIComponent("/calls")}`);
       await expect(page.getByRole("heading", { level: 1, name: callerNumber })).toBeVisible();

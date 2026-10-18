@@ -11,6 +11,7 @@
  *  window is the immediately preceding window of equal length with none for
  *  All Time, and that trend buckets are daily, weekly Monday through Sunday,
  *  or monthly as the range requires, clipped to the window and labeled.
+ *  View Calls carries a windowed range as the Calls Started filter.
  *
  * @remarks
  *  Calendar dates carry no timezone; the scope timezone only decides which
@@ -25,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analyticsCallsHref,
   analyticsRangeFromSearchParams,
   analyticsRangeSearchParams,
   analyticsTrendBuckets,
@@ -118,5 +120,11 @@ describe("Analytics range", () => {
       { start: "2026-01-01", end: "2026-01-31", label: "January 2026" },
       { start: "2026-02-01", end: "2026-02-09", label: "February 2026" },
     ]);
+  });
+
+  it("carries a windowed range to View Calls as the Started filter and All Time as no filter", () => {
+    expect(analyticsCallsHref("/calls", { kind: "days", days: 7 }, "2026-10-18")).toBe("/calls?from=2026-10-12&to=2026-10-18");
+    expect(analyticsCallsHref("/workspaces/north/calls", { kind: "custom", from: "2026-09-01", to: "2026-09-30" }, "2026-10-18")).toBe("/workspaces/north/calls?from=2026-09-01&to=2026-09-30");
+    expect(analyticsCallsHref("/calls", { kind: "all" }, "2026-10-18")).toBe("/calls");
   });
 });
