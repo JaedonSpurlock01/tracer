@@ -147,7 +147,7 @@ function allowed<T extends string>(values: string[], allowList: readonly T[]): T
   return [...new Set(values.filter((value): value is T => (allowList as readonly string[]).includes(value)))];
 }
 
-function calendarDate(value: string): string | null {
+export function calendarDate(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value) ? value : null;
