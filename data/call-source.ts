@@ -4,7 +4,7 @@
  * @brief  Carries the list a Call was opened from into Call Detail and back.
  *
  * @description
- *  A Call opened from global Calls or Workspace Calls links to Call Detail
+ *  A Call opened from global Calls, Workspace Calls, or Activity links to Call Detail
  *  with that list's URL in one `back` param. Call Detail reads it back as
  *  the source scope and the Calls query, which gives its back link and the
  *  ordered list its previous and next Call walk. The back link is rebuilt
@@ -17,11 +17,13 @@
  * @remarks
  *  The `back` value is user input. It is accepted only as a same-origin
  *  path that is exactly `/calls` or `/workspaces/{workspaceId}/calls` for
- *  the Call's own Workspace, after URL normalization, so an external URL,
+ *  the Call's own Workspace, or exactly `/activity`, after URL normalization, so an external URL,
  *  a protocol-relative or backslash path, another Workspace, dot segments,
  *  or encoded separators fall back to the default back link and never
- *  become an open redirect. A later source such as Activity adds one more
- *  scope and path here. This module has no server imports so the Calls
+ *  become an open redirect. An Activity source keeps only Activity's search
+ *  and filters, and walks every readable Call Started descending with the
+ *  caller-only search Activity uses, so previous and next Call continue
+ *  past the loaded Activity window. This module has no server imports so the Calls
  *  view can share it.
  *
  * @see
@@ -31,10 +33,11 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { activityFiltersFromSearchParams, activitySearchParams } from "@/data/activity-query";
 import { callListQueryFromSearchParams, callListSearchParams, defaultCallSort, emptyCallFilters, type CallListQuery } from "@/data/call-list-query";
 
 export interface CallSource {
-  scope: "global" | "workspace";
+  scope: "global" | "workspace" | "activity";
   query: CallListQuery;
   href: string;
 }
@@ -42,6 +45,7 @@ export interface CallSource {
 const origin = "http://tracer.invalid";
 
 function listPath(scope: CallSource["scope"], workspaceId: string): string {
+  if (scope === "activity") return "/activity";
   return scope === "global" ? "/calls" : `/workspaces/${workspaceId}/calls`;
 }
 
@@ -54,10 +58,10 @@ export function callSourceFromBack(back: string | string[] | undefined, workspac
     return null;
   }
   if (url.origin !== origin) return null;
-  const scope = url.pathname === listPath("global", workspaceId) ? "global" : url.pathname === listPath("workspace", workspaceId) ? "workspace" : null;
+  const scope = (["global", "workspace", "activity"] as const).find((candidate) => url.pathname === listPath(candidate, workspaceId));
   if (!scope) return null;
-  const query = callListQueryFromSearchParams(url.searchParams);
-  const search = callListSearchParams(query).toString();
+  const query = scope === "activity" ? { page: 1, sort: defaultCallSort, filters: activityFiltersFromSearchParams(url.searchParams) } : callListQueryFromSearchParams(url.searchParams);
+  const search = (scope === "activity" ? activitySearchParams(query.filters) : callListSearchParams(query)).toString();
   return { scope, query, href: `${url.pathname}${search ? `?${search}` : ""}` };
 }
 
@@ -69,8 +73,9 @@ export function callDetailHref(call: { id: string; workspaceId: string }, back: 
   return `/workspaces/${call.workspaceId}/calls/${call.id}${search ? `?${search}` : ""}`;
 }
 
-export function callSourceListQuery(source: CallSource | null, workspaceId: string): CallListQuery & { workspaceId?: string } {
+export function callSourceListQuery(source: CallSource | null, workspaceId: string): CallListQuery & { workspaceId?: string; callerSearchOnly?: boolean } {
   if (!source) return { page: 1, sort: defaultCallSort, filters: emptyCallFilters, workspaceId };
+  if (source.scope === "activity") return { ...source.query, workspaceId: undefined, callerSearchOnly: true };
   return { ...source.query, workspaceId: source.scope === "workspace" ? workspaceId : undefined };
 }
 

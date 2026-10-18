@@ -609,6 +609,13 @@ describe.sequential("Call Detail previous and next Call", () => {
     }
   });
 
+  it("walks an Activity source with its caller-only search", async () => {
+    const calls = await callList(operatorCookie);
+    expect(neighborIds(await calls.neighbors(query("q=Acme"), "assessed-call"))).not.toEqual([null, null]);
+    expect(await calls.neighbors({ ...query("q=Acme"), callerSearchOnly: true }, "assessed-call")).toEqual({ previous: null, next: null });
+    expect(neighborIds(await calls.neighbors({ ...query("q=555"), callerSearchOnly: true }, "assessed-call"))).toEqual(["ungranted-call", "reviewed-call"]);
+  });
+
   it("never steps a Client Viewer into an ungranted Workspace's Call and gives no neighbors for an ungranted Call", async () => {
     expect(neighborIds(await (await callList(operatorCookie)).neighbors(query(), "assessed-call"))).toEqual(["ungranted-call", "reviewed-call"]);
     const calls = await callList(clientCookie);

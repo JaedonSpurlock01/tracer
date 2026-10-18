@@ -21,6 +21,9 @@
  *  negation everywhere, groups, Or, and repeated fields in the chip row,
  *  and popover trees beyond the server's depth and size bounds. Unfinished
  *  rules and empty groups stay in the tree but never reach the query.
+ *  Activity uses the chip row alone with Processing State, the Calls
+ *  analysis status, added to the basic fields and no advanced popover, so
+ *  it edits the same filter query with only the fields Activity offers.
  *  Dates are calendar days; the server resolves them in the scope's
  *  timezone. The date range editor follows ReUI's c-filters-5 composition,
  *  since Filters ships no date editor.
@@ -82,6 +85,9 @@ const recordingOptions = [
 ];
 
 const basicFieldIds = new Set(["startedAt", "workspace", "outcome", "leadClassification"]);
+const activityFieldIds = new Set([...basicFieldIds, "analysis"]);
+
+const processingField: FilterField = { id: "analysis", label: "Processing State", type: "select", operators: anyOf, options: analysisStatusFilters.map((status) => ({ value: status, label: status })) };
 
 const labels: Partial<FilterLabels> = { addFilter: "Add Filter", addCondition: "Add Filter", advancedFilter: "Advanced Filters" };
 
@@ -185,9 +191,10 @@ function queryFromGroup(group: CallFilterGroup, id: string): FilterGroupNode {
   });
 }
 
-export function filterTreesFromCallFilters(filters: CallFilters): CallFilterTrees {
+export function filterTreesFromCallFilters(filters: CallFilters, options: { activity?: boolean } = {}): CallFilterTrees {
+  const basicIds = options.activity ? activityFieldIds : basicFieldIds;
   const flat = flatCallFilterConditions(filters);
-  const advancedFlat = flat.filter((condition) => !basicFieldIds.has(condition.field));
+  const advancedFlat = flat.filter((condition) => !basicIds.has(condition.field));
   const tree = filters.advanced;
   const advanced: CallFilterGroup = !tree
     ? { combinator: "and", rules: advancedFlat }
@@ -195,7 +202,7 @@ export function filterTreesFromCallFilters(filters: CallFilters): CallFilterTree
       ? tree
       : { combinator: "and", rules: [...advancedFlat, ...(tree.combinator === "and" ? tree.rules : [tree])] };
   return {
-    basic: queryFromGroup({ combinator: "and", rules: flat.filter((condition) => basicFieldIds.has(condition.field)) }, "root"),
+    basic: queryFromGroup({ combinator: "and", rules: flat.filter((condition) => basicIds.has(condition.field)) }, "root"),
     advanced: queryFromGroup(advanced, "root"),
   };
 }
@@ -287,13 +294,28 @@ export default function CallFilterToolbar({
   trees,
   onTreesChange,
   workspaceOptions,
+  activity = false,
 }: {
   trees: CallFilterTrees;
   onTreesChange: (trees: CallFilterTrees) => void;
   workspaceOptions?: { id: string; name: string }[];
+  activity?: boolean;
 }) {
   const acceptBasic = (next: FilterQuery, details: { reason: string }) => details.reason !== "negate" && isFlatConjunction(next);
   const acceptAdvanced = (next: FilterQuery, details: { reason: string }) => details.reason !== "negate" && fitsBounds(next);
+
+  if (activity) {
+    return (
+      <Filters
+        size="sm"
+        fields={[...basicFields(workspaceOptions), processingField]}
+        labels={labels}
+        query={trees.basic}
+        onBeforeQueryChange={acceptBasic}
+        onQueryChange={(basic) => onTreesChange({ ...trees, basic })}
+      />
+    );
+  }
 
   return (
     <>

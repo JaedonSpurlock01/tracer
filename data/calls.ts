@@ -33,7 +33,10 @@
  *  media expiry, and the Lead Review precedence reuse the Call Detail rules.
  *  Filters only add conditions beside the readable Workspace condition, so
  *  a filter naming an ungranted Workspace matches nothing, and every filter
- *  value is a bound parameter; LIKE wildcards in search are escaped. Each
+ *  value is a bound parameter; LIKE wildcards in search are escaped, and
+ *  Activity, which searches caller numbers only, asks for a caller-only
+ *  search that Call Detail's neighbors from Activity repeat. Activity also
+ *  reuses the scope source, row columns, and filter compiler here. Each
  *  filter field has one condition builder, used both for the flat filters
  *  and for the advanced tree, which compiles to a parenthesized And or Or
  *  expression joined by And outside the scope conditions, so an Or can
@@ -102,13 +105,15 @@ export interface CallNeighbors {
   next: CallNeighbor | null;
 }
 
+export type ScopedCallListQuery = CallListQuery & { workspaceId?: string; callerSearchOnly?: boolean };
+
 export interface CallList {
-  list(query: CallListQuery & { workspaceId?: string }): Promise<CallListResult | null>;
-  neighbors(query: CallListQuery & { workspaceId?: string }, callId: string): Promise<CallNeighbors | null>;
+  list(query: ScopedCallListQuery): Promise<CallListResult | null>;
+  neighbors(query: ScopedCallListQuery, callId: string): Promise<CallNeighbors | null>;
   workspaceOptions(): Promise<{ id: string; name: string }[]>;
 }
 
-type CallListRow = {
+export type CallListRow = {
   id: string;
   workspace_id: string;
   workspace_name: string;
@@ -141,7 +146,7 @@ const sortExpressions: Readonly<Record<CallSortColumn, string>> = {
   leadScore: "la.score",
 };
 
-function toItem(row: CallListRow): CallListItem {
+export function callListItem(row: CallListRow): CallListItem {
   const recording: RecordingAvailabilityRow | undefined = row.recording_id
     ? { id: row.recording_id, channels: row.channels, duration_seconds: row.duration_seconds, transfer_state: row.transfer_state, waveform_state: row.waveform_state, expires_at: row.expires_at, expired: row.expired }
     : undefined;
@@ -159,7 +164,7 @@ function toItem(row: CallListRow): CallListItem {
   };
 }
 
-const callSource = `call c
+export const callSource = `call c
            join workspace w on w.id = c.workspace_id and w.organization_id = c.organization_id
            left join lateral (
              select r.id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.transcript_state, r.lead_assessment_state,
@@ -173,6 +178,12 @@ const callSource = `call c
            left join lead_assessment la on la.recording_id = r.id and la.organization_id = c.organization_id
            left join lead_review lr on lr.call_id = c.id and lr.organization_id = c.organization_id`;
 
+export const callListColumns = `c.id, c.workspace_id, w.name as workspace_name, c.caller_number, c.state, c.outcome, c.started_at,
+                ${connectedSecondsSql} as connected_seconds,
+                r.id as recording_id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.expires_at, r.expired,
+                la.classification as assessment_classification, la.score as lead_score,
+                lr.classification as review_classification`;
+
 const analysisStatusSql = `case
   when r.id is null then 'Not applicable'
   when r.transcript_state is null then case when r.transfer_state = 'Pending' then 'Pending' else 'Not applicable' end
@@ -184,9 +195,10 @@ end`;
 
 type Bind = (value: unknown) => string;
 
-interface FilterScope {
+export interface FilterScope {
   scoped: boolean;
   timeZone: string;
+  callerSearchOnly?: boolean;
 }
 
 function bounded(expression: string, min: number | null, max: number | null, bind: Bind): string {
@@ -233,7 +245,7 @@ function groupSql(group: CallFilterGroup, bind: Bind, scope: FilterScope): strin
   return parts.length > 0 ? `(${parts.join(` ${group.combinator} `)})` : null;
 }
 
-function filterConditions(filters: CallFilters, values: unknown[], scope: FilterScope): string[] {
+export function filterConditions(filters: CallFilters, values: unknown[], scope: FilterScope): string[] {
   const bind: Bind = (value) => {
     values.push(value);
     return `$${values.length}`;
@@ -242,8 +254,10 @@ function filterConditions(filters: CallFilters, values: unknown[], scope: Filter
   if (filters.search) {
     const digits = filters.search.replace(/\D/g, "");
     const phoneShaped = digits.length > 0 && /^[\d\s()+.-]+$/.test(filters.search);
-    const name = `w.name ilike '%' || ${bind(filters.search.replace(/[\\%_]/g, "\\$&"))} || '%' escape '\\'`;
-    conditions.push(phoneShaped ? `(${name} or regexp_replace(coalesce(c.caller_number, ''), '\\D', '', 'g') like '%' || ${bind(digits)} || '%')` : name);
+    const name = () => `w.name ilike '%' || ${bind(filters.search.replace(/[\\%_]/g, "\\$&"))} || '%' escape '\\'`;
+    const caller = () => `regexp_replace(coalesce(c.caller_number, ''), '\\D', '', 'g') like '%' || ${bind(digits)} || '%'`;
+    if (scope.callerSearchOnly) conditions.push(phoneShaped ? caller() : "false");
+    else conditions.push(phoneShaped ? `(${name()} or ${caller()})` : name());
   }
   const flat = groupSql({ combinator: "and", rules: [...flatCallFilterConditions(filters), ...(filters.advanced ? [filters.advanced] : [])] }, bind, scope);
   return flat ? [...conditions, flat] : conditions;
@@ -252,7 +266,7 @@ function filterConditions(filters: CallFilters, values: unknown[], scope: Filter
 export function createCallList(pool: Pool, actor: Actor): CallList {
   const workspaces = createReadableWorkspaces(pool, actor);
 
-  async function scopedQuery(query: CallListQuery & { workspaceId?: string }) {
+  async function scopedQuery(query: ScopedCallListQuery) {
     const workspace = query.workspaceId === undefined ? null : await workspaces.find(query.workspaceId);
     if (query.workspaceId !== undefined && !workspace) return null;
     const values: unknown[] = [];
@@ -264,7 +278,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
     const timeZone = workspace?.reportingTimezone ?? actor.timezone;
     const scopeWhere = conditions.join(" and ");
     const scopeValues = [...values];
-    const filters = filterConditions(query.filters, values, { scoped: workspace !== null, timeZone });
+    const filters = filterConditions(query.filters, values, { scoped: workspace !== null, timeZone, callerSearchOnly: query.callerSearchOnly });
     const where = [...conditions, ...filters].join(" and ");
     const direction = query.sort.direction === "asc" ? "asc" : "desc";
     const orderBy = `${sortExpressions[query.sort.column]} ${direction} nulls last, c.started_at desc, c.id`;
@@ -284,11 +298,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
       )).rows[0].exists);
       values.push((query.page - 1) * callPageSize, callPageSize);
       const rows = await pool.query<CallListRow>(
-        `select c.id, c.workspace_id, w.name as workspace_name, c.caller_number, c.state, c.outcome, c.started_at,
-                ${connectedSecondsSql} as connected_seconds,
-                r.id as recording_id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.expires_at, r.expired,
-                la.classification as assessment_classification, la.score as lead_score,
-                lr.classification as review_classification
+        `select ${callListColumns}
            from ${callSource}
           where ${where}
           order by ${orderBy}
@@ -296,7 +306,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
         values,
       );
       return {
-        calls: rows.rows.map(toItem),
+        calls: rows.rows.map(callListItem),
         total,
         page: query.page,
         pageSize: callPageSize,
