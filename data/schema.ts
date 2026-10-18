@@ -399,6 +399,7 @@ export const calls = pgTable(
     uniqueIndex("call_organization_call_sid_idx").on(table.organizationId, table.twilioCallSid),
     index("call_organization_id_idx").on(table.organizationId),
     index("call_workspace_id_idx").on(table.workspaceId),
+    index("call_organization_started_at_idx").on(table.organizationId, table.startedAt),
   ],
 );
 
@@ -599,6 +600,56 @@ export const leadReviews = pgTable(
   ],
 );
 
+export const callEventKinds = [
+  "call_received",
+  "spam_gate_passed",
+  "spam_gate_failed",
+  "forwarding_attempted",
+  "call_completed",
+  "recording_transferred",
+  "recording_transfer_failed",
+  "transcript_completed",
+  "transcript_skipped",
+  "transcript_failed",
+  "lead_assessment_completed",
+  "lead_assessment_failed",
+  "lead_review_added",
+] as const;
+
+export const callEvents = pgTable(
+  "call_event",
+  {
+    id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    kind: text().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    detail: jsonb().notNull().default({}),
+    actorUserId: text("actor_user_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+  },
+  (table) => [
+    check("call_event_kind_check", sql.raw(`"call_event"."kind" in (${callEventKinds.map((kind) => `'${kind}'`).join(", ")})`)),
+    check("call_event_detail_check", sql`jsonb_typeof(${table.detail}) = 'object'`),
+    foreignKey({
+      columns: [table.actorUserId],
+      foreignColumns: [users.id],
+      name: "call_event_actor_user_id_fk",
+    }).onDelete("set null"),
+    uniqueIndex("call_event_organization_key_idx").on(table.organizationId, table.idempotencyKey),
+    index("call_event_call_occurred_at_idx").on(table.organizationId, table.callId, table.occurredAt),
+    index("call_event_organization_occurred_at_idx").on(table.organizationId, table.occurredAt),
+    index("call_event_workspace_occurred_at_idx").on(table.workspaceId, table.occurredAt),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -621,4 +672,5 @@ export const schema = {
   leadAssessment: leadAssessments,
   leadAssessmentEvidence,
   leadReview: leadReviews,
+  callEvent: callEvents,
 };

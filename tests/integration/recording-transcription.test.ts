@@ -425,3 +425,31 @@ describe("Recording transcription", () => {
     expect(before[0]).toMatchObject({ transcript_state: "Skipped", transcript_skip_reason: "analysis_disabled" });
   });
 });
+
+describe("Recording transcription Call events", () => {
+  async function callEvents(callId: string): Promise<{ kind: string; occurred_at: Date; detail: Record<string, unknown> }[]> {
+    const result = await pool!.query("select kind, occurred_at, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+    return result.rows;
+  }
+
+  it("appends one Transcript failed across repeated failures and then Transcript completed after a successful retry", async () => {
+    const r2 = fakeR2();
+    const recording = await storedRecording(r2);
+    const failing = fakeTranscriber(conversation);
+    failing.failure = new OpenAIError("OpenAI request failed (HTTP 500)");
+    const later = new Date(now.getTime() + 60_000);
+
+    await expect(transcribeRecording(dependencies(r2, failing, fakeLeadAssessment()), recording.id)).rejects.toBe(failing.failure);
+    await expect(transcribeRecording({ ...dependencies(r2, failing, fakeLeadAssessment()), now: () => later }, recording.id)).rejects.toBe(failing.failure);
+    expect(await callEvents(recording.callId)).toEqual([{ kind: "transcript_failed", occurred_at: now, detail: {} }]);
+
+    const completedAt = new Date(now.getTime() + 120_000);
+    await transcribeRecording({ ...dependencies(r2, fakeTranscriber(conversation), fakeLeadAssessment()), now: () => completedAt }, recording.id);
+    await transcribeRecording({ ...dependencies(r2, fakeTranscriber(conversation), fakeLeadAssessment()), now: () => completedAt }, recording.id);
+
+    expect(await callEvents(recording.callId)).toEqual([
+      { kind: "transcript_failed", occurred_at: now, detail: {} },
+      { kind: "transcript_completed", occurred_at: completedAt, detail: {} },
+    ]);
+  });
+});

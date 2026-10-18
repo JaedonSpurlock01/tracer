@@ -14,17 +14,22 @@
  *  Only Operators reach the write; the handler refuses Client Viewers before
  *  any lookup. A Call outside the readable Workspace or Organization reads
  *  as Not Found, the same as Call Detail. The Lead Assessment is never
- *  touched, and review history waits for the M14 Activity log. Calls in
- *  Archived Workspaces stay reviewable because only live routing is frozen.
+ *  touched. Each add or update also appends its own Lead Review added Call
+ *  event in the same statement, so the Call event log keeps the review
+ *  history the single row overwrites. Calls in Archived Workspaces stay
+ *  reviewable because only live routing is frozen.
  *
  * @see
  *  data/lead-classification.ts
  *  data/call-details.ts
  *  data/workspace-authorization.ts
+ *  data/call-events.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { randomUUID } from "node:crypto";
+
 import type { Pool } from "pg";
 
 import type { Actor } from "@/data/authorization";
@@ -59,13 +64,19 @@ export async function saveLeadReview(pool: Pool, actor: Actor, workspaceId: stri
   const workspace = await createReadableWorkspaces(pool, actor).find(workspaceId);
   if (!workspace) throw new WorkspacesError("not_found");
   const saved = await pool.query(
-    `insert into lead_review (call_id, organization_id, classification, note, reviewer_user_id, reviewed_at)
-     select c.id, c.organization_id, $4, $5, $6, $7 from call c
-      where c.id = $1 and c.organization_id = $2 and c.workspace_id = $3
-     on conflict (call_id) do update
-        set classification = excluded.classification, note = excluded.note,
-            reviewer_user_id = excluded.reviewer_user_id, reviewed_at = excluded.reviewed_at`,
-    [callId, actor.organizationId, workspace.id, input.classification, input.note, actor.userId, new Date()],
+    `with saved as (
+       insert into lead_review (call_id, organization_id, classification, note, reviewer_user_id, reviewed_at)
+       select c.id, c.organization_id, $4, $5, $6, $7 from call c
+        where c.id = $1 and c.organization_id = $2 and c.workspace_id = $3
+       on conflict (call_id) do update
+          set classification = excluded.classification, note = excluded.note,
+              reviewer_user_id = excluded.reviewer_user_id, reviewed_at = excluded.reviewed_at
+       returning call_id, organization_id, classification, reviewer_user_id, reviewed_at
+     )
+     insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, detail, actor_user_id, idempotency_key)
+     select saved.organization_id, $3, saved.call_id, 'lead_review_added', saved.reviewed_at, jsonb_build_object('classification', saved.classification), saved.reviewer_user_id, $8
+       from saved`,
+    [callId, actor.organizationId, workspace.id, input.classification, input.note, actor.userId, new Date(), `lead_review_added:${callId}:${randomUUID()}`],
   );
   if (!saved.rowCount) throw new WorkspacesError("not_found");
   const review = await findLeadReview(pool, actor.organizationId, callId);

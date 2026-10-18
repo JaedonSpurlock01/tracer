@@ -635,3 +635,63 @@ describe("Recording transfer", () => {
     expect(await recordingRow(recording.id)).toMatchObject({ transfer_state: "Stored", twilio_cleanup_state: "Deleted", failure_stage: null });
   });
 });
+
+async function callEvents(callId: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
+  const result = await pool!.query("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+  return result.rows;
+}
+
+describe("Recording transfer Call events", () => {
+  it("appends Recording transferred and Transcript skipped with its reason once, even when the transfer reruns", async () => {
+    const recording = await pendingRecording("voicemail", { durationSeconds: 60 });
+    const twilio = fakeTwilio();
+    twilio.media.set(recording.sid, recording.bytes);
+    const r2 = fakeR2();
+
+    await transferRecording(dependencies(twilio, r2), recording.id);
+    await transferRecording(dependencies(twilio, r2), recording.id);
+
+    expect(await callEvents(recording.callId)).toEqual([
+      { kind: "recording_transferred", detail: {} },
+      { kind: "transcript_skipped", detail: { reason: "analysis_disabled" } },
+    ]);
+  });
+
+  it("appends no Transcript event when the Transcript becomes Pending", async () => {
+    const recording = await pendingRecording("voicemail", { workspaceId: "analysis-workspace", flowVersionId: "analysis-flow-version", durationSeconds: 30 });
+    const twilio = fakeTwilio();
+    twilio.media.set(recording.sid, recording.bytes);
+
+    await transferRecording(dependencies(twilio, fakeR2()), recording.id);
+
+    expect((await callEvents(recording.callId)).map((event) => event.kind)).toEqual(["recording_transferred"]);
+  });
+
+  it("appends one Recording transfer failed for repeated failures, then Recording transferred after a successful retry", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const r2 = fakeR2();
+    twilio.downloadFailure = new TwilioClientError("unavailable", null);
+
+    await expect(transferRecording(dependencies(twilio, r2), recording.id)).rejects.toBe(twilio.downloadFailure);
+    await expect(transferRecording(dependencies(twilio, r2), recording.id)).rejects.toBe(twilio.downloadFailure);
+    expect(await callEvents(recording.callId)).toEqual([{ kind: "recording_transfer_failed", detail: { stage: "download" } }]);
+
+    twilio.downloadFailure = null;
+    twilio.media.set(recording.sid, recording.bytes);
+    await transferRecording(dependencies(twilio, r2), recording.id);
+
+    expect((await callEvents(recording.callId)).map((event) => event.kind)).toEqual(["recording_transfer_failed", "recording_transferred", "transcript_skipped"]);
+  });
+
+  it("appends no event when only the Twilio cleanup fails", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    twilio.media.set(recording.sid, recording.bytes);
+    twilio.deleteFailure = new TwilioClientError("unavailable", null);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2()), recording.id)).rejects.toBe(twilio.deleteFailure);
+
+    expect((await callEvents(recording.callId)).map((event) => event.kind)).toEqual(["recording_transferred", "transcript_skipped"]);
+  });
+});
