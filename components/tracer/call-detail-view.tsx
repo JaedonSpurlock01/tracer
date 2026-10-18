@@ -38,7 +38,7 @@ import type { ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineDate, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
@@ -128,9 +128,9 @@ export interface CallDetailNavigation {
 
 function StepCall({ label, href, children }: { label: string; href: string | null; children: ReactNode }) {
   return href ? (
-    <Button variant="outline" size="icon" aria-label={label} render={<Link href={href} prefetch />}>
+    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} href={href} prefetch>
       {children}
-    </Button>
+    </Link>
   ) : (
     <Button variant="outline" size="icon" aria-label={label} disabled>
       {children}
@@ -154,10 +154,10 @@ export default function CallDetailView({
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" className="-ml-2.5" render={<Link href={navigation.back} prefetch />}>
+          <Link className={buttonVariants({ variant: "ghost", size: "sm", className: "-ml-2.5" })} href={navigation.back} prefetch>
             <ChevronLeftIcon data-icon="inline-start" aria-hidden />
             Back to Calls
-          </Button>
+          </Link>
           <ButtonGroup aria-label="Call navigation">
             <StepCall label="Previous Call" href={navigation.previous}>
               <ChevronUpIcon aria-hidden />

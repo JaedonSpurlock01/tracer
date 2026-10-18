@@ -49,7 +49,7 @@ import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagina
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -271,13 +271,13 @@ export default function CallsView({
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
             {row.original.recording === "Ready" ? (
-              <Button variant="ghost" size="sm" render={<Link href={callHref(row.original, back, { play: true })} />}>
+              <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back, { play: true })}>
                 Play Recording
-              </Button>
+              </Link>
             ) : null}
-            <Button variant="ghost" size="sm" render={<Link href={callHref(row.original, back)} prefetch />}>
+            <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back)} prefetch>
               Open Call
-            </Button>
+            </Link>
           </div>
         ),
         enableSorting: false,

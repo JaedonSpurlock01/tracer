@@ -93,6 +93,14 @@ async function deliverPagedCalls(request: APIRequestContext, assignmentId: strin
   pagedCallsDelivered = true;
 }
 
+// Calls and Activity fetch their list once hydrated, so waiting for that request keeps a click from landing on inert server HTML.
+async function gotoHydrated(page: Page, path: string): Promise<void> {
+  const api = path.startsWith("/activity") ? "/api/activity" : "/api/calls";
+  const hydrated = page.waitForResponse((response) => new URL(response.url()).pathname === api);
+  await page.goto(path);
+  await hydrated;
+}
+
 function todayEntries(page: Page): Locator {
   return page.locator("section").filter({ has: page.getByRole("heading", { level: 2, name: "Today", exact: true }) });
 }
@@ -165,7 +173,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       const callId = (await pool.query<{ id: string }>("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id;
       simulated = { assignmentId: assignment.id, workspaceId, callId, callerNumber };
 
-      await page.goto("/activity");
+      await gotoHydrated(page, "/activity");
       await page.getByRole("searchbox", { name: "Search caller number" }).fill(callerNumber);
       await expect(page).toHaveURL(/\/activity\?q=/);
       const today = todayEntries(page);
@@ -186,7 +194,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await expect(steps).toHaveText(expectedSteps);
       expect((await pool.query("select 1 from call where twilio_call_sid = $1", [callSid])).rowCount).toBe(1);
 
-      await page.goto("/calls");
+      await gotoHydrated(page, "/calls");
       await page.getByRole("searchbox", { name: "Search Calls" }).fill(callerNumber);
       const row = page.getByRole("row", { name: new RegExp(callerNumber.replace("+", "\\+")) });
       await expect(row).toHaveCount(1);
@@ -205,7 +213,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await expect(toolbar.getByText("Answered")).toBeVisible();
       await expect(row).toHaveCount(1);
 
-      await page.goto(`/calls?q=${encodeURIComponent(callerNumber)}&outcome=Missed`);
+      await gotoHydrated(page, `/calls?q=${encodeURIComponent(callerNumber)}&outcome=Missed`);
       const table = page.getByRole("table");
       await expect(table.getByText("No Calls match these filters.")).toBeVisible();
       await table.getByRole("button", { name: "Clear Filters" }).click();
@@ -236,7 +244,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await signInAsOperator(page, request);
 
       for (const path of ["/calls", `/workspaces/${workspaceId}/calls`]) {
-        await page.goto(path);
+        await gotoHydrated(page, path);
         await expect(page.getByRole("heading", { level: 1, name: "Calls" })).toBeVisible();
         await expectNoHorizontalPageScroll(page);
         await expectSidebarLayout(page, viewport);
@@ -254,7 +262,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
         await expectNoHorizontalPageScroll(page);
       }
 
-      await page.goto("/activity");
+      await gotoHydrated(page, "/activity");
       await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
       await expectNoHorizontalPageScroll(page);
       await expectSidebarLayout(page, viewport);
