@@ -6,8 +6,10 @@
  * @description
  *  Downloads a Recording's WAV from Twilio with its Organization's
  *  credential, uploads it to R2 under a deterministic key, verifies the
- *  stored size and SHA-256 checksum, and records the Recording as Stored.
- *  Only after Stored is committed does it request waveform generation and
+ *  stored size and SHA-256 checksum, and records the Recording as Stored
+ *  together with its analysis eligibility, so the Transcript becomes Pending
+ *  or Skipped with a reason. Only after Stored is committed does it request
+ *  waveform generation and, for a Pending Transcript, transcription, and
  *  then delete the Twilio copy and record the cleanup. A rerun skips finished stages, reuses a matching object at
  *  the same key, and replaces a mismatched one.
  *
@@ -19,14 +21,18 @@
  *  to a savepoint and recorded under the same lock with a secret-free
  *  reason before the error is rethrown for Trigger.dev to retry. The WAV is
  *  buffered in memory, which suits voicemail and connected-call lengths. A
- *  failed waveform request is ignored so it never blocks the transfer or
- *  cleanup; the recovery sweep re-requests it. The request reuses one
- *  Recording-derived idempotency key so reruns map to one waveform run.
+ *  failed waveform or transcription request is ignored so it never blocks
+ *  the transfer or cleanup; the recovery sweep re-requests it. Each request
+ *  reuses its own Recording-derived idempotency key so reruns map to one
+ *  run. Eligibility is decided once, in the Stored transaction, so the
+ *  Workspace analysis setting is read when the Recording becomes Stored and
+ *  a later change never backfills it.
  *
  * @see
  *  data/r2-objects.ts
  *  data/twilio-client.ts
  *  data/recording-waveform.ts
+ *  data/analysis-eligibility.ts
  *  trigger/recording-transfer.ts
  *
  * @author Jaedon Spurlock
@@ -34,9 +40,12 @@
  */
 import type { Pool, PoolClient } from "pg";
 
+import { analysisEligibility } from "@/data/analysis-eligibility";
+import { connectedSecondsSql, spamGateResult, type KeypadEvent } from "@/data/call-details";
+import { parseCallFlowGraph, type OutcomeKind } from "@/data/call-flow";
 import { decryptSecret } from "@/data/credential-encryption";
 import { R2ObjectError, sha256Hex, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
-import type { RecordingProcessing } from "@/data/recording";
+import type { RecordingProcessing, RecordingSource } from "@/data/recording";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
 
 export interface RecordingTransferDependencies {
@@ -45,6 +54,7 @@ export interface RecordingTransferDependencies {
   twilio: TwilioRecordingMedia;
   objects: RecordingObjects;
   waveform: RecordingProcessing;
+  transcription: RecordingProcessing;
   now: () => Date;
 }
 
@@ -60,6 +70,7 @@ type RecordingRow = {
   twilio_recording_sid: string;
   transfer_state: string;
   twilio_cleanup_state: string;
+  transcript_state: string | null;
   account_sid: string | null;
   api_key_sid: string | null;
   api_key_secret_ciphertext: string | null;
@@ -82,7 +93,7 @@ function matches(stored: StoredObject | null, object: StoredObject): boolean {
 
 async function lockRecording(client: PoolClient, recordingId: string): Promise<RecordingRow | undefined> {
   const result = await client.query<RecordingRow>(
-    `select r.id, r.organization_id, r.workspace_id, r.call_id, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state,
+    `select r.id, r.organization_id, r.workspace_id, r.call_id, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state, r.transcript_state,
             c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext
        from recording r
        left join twilio_connection c on c.organization_id = r.organization_id
@@ -97,7 +108,34 @@ async function credential(deps: RecordingTransferDependencies, row: RecordingRow
   return { accountSid: row.account_sid!, apiKeySid: row.api_key_sid!, apiKeySecret: await decryptSecret(deps.masterKey, row.api_key_secret_ciphertext!) };
 }
 
-async function store(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, progress: Progress): Promise<void> {
+async function transcriptDecision(client: PoolClient, row: RecordingRow): Promise<{ state: "Pending" | "Skipped"; skipReason: string | null }> {
+  const facts = await client.query<{ analysis_enabled: boolean; source: RecordingSource; duration_seconds: number | null; connected_seconds: number | null; outcome: OutcomeKind | null; graph: unknown }>(
+    `select w.analysis_enabled, r.source, r.duration_seconds, ${connectedSecondsSql} as connected_seconds, c.outcome, f.graph
+       from recording r
+       join workspace w on w.id = r.workspace_id
+       join call c on c.id = r.call_id
+       join flow_version f on f.id = c.flow_version_id
+      where r.id = $1`,
+    [row.id],
+  );
+  const gathers = await client.query<KeypadEvent>(
+    `select kind, idempotency_key, payload->>'Digits' as digits
+       from provider_event
+      where call_id = $1 and organization_id = $2 and disposition = 'accepted' and kind = 'gather'`,
+    [row.call_id, row.organization_id],
+  );
+  const fact = facts.rows[0];
+  const eligibility = analysisEligibility({
+    analysisEnabled: fact.analysis_enabled,
+    spamGate: spamGateResult(parseCallFlowGraph(fact.graph), fact.outcome, gathers.rows),
+    source: fact.source,
+    connectedDurationSeconds: fact.connected_seconds,
+    recordingDurationSeconds: fact.duration_seconds,
+  });
+  return eligibility.eligible ? { state: "Pending", skipReason: null } : { state: "Skipped", skipReason: eligibility.reason };
+}
+
+async function store(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, progress: Progress): Promise<string> {
   progress.stage = "download";
   const bytes = await deps.twilio.downloadRecording(await credential(deps, row), row.twilio_recording_sid);
   const object = { sizeBytes: bytes.byteLength, sha256: await sha256Hex(bytes) };
@@ -110,14 +148,17 @@ async function store(deps: RecordingTransferDependencies, client: PoolClient, ro
       throw new RecordingTransferError("R2 object does not match the Twilio download");
     }
   }
+  const transcript = await transcriptDecision(client, row);
   const now = deps.now();
   await client.query(
     `update recording
         set transfer_state = 'Stored', r2_object_key = $2, size_bytes = $3, sha256 = $4, stored_at = $5,
+            transcript_state = $6, transcript_skip_reason = $7,
             failure_stage = null, failure_reason = null, updated_at = $5
       where id = $1`,
-    [row.id, key, object.sizeBytes, object.sha256, now],
+    [row.id, key, object.sizeBytes, object.sha256, now, transcript.state, transcript.skipReason],
   );
+  return transcript.state;
 }
 
 async function cleanUp(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, progress: Progress): Promise<void> {
@@ -177,12 +218,16 @@ async function withLockedRecording(
 
 export async function transferRecording(deps: RecordingTransferDependencies, recordingId: string): Promise<void> {
   let storedOrganizationId: string | null = null;
+  let transcriptState = null as string | null;
   await withLockedRecording(deps, recordingId, async (client, row, progress) => {
-    if (row.transfer_state !== "Stored") await store(deps, client, row, progress);
+    transcriptState = row.transfer_state === "Stored" ? row.transcript_state : await store(deps, client, row, progress);
     storedOrganizationId = row.organization_id;
   });
   if (storedOrganizationId) {
     await deps.waveform.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-waveform:${recordingId}` }).catch(() => undefined);
+    if (transcriptState === "Pending") {
+      await deps.transcription.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-transcription:${recordingId}` }).catch(() => undefined);
+    }
   }
   await withLockedRecording(deps, recordingId, async (client, row, progress) => {
     if (row.transfer_state === "Stored" && row.twilio_cleanup_state !== "Deleted") await cleanUp(deps, client, row, progress);

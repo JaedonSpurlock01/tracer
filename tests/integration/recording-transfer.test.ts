@@ -8,14 +8,17 @@
  *  with fake Twilio media and R2 object boundaries, and checks the stored
  *  object, the persisted transfer and cleanup states, failure recovery, that
  *  the Twilio copy is never deleted before a verified R2 copy is recorded,
- *  and that waveform generation is requested once the Recording is Stored
- *  without its failure affecting the transfer or cleanup.
+ *  that waveform generation is requested once the Recording is Stored
+ *  without its failure affecting the transfer or cleanup, and that analysis
+ *  eligibility is decided when the Recording is Stored so only an eligible
+ *  Recording requests transcription.
  *
  * @remarks
  *  The fakes implement the provider interfaces only. The R2 fake computes
  *  the checksum of the bytes it receives so verification proves the bytes
- *  that reached storage match the Twilio download. Waveform requests go to
- *  a fake at the Trigger.dev boundary that records each request.
+ *  that reached storage match the Twilio download. Waveform and
+ *  transcription requests go to fakes at the Trigger.dev boundary that
+ *  record each request.
  *
  * @see
  *  data/recording-transfer.ts
@@ -127,28 +130,72 @@ function fakeWaveform(failure: Error | null = null): RecordingProcessing & { req
   };
 }
 
-function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform()): RecordingTransferDependencies {
-  return { pool: pool!, masterKey, twilio, objects: r2, waveform, now: () => now };
+function fakeTranscription(failure: Error | null = null): RecordingProcessing & { requests: { request: RecordingProcessingRequest; transcriptState: string | null }[] } {
+  const requests: { request: RecordingProcessingRequest; transcriptState: string | null }[] = [];
+  return {
+    requests,
+    async request(request) {
+      const row = await pool!.query("select transcript_state from recording where id = $1", [request.id]);
+      requests.push({ request, transcriptState: row.rows[0].transcript_state });
+      if (failure) throw failure;
+    },
+  };
+}
+
+function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform(), transcription = fakeTranscription()): RecordingTransferDependencies {
+  return { pool: pool!, masterKey, twilio, objects: r2, waveform, transcription, now: () => now };
 }
 
 let sequence = 0;
 
-async function pendingRecording(source: "connected" | "voicemail" = "voicemail"): Promise<{ id: string; sid: string; callId: string; bytes: Uint8Array }> {
+interface CallSeed {
+  workspaceId?: string;
+  flowVersionId?: string;
+  durationSeconds?: number;
+  forwardedSeconds?: number;
+  keypadDigits?: string;
+}
+
+async function pendingRecording(source: "connected" | "voicemail" = "voicemail", seed: CallSeed = {}): Promise<{ id: string; sid: string; callId: string; bytes: Uint8Array }> {
   sequence += 1;
   const callId = `transfer-call-${sequence}`;
   const id = randomUUID();
   const sid = `RE${String(sequence).padStart(32, "0")}`;
+  const callSid = `CA${String(sequence).padStart(32, "0")}`;
+  const workspaceId = seed.workspaceId ?? "transfer-workspace";
   await pool!.query(
-    `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
-     values ($1, $2, 'transfer-workspace', 'transfer-assignment', 'transfer-flow-version', $3, '+14155550111', now(), now(), now())`,
-    [callId, organizationId, `CA${String(sequence).padStart(32, "0")}`],
+    `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, state, outcome, started_at, answered_at, ended_at, created_at, updated_at)
+     values ($1, $2, $3, 'transfer-assignment', $4, $5, '+14155550111', $6, $7, now() - interval '5 minutes', $8, $9, now(), now())`,
+    [
+      callId,
+      organizationId,
+      workspaceId,
+      seed.flowVersionId ?? "transfer-flow-version",
+      callSid,
+      seed.forwardedSeconds === undefined ? "In Progress" : "Completed",
+      seed.forwardedSeconds === undefined ? null : "Answered",
+      seed.forwardedSeconds === undefined ? null : new Date(now.getTime() - 4 * 60_000),
+      seed.forwardedSeconds === undefined ? null : now,
+    ],
   );
+  const event = (kind: string, idempotencyKey: string, payload: Record<string, string>) => pool!.query(
+    `insert into provider_event (id, organization_id, number_assignment_id, call_id, idempotency_key, kind, disposition, payload, received_at)
+     values ($1, $2, 'transfer-assignment', $3, $4, $5, 'accepted', $6, now())`,
+    [randomUUID(), organizationId, callId, idempotencyKey, kind, JSON.stringify(payload)],
+  );
+  if (seed.keypadDigits !== undefined) await event("gather", `${callSid}:gather:gate:1`, { Digits: seed.keypadDigits });
+  if (seed.forwardedSeconds !== undefined) await event("forward_status", `${callSid}:forward_status:completed`, { CallStatus: "completed", CallDuration: String(seed.forwardedSeconds) });
   await pool!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, created_at, updated_at)
-     values ($1, $2, 'transfer-workspace', $3, $4, $5, $6, 12, now(), now())`,
-    [id, organizationId, callId, sid, source, source === "connected" ? 2 : 1],
+     values ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`,
+    [id, organizationId, workspaceId, callId, sid, source, source === "connected" ? 2 : 1, seed.durationSeconds ?? 12],
   );
   return { id, sid, callId, bytes: new TextEncoder().encode(`RIFF synthetic ${source} recording ${sequence}`) };
+}
+
+async function analysisState(id: string): Promise<{ transcript_state: string | null; transcript_skip_reason: string | null }> {
+  const result = await pool!.query("select transcript_state, transcript_skip_reason from recording where id = $1", [id]);
+  return result.rows[0];
 }
 
 async function recordingRow(id: string): Promise<Record<string, unknown>> {
@@ -191,6 +238,18 @@ beforeAll(async () => {
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('transfer-flow-version', $1, 'transfer-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), operator.userId],
+  );
+  await pool.query(
+    `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, recording_enabled, analysis_enabled, created_at, updated_at)
+     values ('analysis-workspace', $1, 'Analysis Workspace', 'UTC', 'Active', '+14155550199', true, true, now(), now())`,
+    [organizationId],
+  );
+  const flow = (spamGateEnabled: boolean) => generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
+  await pool.query(
+    `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
+     values ('analysis-flow-version', $1, 'analysis-workspace', 1, $2, $4, now()),
+            ('analysis-gated-flow-version', $1, 'analysis-workspace', 2, $3, $4, now())`,
+    [organizationId, JSON.stringify(flow(false)), JSON.stringify(flow(true)), operator.userId],
   );
 }, 120_000);
 
@@ -278,6 +337,129 @@ describe("Recording transfer", () => {
     await expect(transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id)).rejects.toBe(twilio.downloadFailure);
 
     expect(waveform.requests).toEqual([]);
+  });
+
+  describe("analysis eligibility at Stored time", () => {
+    const analysis = { workspaceId: "analysis-workspace", flowVersionId: "analysis-flow-version" };
+    const gated = { workspaceId: "analysis-workspace", flowVersionId: "analysis-gated-flow-version" };
+
+    async function transferWithTranscription(recording: Awaited<ReturnType<typeof pendingRecording>>, transcription = fakeTranscription()) {
+      const twilio = fakeTwilio();
+      twilio.media.set(recording.sid, recording.bytes);
+      await transferRecording(dependencies(twilio, fakeR2(), fakeWaveform(), transcription), recording.id);
+      return { transcription, twilio };
+    }
+
+    it("skips analysis without requesting transcription when the Workspace has analysis disabled", async () => {
+      const recording = await pendingRecording("voicemail", { durationSeconds: 60 });
+
+      const { transcription } = await transferWithTranscription(recording);
+
+      expect(transcription.requests).toEqual([]);
+      expect(await analysisState(recording.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "analysis_disabled" });
+    });
+
+    it("requests one transcription with its Recording-derived idempotency key for an eligible voicemail after Pending is committed", async () => {
+      const recording = await pendingRecording("voicemail", { ...analysis, durationSeconds: 15 });
+
+      const { transcription } = await transferWithTranscription(recording);
+
+      expect(transcription.requests).toEqual([{ request: { id: recording.id, organizationId, idempotencyKey: `recording-transcription:${recording.id}` }, transcriptState: "Pending" }]);
+      expect(await analysisState(recording.id)).toEqual({ transcript_state: "Pending", transcript_skip_reason: null });
+    });
+
+    it("skips a voicemail shorter than 15 seconds without requesting transcription", async () => {
+      const recording = await pendingRecording("voicemail", { ...analysis, durationSeconds: 14 });
+
+      const { transcription } = await transferWithTranscription(recording);
+
+      expect(transcription.requests).toEqual([]);
+      expect(await analysisState(recording.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "too_short" });
+    });
+
+    it("measures a connected Recording by the forwarded leg's connected duration", async () => {
+      const eligible = await pendingRecording("connected", { ...analysis, durationSeconds: 20, forwardedSeconds: 15 });
+      const short = await pendingRecording("connected", { ...analysis, durationSeconds: 40, forwardedSeconds: 14 });
+
+      const eligibleRun = await transferWithTranscription(eligible);
+      const shortRun = await transferWithTranscription(short);
+
+      expect(eligibleRun.transcription.requests.map(({ request }) => request.idempotencyKey)).toEqual([`recording-transcription:${eligible.id}`]);
+      expect(shortRun.transcription.requests).toEqual([]);
+      expect(await analysisState(short.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "too_short" });
+    });
+
+    it("requests transcription only when the Call passed the pinned Keypad Gate", async () => {
+      const passed = await pendingRecording("connected", { ...gated, keypadDigits: "1", forwardedSeconds: 60 });
+      const blocked = await pendingRecording("voicemail", { ...gated, keypadDigits: "9", durationSeconds: 60 });
+
+      const passedRun = await transferWithTranscription(passed);
+      const blockedRun = await transferWithTranscription(blocked);
+
+      expect(passedRun.transcription.requests).toHaveLength(1);
+      expect(blockedRun.transcription.requests).toEqual([]);
+      expect(await analysisState(blocked.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "spam_gate_not_passed" });
+    });
+
+    it("keeps the eligibility decided at Stored time when analysis is enabled before a cleanup retry", async () => {
+      await pool!.query("update workspace set recording_enabled = true where id = 'transfer-workspace'");
+      const recording = await pendingRecording("voicemail", { durationSeconds: 60 });
+      const twilio = fakeTwilio();
+      const r2 = fakeR2();
+      twilio.media.set(recording.sid, recording.bytes);
+      twilio.deleteFailure = new TwilioClientError("unavailable", null);
+      try {
+        await expect(transferRecording(dependencies(twilio, r2), recording.id)).rejects.toBe(twilio.deleteFailure);
+        await pool!.query("update workspace set analysis_enabled = true where id = 'transfer-workspace'");
+        twilio.deleteFailure = null;
+        const transcription = fakeTranscription();
+
+        await transferRecording(dependencies(twilio, r2, fakeWaveform(), transcription), recording.id);
+
+        expect(transcription.requests).toEqual([]);
+        expect(await analysisState(recording.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "analysis_disabled" });
+      } finally {
+        await pool!.query("update workspace set analysis_enabled = false, recording_enabled = false where id = 'transfer-workspace'");
+      }
+    });
+
+    it("never fails the transfer or cleanup when the transcription request fails, leaving the Transcript Pending", async () => {
+      const recording = await pendingRecording("voicemail", { ...analysis, durationSeconds: 30 });
+
+      const { transcription, twilio } = await transferWithTranscription(recording, fakeTranscription(new Error("Trigger.dev is unavailable")));
+
+      expect(transcription.requests).toHaveLength(1);
+      expect(twilio.deletes).toEqual([{ sid: recording.sid, transferState: "Stored" }]);
+      expect(await analysisState(recording.id)).toEqual({ transcript_state: "Pending", transcript_skip_reason: null });
+      expect(await recordingRow(recording.id)).toMatchObject({ transfer_state: "Stored", twilio_cleanup_state: "Deleted", failure_stage: null });
+    });
+
+    it("re-requests a Pending transcription with the same idempotency key on a cleanup retry", async () => {
+      const recording = await pendingRecording("voicemail", { ...analysis, durationSeconds: 30 });
+      const twilio = fakeTwilio();
+      const r2 = fakeR2();
+      const transcription = fakeTranscription();
+      twilio.media.set(recording.sid, recording.bytes);
+      twilio.deleteFailure = new TwilioClientError("unavailable", null);
+      await expect(transferRecording(dependencies(twilio, r2, fakeWaveform(), transcription), recording.id)).rejects.toBe(twilio.deleteFailure);
+      twilio.deleteFailure = null;
+
+      await transferRecording(dependencies(twilio, r2, fakeWaveform(), transcription), recording.id);
+
+      expect(transcription.requests.map(({ request }) => request.idempotencyKey)).toEqual([`recording-transcription:${recording.id}`, `recording-transcription:${recording.id}`]);
+    });
+
+    it("decides nothing and requests no transcription for a Recording that failed to store", async () => {
+      const recording = await pendingRecording("voicemail", { ...analysis, durationSeconds: 30 });
+      const twilio = fakeTwilio();
+      const transcription = fakeTranscription();
+      twilio.downloadFailure = new TwilioClientError("unavailable", null);
+
+      await expect(transferRecording(dependencies(twilio, fakeR2(), fakeWaveform(), transcription), recording.id)).rejects.toBe(twilio.downloadFailure);
+
+      expect(transcription.requests).toEqual([]);
+      expect(await analysisState(recording.id)).toEqual({ transcript_state: null, transcript_skip_reason: null });
+    });
   });
 
   it("persists a download failure as Failed with a secret-free reason and rethrows it for retry", async () => {

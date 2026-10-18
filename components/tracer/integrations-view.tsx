@@ -5,8 +5,10 @@
  *
  * @description
  *  Renders server-provided provider health, manages Twilio credentials and
- *  numbers, exposes safe Hyperdrive and Email Service test actions, and
- *  lists recent Recording transfer failures for R2 and Trigger.dev.
+ *  numbers, exposes safe Hyperdrive and Email Service test actions,
+ *  lists recent Recording transfer failures for R2 and Trigger.dev,
+ *  and shows the OpenAI configured models, last successful Transcript and Lead
+ *  Assessment, and recent processing failures.
  *
  * @remarks
  *  Provider actions remain behind the authenticated HTTP boundary. The first
@@ -34,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
-import type { ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
+import type { OpenAIAnalysisHealth, ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
 
 type IntegrationResponse = {
   providers: ProviderHealth[];
@@ -88,7 +90,37 @@ function providerError(status: number, detail: unknown, fallback: string): strin
   return fallback;
 }
 
+function AnalysisDetails({ identifier, analysis }: { identifier: string | null; analysis: OpenAIAnalysisHealth }) {
+  const rows: [string, string][] = [
+    ["Identifier", identifier ?? "Not available"],
+    ["Transcription model", analysis.transcriptionModel],
+    ["Lead analysis model", analysis.leadAssessmentModel],
+    ["Last successful Transcript", formatDate(analysis.lastTranscriptAt)],
+    ["Last successful Lead Assessment", formatDate(analysis.lastLeadAssessmentAt)],
+    ["Recent processing failures", String(analysis.failedCount)],
+    ["Last failure", formatDate(analysis.lastFailureAt)],
+  ];
+  return (
+    <dl className="grid gap-2 text-sm sm:grid-cols-2">
+      {rows.map(([term, value]) => (
+        <div key={term}>
+          <dt className="text-muted-foreground">{term}</dt>
+          <dd className="tabular-nums">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function ProviderDetails({ provider }: { provider: ProviderHealth }) {
+  if (provider.analysis) {
+    return (
+      <>
+        <AnalysisDetails identifier={provider.identifier} analysis={provider.analysis} />
+        {provider.note ? <p className="text-sm text-muted-foreground">{provider.note}</p> : null}
+      </>
+    );
+  }
   return (
     <>
       <dl className="grid gap-2 text-sm sm:grid-cols-2">

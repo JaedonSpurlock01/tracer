@@ -4,11 +4,12 @@
  * @brief  Requests Recording processing through the Trigger.dev REST API.
  *
  * @description
- *  Triggers one Recording transfer run, or with the waveform task id one
- *  Recording waveform run, per Recording by posting its id and
- *  Recording-derived idempotency key to Trigger.dev. Without a secret key the
- *  request does nothing, so the Recording stays Pending for the recovery
- *  sweep. A queued run waits up to 7 days, matching the sweep window.
+ *  Triggers one Recording transfer run, or with the waveform,
+ *  transcription, or Lead Assessment task id one run of that stage, per
+ *  Recording by posting its id and Recording-derived idempotency key to
+ *  Trigger.dev. Without a secret key the request does nothing, so the
+ *  Recording stays Pending for the recovery sweep. A queued run waits up to
+ *  7 days, matching the sweep window.
  *
  * @remarks
  *  The Worker calls the REST endpoint with fetch instead of importing the
@@ -22,6 +23,8 @@
  *  data/recording.ts
  *  trigger/recording-transfer.ts
  *  trigger/recording-waveform.ts
+ *  trigger/recording-transcription.ts
+ *  trigger/recording-lead-assessment.ts
  *  https://trigger.dev/docs/management/tasks/trigger
  *
  * @author Jaedon Spurlock
@@ -32,6 +35,10 @@ import type { RecordingProcessing } from "@/data/recording";
 export const recordingTransferTaskId = "recording-transfer";
 
 export const recordingWaveformTaskId = "recording-waveform";
+
+export const recordingTranscriptionTaskId = "recording-transcription";
+
+export const recordingLeadAssessmentTaskId = "recording-lead-assessment";
 
 export function createTriggerRecordingProcessing(options: {
   secretKey: string | undefined;

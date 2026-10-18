@@ -7,13 +7,15 @@
  *  Seeds Recordings in every transfer, cleanup, and waveform state against
  *  a real PostgreSQL database and checks that the sweep re-requests
  *  processing for unfinished transfers and waveform generation for
- *  transferred Recordings without Stored peaks, only when idle for over an
- *  hour and created within the last 7 days, and that one failed request
- *  does not stop the rest.
+ *  transferred Recordings without Stored peaks, transcription for Stored
+ *  Recordings whose Transcript is Pending or Failed, and the Lead Assessment
+ *  for Completed Transcripts whose Lead Assessment is Pending or Failed,
+ *  only when idle for over an hour and created within the last 7 days, and
+ *  that one failed request does not stop the rest.
  *
  * @remarks
- *  Recording processing and waveform requests are fakes at the Trigger.dev
- *  boundary that record each request.
+ *  Recording processing, waveform, transcription, and Lead Assessment
+ *  requests are fakes at the Trigger.dev boundary that record each request.
  *
  * @see
  *  data/recording-recovery.ts
@@ -41,7 +43,15 @@ let pool: Pool | undefined;
 let organizationId = "";
 let sequence = 0;
 
-async function recording(state: { transfer: string; cleanup: string; waveform?: string; createdAt: Date; updatedAt: Date }): Promise<string> {
+async function recording(state: {
+  transfer: string;
+  cleanup: string;
+  waveform?: string;
+  transcript?: string;
+  leadAssessment?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): Promise<string> {
   sequence += 1;
   const id = randomUUID();
   const stored = state.transfer === "Stored";
@@ -67,11 +77,37 @@ async function recording(state: { transfer: string; cleanup: string; waveform?: 
       waveformStored ? state.updatedAt : null,
     ],
   );
+  if (state.transcript) {
+    const completed = state.transcript === "Completed";
+    await pool!.query(
+      `update recording set transcript_state = $2, transcript_failure_reason = $3, transcript_audio_ms = $4, transcript_cost_usd = $5, transcript_completed_at = $6,
+                            lead_assessment_state = $7, transcript_skip_reason = $8
+        where id = $1`,
+      [
+        id,
+        state.transcript,
+        state.transcript === "Failed" ? "OpenAI request failed (HTTP 500)" : null,
+        completed ? 60_000 : null,
+        completed ? 0.006 : null,
+        completed ? state.updatedAt : null,
+        state.leadAssessment ?? null,
+        state.transcript === "Skipped" ? "too_short" : null,
+      ],
+    );
+  }
   return id;
 }
 
-function sweep(processing: RecordingProcessing, waveform: RecordingProcessing = recordingProcessing()) {
-  return sweepStuckRecordings({ pool: pool!, recordingProcessing: processing, recordingWaveform: waveform }, now);
+function sweep(
+  processing: RecordingProcessing,
+  waveform: RecordingProcessing = recordingProcessing(),
+  transcription: RecordingProcessing = recordingProcessing(),
+  leadAssessment: RecordingProcessing = recordingProcessing(),
+) {
+  return sweepStuckRecordings(
+    { pool: pool!, recordingProcessing: processing, recordingWaveform: waveform, recordingTranscription: transcription, recordingLeadAssessment: leadAssessment },
+    now,
+  );
 }
 
 function recordingProcessing(failingId: string | null = null): RecordingProcessing & { requests: RecordingProcessingRequest[] } {
@@ -168,6 +204,72 @@ describe("Recording recovery sweep", () => {
 
     expect(processing.requests).toEqual([]);
     expect(waveform.requests).toEqual([]);
+  });
+
+  it("re-requests transcription for Stored Recordings whose Transcript is Pending or Failed and idle for over an hour", async () => {
+    const transcriptPending = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Pending", createdAt: hours(30), updatedAt: hours(2) });
+    const transcriptFailed = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Failed", createdAt: hours(20), updatedAt: hours(2) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Skipped", createdAt: hours(10), updatedAt: hours(2) });
+    const processing = recordingProcessing();
+    const transcription = recordingProcessing();
+    const leadAssessment = recordingProcessing();
+
+    await expect(sweep(processing, recordingProcessing(), transcription, leadAssessment)).resolves.toEqual({ requested: 2, failed: 0 });
+
+    expect(transcription.requests).toEqual([transcriptPending, transcriptFailed].map((id) => ({ id, organizationId, idempotencyKey: `recording-transcription:${id}` })));
+    expect(processing.requests).toEqual([]);
+    expect(leadAssessment.requests).toEqual([]);
+  });
+
+  it("re-requests the Lead Assessment for Completed Transcripts whose Lead Assessment is Pending or Failed and idle for over an hour", async () => {
+    const assessmentPending = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Pending", createdAt: hours(30), updatedAt: hours(2) });
+    const assessmentFailed = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Failed", createdAt: hours(20), updatedAt: hours(2) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Completed", createdAt: hours(10), updatedAt: hours(2) });
+    const transcription = recordingProcessing();
+    const leadAssessment = recordingProcessing();
+
+    await expect(sweep(recordingProcessing(), recordingProcessing(), transcription, leadAssessment)).resolves.toEqual({ requested: 2, failed: 0 });
+
+    expect(leadAssessment.requests).toEqual([assessmentPending, assessmentFailed].map((id) => ({ id, organizationId, idempotencyKey: `recording-lead-assessment:${id}` })));
+    expect(transcription.requests).toEqual([]);
+  });
+
+  it("requests both a stalled waveform and a stalled Transcript for one transferred Recording", async () => {
+    const id = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Failed", transcript: "Failed", createdAt: hours(30), updatedAt: hours(2) });
+    const waveform = recordingProcessing();
+    const transcription = recordingProcessing();
+
+    await expect(sweep(recordingProcessing(), waveform, transcription)).resolves.toEqual({ requested: 2, failed: 0 });
+
+    expect(waveform.requests.map((request) => request.id)).toEqual([id]);
+    expect(transcription.requests.map((request) => request.id)).toEqual([id]);
+  });
+
+  it("skips fresh and older than 7 days Transcripts and Lead Assessments", async () => {
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Failed", createdAt: hours(3), updatedAt: hours(0.5) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Pending", createdAt: hours(7 * 24 + 1), updatedAt: hours(7 * 24) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Failed", createdAt: hours(3), updatedAt: hours(0.5) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Pending", createdAt: hours(7 * 24 + 1), updatedAt: hours(7 * 24) });
+    const transcription = recordingProcessing();
+    const leadAssessment = recordingProcessing();
+
+    await expect(sweep(recordingProcessing(), recordingProcessing(), transcription, leadAssessment)).resolves.toEqual({ requested: 0, failed: 0 });
+
+    expect(transcription.requests).toEqual([]);
+    expect(leadAssessment.requests).toEqual([]);
+  });
+
+  it("keeps requesting the remaining Transcripts and Lead Assessments when one request fails", async () => {
+    const first = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Failed", createdAt: hours(30), updatedAt: hours(2) });
+    const second = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Pending", createdAt: hours(25), updatedAt: hours(2) });
+    const third = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Failed", createdAt: hours(20), updatedAt: hours(2) });
+    const transcription = recordingProcessing(first);
+    const leadAssessment = recordingProcessing();
+
+    await expect(sweep(recordingProcessing(), recordingProcessing(), transcription, leadAssessment)).resolves.toEqual({ requested: 2, failed: 1 });
+
+    expect(transcription.requests.map((request) => request.id)).toEqual([first, second]);
+    expect(leadAssessment.requests.map((request) => request.id)).toEqual([third]);
   });
 
   it("keeps requesting the remaining Recordings when one request fails", async () => {

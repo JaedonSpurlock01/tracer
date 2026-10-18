@@ -5,20 +5,23 @@
  *
  * @description
  *  Shows the caller number as the Call's identity with its Workspace,
- *  Tracking Number, and Call Outcome, a sticky Recording player Frame, the
- *  Call facts in a dense definition list, and the processing timeline.
- *  The Twilio call SID appears only when the read model provides it, which
- *  it does for Operators.
+ *  Tracking Number, Call Outcome, and effective Lead classification, a
+ *  sticky Recording player Frame, the Transcript, Lead Review, and Lead
+ *  Assessment, the Call facts in a dense definition list, and the
+ *  processing timeline. The Twilio call SID appears only when the read
+ *  model provides it, which it does for Operators.
  *
  * @remarks
- *  Transcript, Lead Assessment, and Lead Review wait for M13, and Download
- *  MP3, Export Call, Purge Media, and previous and next Call navigation
- *  wait for later milestones, so none of them render here. Times use the
- *  Workspace reporting timezone.
+ *  A PlaybackProvider spans the player and the analysis regions so the
+ *  Transcript and evidence can follow and seek playback. Download MP3,
+ *  Export Call, Purge Media, and previous and next Call navigation wait for
+ *  later milestones, so none of them render here. Times use the Workspace
+ *  reporting timezone.
  *
  * @see
  *  data/call-details.ts
  *  components/tracer/recording-player.tsx
+ *  components/tracer/call-analysis.tsx
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
@@ -30,8 +33,11 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineDate, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
+import CallAnalysis from "@/components/tracer/call-analysis";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock, formatTimeOfDay } from "@/components/tracer/call-format";
+import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
+import { PlaybackProvider } from "@/components/tracer/playback";
 import RecordingPlayer from "@/components/tracer/recording-player";
 import type { CallDetail, CallTimelineEntry } from "@/data/call-details";
 
@@ -105,7 +111,7 @@ function ProcessingTimeline({ call }: { call: CallDetail }) {
   );
 }
 
-export default function CallDetailView({ call }: { call: CallDetail }) {
+export default function CallDetailView({ call, operator }: { call: CallDetail; operator: boolean }) {
   const timeZone = call.workspace.reportingTimezone;
   return (
     <div className="flex flex-col gap-6">
@@ -113,6 +119,9 @@ export default function CallDetailView({ call }: { call: CallDetail }) {
         <h1 className="text-2xl font-semibold tracking-tight tabular-nums">{call.callerNumber ?? "Unknown caller"}</h1>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <CallOutcomeBadge outcome={call.outcome} />
+          {call.effectiveLeadClassification ? (
+            <LeadClassificationBadge classification={call.effectiveLeadClassification.classification} automated={call.effectiveLeadClassification.source === "assessment"} />
+          ) : null}
           <Link href={`/workspaces/${call.workspace.id}`} prefetch className="text-foreground transition-colors hover:text-muted-foreground">
             {call.workspace.name}
           </Link>
@@ -121,16 +130,19 @@ export default function CallDetailView({ call }: { call: CallDetail }) {
           </span>
         </div>
       </header>
-      <section aria-labelledby="call-recording-title" className="sticky top-0 z-10">
-        <Frame variant="inverse">
-          <FrameHeader>
-            <FrameTitle><h2 id="call-recording-title">Recording</h2></FrameTitle>
-          </FrameHeader>
-          <FramePanel>
-            <RecordingPlayer workspaceId={call.workspace.id} recording={call.recording} />
-          </FramePanel>
-        </Frame>
-      </section>
+      <PlaybackProvider>
+        <section aria-labelledby="call-recording-title" className="sticky top-0 z-10">
+          <Frame variant="inverse">
+            <FrameHeader>
+              <FrameTitle><h2 id="call-recording-title">Recording</h2></FrameTitle>
+            </FrameHeader>
+            <FramePanel>
+              <RecordingPlayer workspaceId={call.workspace.id} recording={call.recording} />
+            </FramePanel>
+          </Frame>
+        </section>
+        <CallAnalysis call={call} operator={operator} />
+      </PlaybackProvider>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section aria-labelledby="call-facts-title">
           <Frame>

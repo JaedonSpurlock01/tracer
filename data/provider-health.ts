@@ -4,15 +4,21 @@
  * @brief  Describes configured provider health for the Integrations surface.
  *
  * @description
- *  Converts runtime configuration, persisted Twilio state, and persisted
- *  Recording transfer outcomes into stable provider health records without
- *  contacting external services.
+ *  Converts runtime configuration, persisted Twilio state, persisted
+ *  Recording transfer outcomes, and persisted Transcript and Lead Assessment
+ *  outcomes into stable provider health records without contacting
+ *  external services.
  *
  * @remarks
  *  Deferred provider tests remain explicitly non-testable until their owning
  *  milestones add connection actions. R2 and Trigger.dev report Tracer's own
  *  Recording transfer history instead of calling either provider, and are
  *  degraded while the newest transfer failure follows the last success.
+ *  OpenAI reports its fixed transcription and Lead Assessment models, the
+ *  last successful Transcript and Lead Assessment, and how many Recordings
+ *  have a Failed Transcript or Lead Assessment, and is degraded while the
+ *  newest of those failures follows the last success. Failure reasons are
+ *  left to Call Detail so this card carries no Call content.
  *
  * @see
  *  data/integrations.ts
@@ -21,6 +27,8 @@
  * -------------------------------------------------------------------------
  */
 import type { TwilioConnectionRecord } from "@/data/integrations";
+import { leadAssessmentModel } from "@/data/lead-assessment";
+import { transcriptionModel } from "@/data/openai-client";
 
 export type ProviderId = "twilio" | "r2" | "openai" | "triggerdev" | "hyperdrive" | "email";
 export type ProviderState = "connected" | "configured" | "degraded" | "not_configured";
@@ -36,6 +44,19 @@ export interface ProviderHealth {
   testable: boolean;
   note: string | null;
   recentFailures?: RecordingTransferFailure[];
+  analysis?: OpenAIAnalysisHealth;
+}
+
+export interface AnalysisProcessingHealth {
+  lastTranscriptAt: string | null;
+  lastLeadAssessmentAt: string | null;
+  failedCount: number;
+  lastFailureAt: string | null;
+}
+
+export interface OpenAIAnalysisHealth extends AnalysisProcessingHealth {
+  transcriptionModel: string;
+  leadAssessmentModel: string;
 }
 
 export interface RecordingTransferFailure {
@@ -61,22 +82,21 @@ export interface ProviderConfiguration {
   triggerdev: boolean;
 }
 
-function staticProvider(
-  id: "openai",
-  name: string,
-  configured: boolean,
-  identifier: string,
-): ProviderHealth {
+function openAIProvider(configured: boolean, analysis: AnalysisProcessingHealth): ProviderHealth {
+  const successes = [analysis.lastTranscriptAt, analysis.lastLeadAssessmentAt].filter((at): at is string => at !== null).sort();
+  const lastSuccessAt = successes.at(-1) ?? null;
+  const failedSinceSuccess = Boolean(analysis.lastFailureAt && (!lastSuccessAt || analysis.lastFailureAt > lastSuccessAt));
   return {
-    id,
-    name,
-    state: configured ? "configured" : "not_configured",
-    identifier,
-    lastSuccessAt: null,
-    lastFailureAt: null,
+    id: "openai",
+    name: "OpenAI",
+    state: !configured ? "not_configured" : failedSinceSuccess ? "degraded" : "configured",
+    identifier: "OPENAI_API_KEY",
+    lastSuccessAt,
+    lastFailureAt: analysis.lastFailureAt,
     lastFailureDetail: null,
     testable: false,
     note: "Test Connection arrives with its milestone",
+    analysis: { transcriptionModel, leadAssessmentModel, ...analysis },
   };
 }
 
@@ -107,6 +127,7 @@ export function describeProviderHealth(
   configuration: ProviderConfiguration,
   twilio: TwilioConnectionRecord | null,
   recordingTransfers: RecordingTransferHealth,
+  analysis: AnalysisProcessingHealth,
 ): ProviderHealth[] {
   const twilioHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
@@ -174,7 +195,7 @@ export function describeProviderHealth(
     hyperdrive,
     email,
     recordingTransferProvider("r2", "Cloudflare R2", configuration.r2, configuration.r2Bucket, recordingTransfers),
-    staticProvider("openai", "OpenAI", configuration.openai, "OPENAI_API_KEY"),
+    openAIProvider(configuration.openai, analysis),
     recordingTransferProvider("triggerdev", "Trigger.dev", configuration.triggerdev, "TRIGGER_SECRET_KEY", recordingTransfers),
   ];
 }

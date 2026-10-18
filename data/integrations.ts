@@ -24,7 +24,7 @@ import type { Pool, PoolClient } from "pg";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
-import type { RecordingTransferHealth } from "@/data/provider-health";
+import type { AnalysisProcessingHealth, RecordingTransferHealth } from "@/data/provider-health";
 import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 
 export interface TwilioConnectionRecord {
@@ -102,6 +102,7 @@ export interface Integrations {
   syncTwilioNumbers(): Promise<{ numbers: TwilioNumberRecord[]; syncedAt: string; skipped: number }>;
   listTwilioNumbers(): Promise<TwilioNumberRecord[]>;
   getRecordingTransferHealth(): Promise<RecordingTransferHealth>;
+  getAnalysisProcessingHealth(): Promise<AnalysisProcessingHealth>;
 }
 
 type ConnectionRow = {
@@ -500,6 +501,24 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       return {
         lastStoredAt: stored.rows[0].last_stored_at?.toISOString() ?? null,
         recentFailures: failures.rows.map((row) => ({ stage: row.failure_stage, reason: row.failure_reason, at: row.updated_at.toISOString() })),
+      };
+    },
+
+    async getAnalysisProcessingHealth() {
+      const result = await options.pool.query<{ last_transcript_at: Date | null; last_lead_assessment_at: Date | null; failed_count: number; last_failure_at: Date | null }>(
+        `select (select max(transcript_completed_at) from recording where organization_id = $1) as last_transcript_at,
+                (select max(processed_at) from lead_assessment where organization_id = $1) as last_lead_assessment_at,
+                failed.failed_count, failed.last_failure_at
+           from (select count(*)::int as failed_count, max(updated_at) as last_failure_at from recording
+                  where organization_id = $1 and (transcript_state = 'Failed' or lead_assessment_state = 'Failed')) failed`,
+        [options.organizationId],
+      );
+      const row = result.rows[0];
+      return {
+        lastTranscriptAt: row.last_transcript_at?.toISOString() ?? null,
+        lastLeadAssessmentAt: row.last_lead_assessment_at?.toISOString() ?? null,
+        failedCount: row.failed_count,
+        lastFailureAt: row.last_failure_at?.toISOString() ?? null,
       };
     },
   };

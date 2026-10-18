@@ -408,6 +408,17 @@ describe.sequential("Organization integrations", () => {
     expect((health.body.providers as Array<{ note: string | null }>)[0].note).toContain("TWILIO_CREDENTIAL_MASTER_KEY");
   });
 
+  it("reports the configured OpenAI models with no Transcripts or Lead Assessments yet", async () => {
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    const openai = (result.body.providers as Array<{ id: string }>).find((provider) => provider.id === "openai");
+    expect(openai).toMatchObject({
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      analysis: { transcriptionModel: "whisper-1", leadAssessmentModel: "gpt-5-mini", lastTranscriptAt: null, lastLeadAssessmentAt: null, failedCount: 0, lastFailureAt: null },
+    });
+  });
+
   it("reports no Recording transfers yet for R2 and Trigger.dev", async () => {
     const cookie = await signIn("operator@example.com");
     const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
@@ -484,5 +495,54 @@ describe.sequential("Organization integrations", () => {
     expect(serialized).not.toContain("organizations/");
     expect(serialized).not.toContain("RE000");
     expect(serialized).not.toContain("R2 object does not match");
+  });
+
+  it("reports the last successful Transcript and Lead Assessment and the Organization's failed analysis without content", async () => {
+    async function analyzed(organization: string, id: string, values: { transcript: string; completedAt?: string; leadAssessment?: string; processedAt?: string; failedAt?: string }) {
+      const completed = values.transcript === "Completed";
+      await pool!.query(
+        `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
+                                transcript_state, transcript_failure_reason, transcript_audio_ms, transcript_cost_usd, transcript_completed_at,
+                                lead_assessment_state, lead_assessment_failure_reason, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, 'voicemail', 1, 'Stored', $6, 42, 'checksum', now(), $7, $8, $9, $10, $11, $12, $13, now(), coalesce($14::timestamptz, now()))`,
+        [
+          id, organization, `${organization}-health-workspace`, `${organization}-health-call`, `RE${id.padStart(32, "0")}`, `organizations/${organization}/recordings/${id}.wav`,
+          values.transcript, values.transcript === "Failed" ? "OpenAI request failed (HTTP 401)" : null, completed ? 60_000 : null, completed ? 0.006 : null, values.completedAt ?? null,
+          values.leadAssessment ?? null, values.leadAssessment === "Failed" ? "OpenAI response was incomplete" : null, values.failedAt ?? values.processedAt ?? values.completedAt ?? null,
+        ],
+      );
+      if (values.processedAt) {
+        await pool!.query(
+          `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
+           values ($1, $2, $3, $1, 'Good Lead', 80, 'Summary of the call.', 'Rationale.', 'gpt-5-mini', 900, 120, 0.000465, $4)`,
+          [id, organization, `${organization}-health-call`, values.processedAt],
+        );
+      }
+    }
+    await analyzed(organizationId, "40", { transcript: "Completed", completedAt: "2026-10-16T01:00:00.000Z", leadAssessment: "Completed", processedAt: "2026-10-16T01:01:00.000Z" });
+    await analyzed(organizationId, "41", { transcript: "Completed", completedAt: "2026-10-16T03:00:00.000Z", leadAssessment: "Failed", failedAt: "2026-10-16T03:02:00.000Z" });
+    await analyzed(organizationId, "42", { transcript: "Failed", failedAt: "2026-10-16T02:00:00.000Z" });
+    await analyzed(organizationId, "43", { transcript: "Pending" });
+    await analyzed("other-organization-id", "95", { transcript: "Completed", completedAt: "2026-10-17T00:00:00.000Z", leadAssessment: "Completed", processedAt: "2026-10-17T00:01:00.000Z" });
+    await analyzed("other-organization-id", "96", { transcript: "Failed", failedAt: "2026-10-17T05:00:00.000Z" });
+
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    const openai = (result.body.providers as Array<{ id: string }>).find((provider) => provider.id === "openai");
+    expect(openai).toMatchObject({
+      lastSuccessAt: "2026-10-16T03:00:00.000Z",
+      lastFailureAt: "2026-10-16T03:02:00.000Z",
+      lastFailureDetail: null,
+      analysis: {
+        transcriptionModel: "whisper-1",
+        leadAssessmentModel: "gpt-5-mini",
+        lastTranscriptAt: "2026-10-16T03:00:00.000Z",
+        lastLeadAssessmentAt: "2026-10-16T01:01:00.000Z",
+        failedCount: 2,
+        lastFailureAt: "2026-10-16T03:02:00.000Z",
+      },
+    });
+    const serialized = JSON.stringify(openai);
+    expect(serialized).not.toMatch(/HTTP 401|incomplete|Summary of the call/);
   });
 });

@@ -7,8 +7,9 @@
  *  Signs in a real Operator and Client Viewer and reads Call Detail through
  *  the Workspaces server interface to prove Workspace authorization, the
  *  Operator-only Twilio call SID, derived Call facts, Recording
- *  availability, and the processing timeline. Reads the five Recent Calls
- *  of a Workspace through the same authorization.
+ *  availability, the Transcript and Lead Assessment with their expiry and
+ *  Operator-only failure reasons, and the processing timeline. Reads the
+ *  five Recent Calls of a Workspace through the same authorization.
  *
  * @remarks
  *  Calls, provider events, and Recordings are seeded directly in the shape
@@ -32,6 +33,7 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
+import type { RecordingProcessing, RecordingProcessingRequest } from "@/data/recording";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
@@ -66,7 +68,26 @@ const auth = () => createTracerAuth({
   baseURL: "http://localhost:3000",
 });
 
+const triggerSecretKey = "tr_dev_synthetic_trigger_secret";
+
+function analysisProcessing(): RecordingProcessing & { requests: RecordingProcessingRequest[]; failing: boolean } {
+  const requests: RecordingProcessingRequest[] = [];
+  return {
+    requests,
+    failing: false,
+    async request(request) {
+      requests.push(request);
+      if (this.failing) throw new Error(`Trigger.dev is unavailable for ${triggerSecretKey}`);
+    },
+  };
+}
+
+const transcriptionRequests = analysisProcessing();
+const leadAssessmentRequests = analysisProcessing();
+
 const workspacesHandler = () => createWorkspacesHandler({
+  recordingTranscription: transcriptionRequests,
+  recordingLeadAssessment: leadAssessmentRequests,
   auth: auth(),
   database: database(),
   pool: pool!,
@@ -137,7 +158,18 @@ interface SeedCall {
   forwarded?: boolean;
   events?: { kind: string; payload: Record<string, string>; key?: string; secondsAfterStart: number }[];
   recording?: { transferState: "Pending" | "Stored" | "Failed"; waveformState?: "Pending" | "Stored" | "Failed"; channels?: 1 | 2 } | null;
+  analysis?: {
+    transcript: "Pending" | "Completed" | "Failed" | "Skipped";
+    skipReason?: string;
+    leadAssessment?: "Pending" | "Completed" | "Failed";
+    reviewed?: boolean;
+  };
 }
+
+const transcriptTurns = [
+  { speaker: "Caller", startMs: 0, endMs: 4200, text: "Hi, my water heater is leaking." },
+  { speaker: "Business", startMs: 4800, endMs: 7600, text: "We can send someone this afternoon." },
+];
 
 async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callSid: string; recordingSid: string; recordingId: string }> {
   seeded += 1;
@@ -202,6 +234,36 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
         waveformState === "Failed" ? "audiowaveform exited with code 1" : null, at(96), at(120),
       ],
     );
+  }
+  const analysis = options.analysis;
+  if (recording && analysis) {
+    const completed = analysis.transcript === "Completed";
+    await pool!.query(
+      `update recording set transcript_state = $2, transcript_skip_reason = $3, transcript_failure_reason = $4, transcript_audio_ms = $5, transcript_cost_usd = $6,
+                            transcript_completed_at = $7, lead_assessment_state = $8, lead_assessment_failure_reason = $9, updated_at = $10
+        where id = $1`,
+      [
+        recordingId, analysis.transcript, analysis.transcript === "Skipped" ? (analysis.skipReason ?? "too_short") : null,
+        analysis.transcript === "Failed" ? "OpenAI request failed (HTTP 500)" : null, completed ? 166_000 : null, completed ? 0.0166 : null, completed ? at(130) : null,
+        analysis.leadAssessment ?? null, analysis.leadAssessment === "Failed" ? "OpenAI response was incomplete" : null, at(145),
+      ],
+    );
+    if (completed) {
+      await pool!.query("insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, 'whisper-1', $5)", [
+        recordingId, workspace.organization_id, callId, JSON.stringify(transcriptTurns), at(130),
+      ]);
+    }
+    if (analysis.leadAssessment === "Completed") {
+      await pool!.query(
+        `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
+         values ($1, $2, $3, $4, 'Good Lead', 86, 'Caller needs a leaking water heater repaired today.', 'Urgent, in-scope service request.', 'gpt-5-mini', 900, 120, 0.000465, $5)`,
+        [`${callId}-assessment`, workspace.organization_id, callId, recordingId, at(140)],
+      );
+      await pool!.query("insert into lead_assessment_evidence (lead_assessment_id, position, turn_index, start_ms, quote) values ($1, 0, 0, 0, 'my water heater is leaking')", [`${callId}-assessment`]);
+    }
+    if (analysis.reviewed) {
+      await pool!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, 'Not Good Lead', $3)", [callId, workspace.organization_id, at(150)]);
+    }
   }
   return { callSid, recordingSid, recordingId };
 }
@@ -425,6 +487,214 @@ describe.sequential("Call Detail spam gate and processing timeline", () => {
     expect(await stages("timeline-transfer-pending-call")).toEqual([["Recording transfer", "Pending"]]);
     expect(await stages("timeline-transfer-failed-call")).toEqual([["Recording transfer failed", "Failed"]]);
     expect(await stages("timeline-waveform-failed-call")).toEqual([["Recording stored", "Completed"], ["Waveform generation failed", "Failed"]]);
+  });
+});
+
+describe.sequential("Call Detail Transcript and Lead Assessment", () => {
+  const analyzed = { transcript: "Completed", leadAssessment: "Completed" } as const;
+
+  it("gives an Operator and a Client Viewer the Completed Transcript turns and Lead Assessment with evidence", async () => {
+    await seedCall("analyzed-call", { analysis: analyzed });
+    for (const cookie of [operatorCookie, clientCookie]) {
+      const { body } = await callDetail("granted-active", "analyzed-call", cookie);
+      expect(body.call?.transcript).toEqual({ state: "Completed", turns: transcriptTurns });
+      expect(body.call?.leadAssessment).toEqual({
+        state: "Completed",
+        classification: "Good Lead",
+        score: 86,
+        summary: "Caller needs a leaking water heater repaired today.",
+        rationale: "Urgent, in-scope service request.",
+        processedAt: expect.any(String),
+        evidence: [{ turnIndex: 0, startMs: 0, quote: "my water heater is leaking" }],
+      });
+      expect(body.call?.effectiveLeadClassification).toEqual({ classification: "Good Lead", source: "assessment" });
+    }
+  });
+
+  it("marks pending and skipped Transcripts with an Unavailable Lead Assessment", async () => {
+    await seedCall("transcript-pending-call", { analysis: { transcript: "Pending" } });
+    await seedCall("transcript-skipped-call", { analysis: { transcript: "Skipped", skipReason: "spam_gate_not_passed" } });
+    const pending = (await callDetail("granted-active", "transcript-pending-call", clientCookie)).body.call;
+    expect(pending).toMatchObject({ transcript: { state: "Pending" }, leadAssessment: { state: "Unavailable" } });
+    const skipped = (await callDetail("granted-active", "transcript-skipped-call", clientCookie)).body.call;
+    expect(skipped?.transcript).toEqual({ state: "Skipped", skipReason: "spam_gate_not_passed" });
+    expect(skipped?.leadAssessment).toEqual({ state: "Unavailable" });
+  });
+
+  it("keeps the Transcript usable while the Lead Assessment is pending", async () => {
+    await seedCall("assessment-pending-call", { analysis: { transcript: "Completed", leadAssessment: "Pending" } });
+    const call = (await callDetail("granted-active", "assessment-pending-call", clientCookie)).body.call;
+    expect(call).toMatchObject({ transcript: { state: "Completed", turns: transcriptTurns }, leadAssessment: { state: "Pending" }, effectiveLeadClassification: null });
+  });
+
+  it("gives Operators the secret-free failure reason of a failed Transcript or Lead Assessment and Client Viewers only the Failed state", async () => {
+    await seedCall("transcript-failed-call", { analysis: { transcript: "Failed" } });
+    await seedCall("assessment-failed-call", { analysis: { transcript: "Completed", leadAssessment: "Failed" } });
+    const operatorTranscript = (await callDetail("granted-active", "transcript-failed-call", operatorCookie)).body.call;
+    expect(operatorTranscript?.transcript).toEqual({ state: "Failed", failureReason: "OpenAI request failed (HTTP 500)" });
+    const operatorAssessment = (await callDetail("granted-active", "assessment-failed-call", operatorCookie)).body.call;
+    expect(operatorAssessment?.leadAssessment).toEqual({ state: "Failed", failureReason: "OpenAI response was incomplete" });
+    const clientTranscript = await callDetail("granted-active", "transcript-failed-call", clientCookie);
+    expect(clientTranscript.body.call?.transcript).toEqual({ state: "Failed" });
+    expect(clientTranscript.text).not.toContain("HTTP 500");
+    const clientAssessment = await callDetail("granted-active", "assessment-failed-call", clientCookie);
+    expect(clientAssessment.body.call?.leadAssessment).toEqual({ state: "Failed" });
+    expect(clientAssessment.text).not.toContain("incomplete");
+  });
+
+  it("marks a Recording from before analysis and a Call without a Recording as not analyzed", async () => {
+    await seedCall("pre-analysis-call");
+    await seedCall("unrecorded-analysis-call", { graph: unrecordedGraph, recording: null });
+    for (const callId of ["pre-analysis-call", "unrecorded-analysis-call"]) {
+      const call = (await callDetail("granted-active", callId, operatorCookie)).body.call;
+      expect(call).toMatchObject({ transcript: { state: "Unavailable" }, leadAssessment: { state: "Unavailable" } });
+    }
+  });
+
+  it("withholds Transcript turns and evidence after media expiry while keeping the non-content Lead Assessment", async () => {
+    const startedAt = new Date();
+    startedAt.setUTCMonth(startedAt.getUTCMonth() - 13);
+    await seedCall("expired-analysis-call", { startedAt, analysis: analyzed });
+    const { text, body } = await callDetail("granted-active", "expired-analysis-call", clientCookie);
+    expect(body.call?.transcript).toEqual({ state: "Expired" });
+    expect(body.call?.leadAssessment).toEqual({
+      state: "Completed",
+      classification: "Good Lead",
+      score: 86,
+      summary: "Caller needs a leaking water heater repaired today.",
+      rationale: "Urgent, in-scope service request.",
+      processedAt: expect.any(String),
+    });
+    expect(text).not.toContain("my water heater is leaking");
+    expect(text).not.toContain("this afternoon");
+  });
+
+  it("uses the Lead Review over the Lead Assessment for the effective classification", async () => {
+    await seedCall("reviewed-analysis-call", { analysis: { ...analyzed, reviewed: true } });
+    const call = (await callDetail("granted-active", "reviewed-analysis-call", clientCookie)).body.call;
+    expect(call?.effectiveLeadClassification).toEqual({ classification: "Not Good Lead", source: "review" });
+  });
+
+  it("adds Transcript, Lead Assessment, and Lead Review stages to the processing timeline in order", async () => {
+    await seedCall("analysis-timeline-call", { analysis: { ...analyzed, reviewed: true } });
+    const timeline = (await callDetail("granted-active", "analysis-timeline-call", operatorCookie)).body.call?.timeline as { label: string; status: string; at: string }[];
+    expect(timeline.map(({ label, status }) => [label, status])).toEqual([
+      ["Recording stored", "Completed"],
+      ["Waveform generated", "Completed"],
+      ["Transcript completed", "Completed"],
+      ["Lead Assessment completed", "Completed"],
+      ["Lead Review added", "Completed"],
+    ]);
+    expect(timeline.map((entry) => entry.at)).toEqual([...timeline.map((entry) => entry.at)].sort());
+  });
+
+  it("shows pending, skipped, failed, and expired analysis stages without their failure detail", async () => {
+    const startedAt = new Date();
+    startedAt.setUTCMonth(startedAt.getUTCMonth() - 13);
+    await seedCall("expired-timeline-call", { startedAt, analysis: { transcript: "Completed", leadAssessment: "Completed" } });
+    const stages = async (callId: string) => {
+      const timeline = (await callDetail("granted-active", callId, operatorCookie)).body.call?.timeline as { label: string; status: string }[];
+      expect(JSON.stringify(timeline)).not.toMatch(/HTTP 500|incomplete/);
+      return timeline.filter(({ label }) => /Transcri|Lead/.test(label)).map(({ label, status }) => [label, status]);
+    };
+    expect(await stages("transcript-pending-call")).toEqual([["Transcription", "Pending"]]);
+    expect(await stages("transcript-skipped-call")).toEqual([["Transcript skipped", "Completed"]]);
+    expect(await stages("transcript-failed-call")).toEqual([["Transcription failed", "Failed"]]);
+    expect(await stages("assessment-pending-call")).toEqual([["Transcript completed", "Completed"], ["Lead Assessment", "Pending"]]);
+    expect(await stages("assessment-failed-call")).toEqual([["Transcript completed", "Completed"], ["Lead Assessment failed", "Failed"]]);
+    expect(await stages("expired-timeline-call")).toEqual([["Transcript completed", "Completed"], ["Lead Assessment completed", "Completed"], ["Transcript expired", "Completed"]]);
+  });
+});
+
+describe.sequential("Call analysis Retry", () => {
+  async function retry(workspaceId: string, callId: string, cookie: string) {
+    const response = await workspacesHandler()(new Request(`http://localhost:3000/api/workspaces/${workspaceId}/calls/${callId}/analysis/retry`, { method: "POST", headers: { cookie } }));
+    const text = await response.text();
+    return { response, text, body: JSON.parse(text) as Record<string, unknown> };
+  }
+
+  function clearRequests() {
+    transcriptionRequests.requests.length = 0;
+    leadAssessmentRequests.requests.length = 0;
+    transcriptionRequests.failing = false;
+    leadAssessmentRequests.failing = false;
+  }
+
+  it("requests transcription again for a failed Transcript with its Recording-derived idempotency key", async () => {
+    clearRequests();
+    const { recordingId } = await seedCall("retry-transcript-call", { analysis: { transcript: "Failed" } });
+    const { response, body } = await retry("granted-active", "retry-transcript-call", operatorCookie);
+    expect(response.status).toBe(202);
+    expect(body).toEqual({ retry: { stage: "transcription" } });
+    expect(transcriptionRequests.requests).toEqual([{ id: recordingId, organizationId, idempotencyKey: `recording-transcription:${recordingId}` }]);
+    expect(leadAssessmentRequests.requests).toEqual([]);
+    const stored = (await pool!.query("select transcript_state from recording where id = $1", [recordingId])).rows[0];
+    expect(stored).toEqual({ transcript_state: "Failed" });
+  });
+
+  it("requests the Lead Assessment again for a failed Lead Assessment", async () => {
+    clearRequests();
+    const { recordingId } = await seedCall("retry-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Failed" } });
+    const { response, body } = await retry("granted-active", "retry-assessment-call", operatorCookie);
+    expect(response.status).toBe(202);
+    expect(body).toEqual({ retry: { stage: "lead_assessment" } });
+    expect(leadAssessmentRequests.requests).toEqual([{ id: recordingId, organizationId, idempotencyKey: `recording-lead-assessment:${recordingId}` }]);
+    expect(transcriptionRequests.requests).toEqual([]);
+  });
+
+  it("answers Conflict when nothing failed or the media expired", async () => {
+    clearRequests();
+    const expiredStart = new Date();
+    expiredStart.setUTCMonth(expiredStart.getUTCMonth() - 13);
+    await seedCall("retry-completed-call", { analysis: { transcript: "Completed", leadAssessment: "Completed" } });
+    await seedCall("retry-pending-call", { analysis: { transcript: "Pending" } });
+    await seedCall("retry-skipped-call", { analysis: { transcript: "Skipped" } });
+    await seedCall("retry-unrecorded-call", { graph: unrecordedGraph, recording: null });
+    await seedCall("retry-expired-call", { startedAt: expiredStart, analysis: { transcript: "Failed" } });
+    for (const callId of ["retry-completed-call", "retry-pending-call", "retry-skipped-call", "retry-unrecorded-call", "retry-expired-call"]) {
+      const { response, body } = await retry("granted-active", callId, operatorCookie);
+      expect(response.status).toBe(409);
+      expect(body).toEqual({ error: "nothing_to_retry" });
+    }
+    expect(transcriptionRequests.requests).toEqual([]);
+    expect(leadAssessmentRequests.requests).toEqual([]);
+  });
+
+  it("refuses a Client Viewer's Retry with the Operator-only refusal and requests nothing", async () => {
+    clearRequests();
+    const { response, body } = await retry("granted-active", "retry-transcript-call", clientCookie);
+    expect(response.status).toBe(403);
+    expect(body).toEqual({ error: "forbidden" });
+    expect(transcriptionRequests.requests).toEqual([]);
+  });
+
+  it("answers the same Not Found as Call Detail for another Workspace's path, another Organization, and a missing Call", async () => {
+    clearRequests();
+    await seedCall("retry-other-organization-call", { workspaceId: "other-organization-workspace", analysis: { transcript: "Failed" } });
+    for (const [workspaceId, callId] of [["granted-quiet", "retry-transcript-call"], ["other-organization-workspace", "retry-other-organization-call"], ["granted-active", "retry-other-organization-call"], ["granted-active", "missing-call"]]) {
+      const { response, body } = await retry(workspaceId, callId, operatorCookie);
+      expect(response.status).toBe(404);
+      expect(body).toEqual({ error: "not_found" });
+    }
+    expect(transcriptionRequests.requests).toEqual([]);
+  });
+
+  it("rejects an unauthenticated Retry", async () => {
+    clearRequests();
+    const { response } = await retry("granted-active", "retry-transcript-call", "");
+    expect(response.status).toBe(401);
+    expect(transcriptionRequests.requests).toEqual([]);
+  });
+
+  it("answers Bad Gateway without the Trigger.dev secret when the request fails, leaving the Transcript Failed", async () => {
+    clearRequests();
+    transcriptionRequests.failing = true;
+    const { response, text, body } = await retry("granted-active", "retry-transcript-call", operatorCookie);
+    expect(response.status).toBe(502);
+    expect(body).toEqual({ error: "provider_unavailable" });
+    expect(text).not.toContain(triggerSecretKey);
+    expect((await pool!.query("select transcript_state from recording where call_id = 'retry-transcript-call'")).rows[0]).toEqual({ transcript_state: "Failed" });
+    clearRequests();
   });
 });
 

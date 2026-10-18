@@ -8,14 +8,17 @@
  *  boundary, a simulated Twilio lifecycle of signed voice, Forward Call,
  *  Recording, and status callbacks produces a Call, and the Recording is
  *  completed in local R2 the way the transfer and waveform tasks leave it.
- *  The Operator opens the Call from Workspace Overview Recent Calls and
- *  drives playback, seeking, and mute from the keyboard.
+ *  The Operator opens the Call from Workspace Overview Recent Calls,
+ *  drives playback, seeking, and mute from the keyboard, seeks from a
+ *  Transcript turn and a Lead Assessment evidence snippet, searches the
+ *  Transcript, and adds a Lead Review that survives a reload.
  *
  * @remarks
  *  Trigger.dev does not run in the browser suite, so the spec writes the
  *  WAV and its peaks to the local R2 bucket with Wrangler and marks the
- *  Recording Stored directly, matching what tests/integration covers for
- *  the tasks themselves.
+ *  Recording Stored directly, and seeds a Completed Transcript and Lead
+ *  Assessment the same way, matching what tests/integration covers for the
+ *  tasks themselves.
  *
  * @see
  *  README.md
@@ -81,7 +84,7 @@ async function twilioCallback(request: APIRequestContext, path: string, params: 
   expect(response.status(), path).toBeLessThan(300);
 }
 
-test("an Operator opens Call Detail from Recent Calls and controls playback by keyboard", async ({ page, request }, testInfo) => {
+test("an Operator opens Call Detail from Recent Calls, controls playback, follows the Transcript, and adds a Lead Review", async ({ page, request }, testInfo) => {
   test.setTimeout(150_000);
   const pool = new Pool({ connectionString: databaseUrl });
   try {
@@ -133,6 +136,27 @@ test("an Operator opens Call Detail from Recent Calls and controls playback by k
         where id = $1`,
       [recording.id, `${prefix}.wav`, wav.length, createHash("sha256").update(wav).digest("hex"), `${prefix}.peaks.json`],
     );
+    await pool.query(
+      `update recording
+          set transcript_state = 'Completed', transcript_audio_ms = $2, transcript_cost_usd = 0, transcript_completed_at = now(),
+              lead_assessment_state = 'Completed', updated_at = now()
+        where id = $1`,
+      [recording.id, durationSeconds * 1000],
+    );
+    await pool.query(
+      "insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, 'whisper-1', now())",
+      [recording.id, assignment.organization_id, recording.call_id, JSON.stringify([
+        { speaker: "Business", startMs: 0, endMs: 4000, text: "Thanks for calling, how can we help?" },
+        { speaker: "Caller", startMs: 5000, endMs: 10000, text: "My water heater is leaking and I need a plumber today." },
+      ])],
+    );
+    const assessmentId = `${recording.id}-assessment`;
+    await pool.query(
+      `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
+       values ($1, $2, $3, $4, 'Good Lead', 82, 'A homeowner asked for same-day water heater repair.', 'The Caller described an urgent service need.', 'gpt-5-mini', 0, 0, 0, now())`,
+      [assessmentId, assignment.organization_id, recording.call_id, recording.id],
+    );
+    await pool.query("insert into lead_assessment_evidence (lead_assessment_id, position, turn_index, start_ms, quote) values ($1, 0, 1, 5000, 'My water heater is leaking')", [assessmentId]);
 
     await page.goto(`/workspaces/${assignment.workspace_id}`);
     const recentCalls = page.getByRole("list", { name: "Recent Calls" });
@@ -159,6 +183,31 @@ test("an Operator opens Call Detail from Recent Calls and controls playback by k
     await seek.focus();
     await page.keyboard.press("End");
     await expect(seek).toHaveAttribute("aria-valuetext", "0:10 of 0:10");
+
+    const transcript = page.getByRole("region", { name: "Transcript" });
+    await transcript.getByRole("button", { name: "Seek to 0:05, Caller" }).click();
+    await expect(page.getByText("0:05 / 0:10")).toBeVisible();
+    await expect(transcript.getByRole("listitem").nth(1)).toHaveAttribute("aria-current", "true");
+    await transcript.getByRole("searchbox", { name: "Search Transcript" }).fill("heater");
+    await expect(transcript.getByRole("status")).toHaveText("1 match");
+
+    const assessment = page.getByRole("region", { name: "Lead Assessment" });
+    await expect(assessment.getByText("82 / 100")).toBeVisible();
+    await expect(assessment.getByText("Automated estimate")).toBeVisible();
+    await assessment.getByRole("button", { name: /My water heater is leaking/ }).click();
+    await expect(transcript.getByRole("listitem").nth(1)).toHaveAttribute("data-evidence", "true");
+
+    const review = page.getByRole("region", { name: "Lead Review" });
+    await review.getByRole("button", { name: "Add Lead Review" }).click();
+    await review.getByRole("combobox", { name: "Classification" }).click();
+    await page.getByRole("option", { name: "Not Good Lead" }).click();
+    await review.getByRole("textbox", { name: "Note (optional)" }).fill("Caller was a vendor.");
+    await review.getByRole("button", { name: "Save Lead Review" }).click();
+    await expect(review.getByText("Caller was a vendor.")).toBeVisible();
+    await expect(review.getByText("Reporting result")).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Lead Review" }).getByText("Caller was a vendor.")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).locator("xpath=..").getByText("Not Good Lead", { exact: true })).toBeVisible();
   } finally {
     await pool.end();
   }

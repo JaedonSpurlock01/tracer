@@ -7,7 +7,8 @@
  *  Resolves Active Operators and maps Workspace and routing requests to their
  *  Organization-scoped services. Streams available Recording audio and serves
  *  its waveform peaks, and reads Call Detail and Recent Calls, for any actor
- *  who can currently read its Workspace.
+ *  who can currently read its Workspace. Saves an Operator's Lead Review and
+ *  accepts an Operator's Retry of a failed Transcript or Lead Assessment.
  *
  * @remarks
  *  Routing mutations remain in workspace-routing.ts rather than the Workspace
@@ -24,9 +25,13 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
+import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { createCallDetails } from "@/data/call-details";
 import type { Integrations } from "@/data/integrations";
+import { parseLeadReviewInput } from "@/data/lead-classification";
+import { saveLeadReview } from "@/data/lead-reviews";
+import type { RecordingProcessing } from "@/data/recording";
 import { recordingAudioResponse } from "@/data/recording-audio";
 import { findAvailableRecordingMedia, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
@@ -45,6 +50,8 @@ export interface WorkspacesHandlerOptions {
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
   recordingBucket?: RecordingMediaBucket;
+  recordingTranscription?: RecordingProcessing;
+  recordingLeadAssessment?: RecordingProcessing;
 }
 
 function response(body: unknown, status = 200): Response {
@@ -55,6 +62,7 @@ function errorResponse(error: unknown): Response {
   if (error instanceof AuthorizationError) {
     return response({ error: error.status === 401 ? "unauthenticated" : "forbidden" }, error.status);
   }
+  if (error instanceof AnalysisRetryError) return response({ error: "provider_unavailable" }, 502);
   if (error instanceof WorkspacesError) {
     const status = error.code === "invalid_input" ? 400 : error.code === "not_found" ? 404 : 409;
     return response({ error: error.code }, status);
@@ -167,6 +175,22 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         );
       }
       if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
+      const leadReviewMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/lead-review$/);
+      if (request.method === "PUT" && leadReviewMatch) {
+        const input = parseLeadReviewInput(await readBody(request));
+        if (!input) throw new WorkspacesError("invalid_input");
+        return response({ leadReview: await saveLeadReview(options.pool, actor, leadReviewMatch[1], leadReviewMatch[2], input) });
+      }
+      const retryMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/analysis\/retry$/);
+      if (request.method === "POST" && retryMatch) {
+        const retried = await retryCallAnalysis(options.pool, actor, retryMatch[1], retryMatch[2], {
+          transcription: options.recordingTranscription,
+          leadAssessment: options.recordingLeadAssessment,
+        });
+        if (retried === "not_found") throw new WorkspacesError("not_found");
+        if (retried === "nothing_to_retry") return response({ error: "nothing_to_retry" }, 409);
+        return response({ retry: retried }, 202);
+      }
       const workspaces: Workspaces = createWorkspaces(options.pool, actor.organizationId);
       const routing = createWorkspaceRouting({
         pool: options.pool,

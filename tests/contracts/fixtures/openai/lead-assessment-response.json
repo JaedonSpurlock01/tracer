@@ -1,0 +1,37 @@
+{
+  "id": "resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b",
+  "object": "response",
+  "created_at": 1792279790,
+  "status": "completed",
+  "completed_at": 1792279794,
+  "error": null,
+  "incomplete_details": null,
+  "model": "gpt-5-mini-2025-08-07",
+  "output": [
+    {
+      "id": "rs_67ccd2bf17f0819081ff3bb2cf6508e60bb6a6b452d3795b",
+      "type": "reasoning",
+      "summary": []
+    },
+    {
+      "id": "msg_67ccd2bf17f0819081ff3bb2cf6508e60bb6a6b452d3795b",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "{\"classification\":\"Good Lead\",\"score\":86,\"summary\":\"Caller requested a quote for a new water heater this week.\",\"rationale\":\"The Caller is a prospective customer asking for a quote and availability.\",\"evidence\":[{\"turnIndex\":0,\"quote\":\"a quote for a new water heater\"},{\"turnIndex\":2,\"quote\":\"Thursday morning works\"}]}"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 812,
+    "input_tokens_details": { "cached_tokens": 0 },
+    "output_tokens": 436,
+    "output_tokens_details": { "reasoning_tokens": 320 },
+    "total_tokens": 1248
+  }
+}

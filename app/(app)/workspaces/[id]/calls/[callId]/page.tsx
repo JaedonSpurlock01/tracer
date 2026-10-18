@@ -5,7 +5,9 @@
  *
  * @description
  *  Resolves one Call in a Workspace the actor may read and renders its
- *  header, Recording player, Call facts, and processing timeline.
+ *  header, Recording player, Transcript, Lead Review, Lead Assessment,
+ *  Call facts, and processing timeline, with Operator-only actions for
+ *  Operators.
  *
  * @remarks
  *  The Call Detail read model authorizes the Workspace through the central
@@ -25,6 +27,7 @@ import { resolveRequestActor } from "@/app/(app)/actor";
 import CallDetailView from "@/components/tracer/call-detail-view";
 import { createCallDetails } from "@/data/call-details";
 import { withTracerRuntime } from "@/data/tracer-runtime";
+import { canManageWorkspaces } from "@/data/workspace-authorization";
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string; callId: string }> }) {
   const actor = await resolveRequestActor();
@@ -32,5 +35,5 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
   const { id, callId } = await params;
   const call = await withTracerRuntime(({ pool }) => createCallDetails(pool, actor).find(id, callId));
   if (!call) notFound();
-  return <CallDetailView call={call} />;
+  return <CallDetailView call={call} operator={canManageWorkspaces(actor)} />;
 }
