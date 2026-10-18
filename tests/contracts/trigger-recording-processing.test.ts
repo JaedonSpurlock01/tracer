@@ -5,9 +5,9 @@
  *
  * @description
  *  Checks that a Recording processing request triggers the Recording
- *  transfer or waveform task through the Trigger.dev REST API with the exact
- *  URL, authorization, payload, and idempotency key, and that failures
- *  reject without exposing the secret key.
+ *  transfer, waveform, or transcription task through the Trigger.dev REST
+ *  API with the exact URL, authorization, payload, and idempotency key, and
+ *  that failures reject without exposing the secret key.
  *
  * @remarks
  *  Fixture identifiers and the secret key are synthetic test data.
@@ -21,7 +21,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { createTriggerRecordingProcessing, recordingWaveformTaskId } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
 
 import fixture from "./fixtures/trigger/trigger-task.json";
 
@@ -58,6 +58,28 @@ describe("Trigger.dev Recording processing", () => {
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://trigger.test/api/v1/tasks/recording-waveform/trigger");
     expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-waveform:${recordingId}`, ttl: "7d" } });
+  });
+
+  it("triggers one Recording transcription run on the transcription task with its own idempotency key", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(fixture.response));
+    const processing = createTriggerRecordingProcessing({ secretKey, fetch, baseUrl: "https://trigger.test", taskId: recordingTranscriptionTaskId });
+
+    await processing.request({ ...recording, idempotencyKey: `recording-transcription:${recordingId}` });
+
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://trigger.test/api/v1/tasks/recording-transcription/trigger");
+    expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-transcription:${recordingId}`, ttl: "7d" } });
+  });
+
+  it("triggers one Lead Assessment run on the Lead Assessment task with its own idempotency key", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(fixture.response));
+    const processing = createTriggerRecordingProcessing({ secretKey, fetch, baseUrl: "https://trigger.test", taskId: recordingLeadAssessmentTaskId });
+
+    await processing.request({ ...recording, idempotencyKey: `recording-lead-assessment:${recordingId}` });
+
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://trigger.test/api/v1/tasks/recording-lead-assessment/trigger");
+    expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-lead-assessment:${recordingId}`, ttl: "7d" } });
   });
 
   it("rejects a non-success response without exposing the secret key", async () => {

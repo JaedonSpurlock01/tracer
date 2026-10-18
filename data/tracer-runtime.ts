@@ -12,7 +12,10 @@
  *  The runtime preserves the explicit non-production E2E email fake while
  *  keeping production provider requirements enforced. Recording processing
  *  triggers the Trigger.dev transfer task when TRIGGER_SECRET_KEY is set;
- *  without it accepted Recordings stay Pending for the recovery sweep.
+ *  without it accepted Recordings stay Pending for the recovery sweep. The
+ *  transcription and Lead Assessment requests behind an Operator's Retry
+ *  exist only with that key, so a Retry fails visibly instead of silently
+ *  doing nothing.
  *
  * @see
  *  data/tracer-auth.ts
@@ -30,7 +33,7 @@ import { schema } from "@/data/schema";
 import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
 import { type ProviderConfiguration } from "@/data/provider-health";
 import type { RecordingProcessing } from "@/data/recording";
-import { createTriggerRecordingProcessing } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId } from "@/data/recording-processing";
 import {
   createCloudflareTransactionalEmail,
   type SendEmail,
@@ -65,6 +68,8 @@ export interface TracerRuntime {
   baseURL: string;
   backgroundTask: (promise: Promise<unknown>) => void;
   recordingProcessing: RecordingProcessing;
+  recordingTranscription: RecordingProcessing | undefined;
+  recordingLeadAssessment: RecordingProcessing | undefined;
   recordingBucket: R2Bucket | undefined;
 }
 
@@ -156,6 +161,8 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       baseURL,
       backgroundTask: (promise) => ctx.waitUntil(promise),
       recordingProcessing: createTriggerRecordingProcessing({ secretKey: triggerSecretKey }),
+      recordingTranscription: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingTranscriptionTaskId }) : undefined,
+      recordingLeadAssessment: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingLeadAssessmentTaskId }) : undefined,
       recordingBucket: bindings.R2,
     });
   } finally {

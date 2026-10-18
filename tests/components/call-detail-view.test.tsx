@@ -7,12 +7,15 @@
  *  Covers the caller-first header with Workspace and Tracking Number
  *  context and the Call Outcome Badge, the Call facts definition list with
  *  the Operator-only Twilio call SID, Recording and retention status
- *  including Expired media, the processing timeline, and the absence of
- *  actions deferred to later milestones.
+ *  including Expired media, the processing timeline with its Transcript,
+ *  Lead Assessment, and Lead Review entries, and the absence of actions
+ *  deferred to later milestones.
  *
  * @remarks
- *  The player is covered by recording-player.test.tsx, so wavesurfer.js is
- *  replaced at its module boundary here only to keep jsdom quiet.
+ *  The player is covered by recording-player.test.tsx and the Transcript,
+ *  Lead Assessment, and Lead Review by call-detail-analysis.test.tsx, so
+ *  wavesurfer.js is replaced at its module boundary here only to keep
+ *  jsdom quiet.
  *
  * @see
  *  components/tracer/call-detail-view.tsx
@@ -48,6 +51,10 @@ const call: CallDetail = {
     { id: "recording-transfer", label: "Recording stored", status: "Completed", at: "2026-10-16T20:05:50.000Z" },
     { id: "recording-waveform", label: "Waveform generation failed", status: "Failed", at: "2026-10-16T20:06:00.000Z" },
   ],
+  transcript: { state: "Unavailable" },
+  leadAssessment: { state: "Unavailable" },
+  leadReview: null,
+  effectiveLeadClassification: null,
   twilioCallSid: "CA00000000000000000000000000000001",
 };
 
@@ -69,7 +76,7 @@ afterEach(() => {
 
 describe("CallDetailView", () => {
   it("identifies the Call by caller number with Workspace, Tracking Number, and Call Outcome", () => {
-    render(<CallDetailView call={call} />);
+    render(<CallDetailView call={call} operator />);
     const heading = screen.getByRole("heading", { level: 1, name: "+13125550142" });
     const header = heading.closest("header");
     if (!header) throw new Error("Call header missing");
@@ -80,7 +87,7 @@ describe("CallDetailView", () => {
   });
 
   it("lists the Call facts with the Operator-only Twilio call SID", () => {
-    render(<CallDetailView call={call} />);
+    render(<CallDetailView call={call} operator />);
     expect(fact("Call start")).toHaveTextContent("Oct 16, 2026, 3:04:05 PM");
     expect(fact("Call end")).toHaveTextContent("Oct 16, 2026, 3:05:40 PM");
     expect(fact("Total duration")).toHaveTextContent("1:35");
@@ -95,7 +102,7 @@ describe("CallDetailView", () => {
   });
 
   it("omits the Twilio call SID for a Client Viewer and shows placeholders for missing facts", () => {
-    render(<CallDetailView call={{ ...call, twilioCallSid: undefined, callerNumber: null, destinationNumber: null, state: "In Progress", outcome: null, endedAt: null, totalDurationSeconds: null, connectedDurationSeconds: null }} />);
+    render(<CallDetailView operator={false} call={{ ...call, twilioCallSid: undefined, callerNumber: null, destinationNumber: null, state: "In Progress", outcome: null, endedAt: null, totalDurationSeconds: null, connectedDurationSeconds: null }} />);
     expect(screen.getByRole("heading", { level: 1, name: "Unknown caller" })).toBeVisible();
     expect(within(screen.getByRole("region", { name: "Call facts" })).queryByText("Twilio call SID")).not.toBeInTheDocument();
     expect(fact("Call end")).toHaveTextContent("-");
@@ -104,7 +111,7 @@ describe("CallDetailView", () => {
   });
 
   it("keeps the Call facts and labels Recording media Expired without audio", () => {
-    render(<CallDetailView call={{ ...call, recording: { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" } }} />);
+    render(<CallDetailView call={{ ...call, recording: { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" } }} operator />);
     expect(fact("Recording")).toHaveTextContent("Expired");
     expect(fact("Total duration")).toHaveTextContent("1:35");
     expect(screen.getByText("Recording expired")).toBeVisible();
@@ -120,14 +127,14 @@ describe("CallDetailView", () => {
       [{ ...call.recording, state: "Ready", channels: 1, lanes: ["Mixed"] } as CallDetail["recording"], "Mixed audio, retained until Oct 16, 2027"],
     ];
     for (const [recording, text] of cases) {
-      render(<CallDetailView call={{ ...call, recording }} />);
+      render(<CallDetailView call={{ ...call, recording }} operator />);
       expect(fact("Recording")).toHaveTextContent(text);
       cleanup();
     }
   });
 
   it("renders the processing timeline with each entry's status", () => {
-    render(<CallDetailView call={call} />);
+    render(<CallDetailView call={call} operator />);
     const timeline = screen.getByRole("region", { name: "Processing timeline" });
     expect(within(timeline).getByText("Call received")).toBeVisible();
     expect(within(timeline).getByText("Recording stored")).toBeVisible();
@@ -137,12 +144,22 @@ describe("CallDetailView", () => {
   });
 
   it("offers no actions deferred to later milestones", () => {
-    render(<CallDetailView call={call} />);
-    for (const name of ["Download MP3", "Export Call", "Purge Media", "Retry", "Previous Call", "Next Call"]) {
+    render(<CallDetailView call={call} operator />);
+    for (const name of ["Download MP3", "Export Call", "Purge Media", "Previous Call", "Next Call"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }
-    expect(screen.queryByText(/Transcript/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Lead/)).not.toBeInTheDocument();
+  });
+
+  it("renders Transcript, Lead Assessment, and Lead Review entries in the processing timeline", () => {
+    const timeline: CallDetail["timeline"] = [
+      { id: "transcript", label: "Transcript completed", status: "Completed", at: "2026-10-16T20:07:00.000Z" },
+      { id: "lead-assessment", label: "Lead Assessment failed", status: "Failed", at: "2026-10-16T20:08:00.000Z" },
+      { id: "lead-review", label: "Lead Review added", status: "Completed", at: "2026-10-16T20:09:00.000Z" },
+    ];
+    render(<CallDetailView call={{ ...call, timeline }} operator />);
+    const region = screen.getByRole("region", { name: "Processing timeline" });
+    for (const label of ["Transcript completed", "Lead Assessment failed", "Lead Review added"]) expect(within(region).getByText(label)).toBeVisible();
+    expect(within(region).getByText("Failed")).toBeVisible();
   });
 });

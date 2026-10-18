@@ -1,0 +1,9 @@
+{
+  "id": "resp_incomplete",
+  "object": "response",
+  "status": "incomplete",
+  "incomplete_details": { "reason": "max_output_tokens" },
+  "model": "gpt-5-mini-2025-08-07",
+  "output": [],
+  "usage": { "input_tokens": 812, "output_tokens": 4096, "total_tokens": 4908 }
+}

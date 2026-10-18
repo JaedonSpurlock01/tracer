@@ -406,7 +406,7 @@ The Transcript appears immediately below the player.
 - Group text into timestamped speaker turns labeled Caller or Business
 - Selecting a timestamp or turn seeks playback to its start
 - Highlight the active turn during playback
-- Auto-scroll while following playback, but stop forced scrolling after the user manually moves away
+- Auto-scroll while following playback within a bounded Transcript region, so following never scrolls the page, but stop forced scrolling after the user manually moves away
 - Offer a `Resume Follow` action when follow mode is paused
 - Search within Transcript text
 - Evidence snippets referenced by the Lead Assessment link to and emphasize the matching turn

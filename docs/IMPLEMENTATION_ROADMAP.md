@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M13 is next
-- **Next milestone:** M13 - Transcript, Lead Assessment, and Lead Review
+- **Current milestone:** None; M14 is next
+- **Next milestone:** M14 - Calls and Activity Operations
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-17
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. No milestone is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. No milestone is In Progress.
 
 ## Status model
 
@@ -180,7 +180,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M10 | Complete First-Release Call Routing | Complete | Staging | M9 |
 | M11 | Durable Recording Transfer | Complete | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Complete | Preview and Staging | M11 |
-| M13 | Transcript, Lead Assessment, and Lead Review | Not Started | Staging | M12 |
+| M13 | Transcript, Lead Assessment, and Lead Review | Complete | Staging | M12 |
 | M14 | Calls and Activity Operations | Not Started | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Not Started | Preview and Staging | M14 |
 | M16 | Reports and Recording Exports | Not Started | Staging | M15 |
@@ -800,10 +800,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M13 - Transcript, Lead Assessment, and Lead Review
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Outcome:** Eligible recordings produce normalized English Transcripts and advisory Lead Assessments, while Operators can add a separate authoritative Lead Review.
 - **Depends on:** M12
 - **Target environment:** Staging
+- **Execution note:** Eligibility uses durations Tracer already persists rather than paid speech detection: connected Calls use the forwarded leg's connected duration, falling back to the dual-channel Recording duration when that leg's status has not arrived by the time the Recording is Stored, and voicemail uses the Recording duration, each needing at least 15 seconds, and the Workspace analysis toggle is read when the Recording is Stored, so enabling analysis later does not backfill earlier Calls. Transcription splits the dual-channel WAV into Caller and Business mono audio, transcribes each channel with `whisper-1` `verbose_json` segments, the lowest-cost OpenAI transcription model that returns segment timestamps (the cheaper `gpt-transcribe` returns none), and merges segments by start time, so speaker labels come from the channel rather than diarization; a voicemail is one Caller channel. Each channel is chunked below OpenAI's upload limits with chunk offsets applied to timestamps, and only the first 3 hours of a longer Recording are transcribed and assessed. The Lead Assessment uses one fixed Tracer prompt with the Workspace name as context and `gpt-5-mini` with strict structured output, chosen over `gpt-5-nano` for summary and evidence quality at well under a cent per Call; per-Workspace lead criteria stay out of scope. Both model identifiers are fixed values, checked against OpenAI's documentation and pricing on 2026-10-17. A Call keeps one current Lead Review that an update overwrites with its reviewer and time; review history waits for the M14 Activity log. M13 also adds an Operator-only Retry for a failed Transcript or Lead Assessment, recovery-sweep coverage for both stages, Transcript search with follow mode and Resume Follow, and the OpenAI Integrations card's configured models, last successful Transcript and Lead Assessment, and recent failures; the live OpenAI authentication test remains later scope. Transcription drops segments matching Whisper's own no-speech rule so silent channels do not produce invented text, runs on a 1 GB Trigger.dev machine so a 3-hour stereo WAV fits in memory, and stops without retrying on OpenAI request errors that cannot succeed on retry; Lead Assessments are requested with OpenAI response storage disabled and fail when an evidence quote is not found in its referenced Transcript turn. The Operator adds or updates a Lead Review from its section on Call Detail; the header action joins the header's Download MP3, Export Call, and overflow actions when M16 builds them. Staging verification uses non-sensitive test calls the Product Owner places, at least one over 15 seconds, one under it, and one voicemail, with `OPENAI_API_KEY` set in the Trigger.dev Dev environment.
 
 #### Vertical slices
 
@@ -837,6 +838,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Domain, contract, task, integration, and component tests pass.
 - Staging processes approved non-sensitive audio fixtures.
 - Cost and token metadata are captured without logging content.
+- The Product Owner marked M13 Complete on 2026-10-17 after the domain, contract, task, component, harness, Worker, integration, browser, typecheck, lint, build, and migration validation gates passed locally and in the Verification workflow, whose Staging gate applied migration 0015 and its runtime grants, deployed `tracer-staging`, and passed the database smoke check. The Product Owner deferred processing non-sensitive Staging test calls (connected over 15 seconds, connected under 15 seconds, and voicemail) through the local Trigger.dev Dev runner until after M14; that check and the Staging voicemail transfer check deferred from M11 remain open.
 
 #### Exit criteria
 

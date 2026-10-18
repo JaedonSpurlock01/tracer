@@ -1,0 +1,45 @@
+{
+  "task": "transcribe",
+  "language": "english",
+  "duration": 9.42,
+  "text": "Hi, I'm calling about a quote for a new water heater. Is someone available this week?",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 0.0,
+      "end": 3.96,
+      "text": " Hi, I'm calling about a quote for a new water heater.",
+      "tokens": [50364, 2421, 11, 286, 478, 5141, 466, 257, 6513, 337, 257, 777, 1281, 24254, 13, 50562],
+      "temperature": 0.0,
+      "avg_logprob": -0.21,
+      "compression_ratio": 1.08,
+      "no_speech_prob": 0.01
+    },
+    {
+      "id": 1,
+      "seek": 0,
+      "start": 4.5,
+      "end": 6.88,
+      "text": " Is someone available this week?",
+      "tokens": [50562, 1119, 1580, 2435, 341, 1243, 30, 50682],
+      "temperature": 0.0,
+      "avg_logprob": -0.19,
+      "compression_ratio": 1.08,
+      "no_speech_prob": 0.02
+    },
+    {
+      "id": 2,
+      "seek": 0,
+      "start": 7.2,
+      "end": 9.42,
+      "text": " Thank you.",
+      "tokens": [50682, 1044, 291, 13, 50794],
+      "temperature": 0.0,
+      "avg_logprob": -1.38,
+      "compression_ratio": 0.6,
+      "no_speech_prob": 0.83
+    }
+  ],
+  "usage": { "type": "duration", "seconds": 10 }
+}

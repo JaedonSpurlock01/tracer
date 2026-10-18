@@ -25,7 +25,9 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -455,6 +457,14 @@ export const recordings = pgTable(
     waveformObjectKey: text("waveform_object_key"),
     waveformFailureReason: text("waveform_failure_reason"),
     waveformGeneratedAt: timestamp("waveform_generated_at", { withTimezone: true }),
+    transcriptState: text("transcript_state"),
+    transcriptSkipReason: text("transcript_skip_reason"),
+    transcriptFailureReason: text("transcript_failure_reason"),
+    transcriptAudioMs: integer("transcript_audio_ms"),
+    transcriptCostUsd: numeric("transcript_cost_usd", { precision: 12, scale: 6 }),
+    transcriptCompletedAt: timestamp("transcript_completed_at", { withTimezone: true }),
+    leadAssessmentState: text("lead_assessment_state"),
+    leadAssessmentFailureReason: text("lead_assessment_failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -468,12 +478,124 @@ export const recordings = pgTable(
     check("recording_waveform_state_check", sql`${table.waveformState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_waveform_stored_metadata_check", sql`${table.waveformState} <> 'Stored' or (${table.waveformObjectKey} is not null and ${table.waveformGeneratedAt} is not null)`),
     check("recording_waveform_requires_stored_check", sql`${table.waveformState} = 'Pending' or ${table.transferState} = 'Stored'`),
+    check("recording_transcript_state_check", sql`${table.transcriptState} is null or ${table.transcriptState} in ('Pending', 'Completed', 'Failed', 'Skipped')`),
+    check(
+      "recording_transcript_skip_reason_check",
+      sql`(${table.transcriptState} is distinct from 'Skipped' and ${table.transcriptSkipReason} is null) or (${table.transcriptState} = 'Skipped' and ${table.transcriptSkipReason} is not null and ${table.transcriptSkipReason} in ('analysis_disabled', 'spam_gate_not_passed', 'too_short'))`,
+    ),
+    check(
+      "recording_transcript_usage_check",
+      sql`${table.transcriptState} is distinct from 'Completed' or (${table.transcriptAudioMs} >= 0 and ${table.transcriptCostUsd} >= 0 and ${table.transcriptCompletedAt} is not null)`,
+    ),
+    check("recording_transcript_requires_stored_check", sql`${table.transcriptState} is null or ${table.transferState} = 'Stored'`),
+    check("recording_lead_assessment_state_check", sql`${table.leadAssessmentState} is null or ${table.leadAssessmentState} in ('Pending', 'Completed', 'Failed')`),
+    check("recording_lead_assessment_requires_transcript_check", sql`${table.leadAssessmentState} is null or ${table.transcriptState} = 'Completed'`),
     uniqueIndex("recording_organization_recording_sid_idx").on(table.organizationId, table.twilioRecordingSid),
     index("recording_organization_id_idx").on(table.organizationId),
     index("recording_workspace_id_idx").on(table.workspaceId),
     index("recording_call_id_idx").on(table.callId),
     index("recording_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.twilioCleanupState} <> 'Deleted'`),
     index("recording_waveform_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.waveformState} <> 'Stored'`),
+    index("recording_transcript_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.transcriptState} in ('Pending', 'Failed')`),
+    index("recording_lead_assessment_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.leadAssessmentState} in ('Pending', 'Failed')`),
+  ],
+);
+
+export const transcripts = pgTable(
+  "transcript",
+  {
+    recordingId: text("recording_id")
+      .primaryKey()
+      .references(() => recordings.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    turns: jsonb().notNull(),
+    model: text().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("transcript_turns_check", sql`jsonb_typeof(${table.turns}) = 'array'`),
+    index("transcript_organization_id_idx").on(table.organizationId),
+    index("transcript_call_id_idx").on(table.callId),
+  ],
+);
+
+export const leadAssessments = pgTable(
+  "lead_assessment",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    recordingId: text("recording_id")
+      .notNull()
+      .references(() => recordings.id, { onDelete: "cascade" }),
+    classification: text().notNull(),
+    score: integer().notNull(),
+    summary: text().notNull(),
+    rationale: text().notNull(),
+    model: text().notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("lead_assessment_classification_check", sql`${table.classification} in ('Good Lead', 'Not Good Lead', 'Uncertain')`),
+    check("lead_assessment_score_check", sql`${table.score} between 0 and 100`),
+    check("lead_assessment_usage_check", sql`${table.inputTokens} >= 0 and ${table.outputTokens} >= 0 and ${table.costUsd} >= 0`),
+    uniqueIndex("lead_assessment_recording_id_idx").on(table.recordingId),
+    index("lead_assessment_organization_id_idx").on(table.organizationId),
+    index("lead_assessment_call_id_idx").on(table.callId),
+  ],
+);
+
+export const leadAssessmentEvidence = pgTable(
+  "lead_assessment_evidence",
+  {
+    leadAssessmentId: text("lead_assessment_id")
+      .notNull()
+      .references(() => leadAssessments.id, { onDelete: "cascade" }),
+    position: integer().notNull(),
+    turnIndex: integer("turn_index").notNull(),
+    startMs: integer("start_ms").notNull(),
+    quote: text().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.leadAssessmentId, table.position] }),
+    check("lead_assessment_evidence_turn_check", sql`${table.position} >= 0 and ${table.turnIndex} >= 0 and ${table.startMs} >= 0`),
+  ],
+);
+
+export const leadReviews = pgTable(
+  "lead_review",
+  {
+    callId: text("call_id")
+      .primaryKey()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    classification: text().notNull(),
+    note: text(),
+    reviewerUserId: text("reviewer_user_id"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("lead_review_classification_check", sql`${table.classification} in ('Good Lead', 'Not Good Lead', 'Uncertain')`),
+    foreignKey({
+      columns: [table.reviewerUserId],
+      foreignColumns: [users.id],
+      name: "lead_review_reviewer_user_id_fk",
+    }).onDelete("set null"),
+    index("lead_review_organization_id_idx").on(table.organizationId),
   ],
 );
 
@@ -495,4 +617,8 @@ export const schema = {
   call: calls,
   providerEvent: providerEvents,
   recording: recordings,
+  transcript: transcripts,
+  leadAssessment: leadAssessments,
+  leadAssessmentEvidence,
+  leadReview: leadReviews,
 };

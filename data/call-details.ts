@@ -10,14 +10,23 @@
  *  Forward Call step, the connected duration from the forwarded leg, the
  *  spam-gate result from the pinned Keypad Gate and the keypad input,
  *  Recording availability from the transfer and waveform states and the
- *  shared media expiry, and a processing timeline from accepted provider
- *  events and Recording states. Lists the five newest Calls of a Workspace
- *  for Recent Calls.
+ *  shared media expiry, the Transcript and Lead Assessment of the selected
+ *  Recording, a processing timeline from accepted provider events,
+ *  Recording, Transcript, and Lead Assessment states, and the Lead Review,
+ *  the current Lead Review, and the effective Lead classification from the
+ *  Lead Review or the Recording's Lead Assessment. Lists the five newest
+ *  Calls of a Workspace for Recent Calls.
  *
  * @remarks
- *  The Twilio call SID is added only for Operators, so it never reaches a
+ *  The Twilio call SID and the secret-free Transcript and Lead Assessment
+ *  failure reasons are added only for Operators, so they never reach a
  *  Client Viewer's payload. Object keys, Recording SIDs, provider payloads,
- *  and failure reasons are never read into the result.
+ *  and transfer and waveform failure reasons are never read into the
+ *  result. Transcript turns and Transcript-derived evidence are read only
+ *  before media expiry, while the non-content Lead Assessment fields stay.
+ *  A Recording stored before analysis existed has no Transcript state and
+ *  reads as Unavailable. A failure's time is the Recording's last update,
+ *  as for the transfer and waveform stages.
  *
  * @see
  *  data/workspace-authorization.ts
@@ -29,10 +38,14 @@
  */
 import type { Pool } from "pg";
 
+import type { AnalysisSkipReason } from "@/data/analysis-eligibility";
 import type { Actor } from "@/data/authorization";
 import { parseCallFlowGraph, type CallFlowGraph, type OutcomeKind } from "@/data/call-flow";
+import { effectiveLeadClassification, type EffectiveLeadClassification, type LeadClassification } from "@/data/lead-classification";
+import { findLeadReview, type LeadReview } from "@/data/lead-reviews";
 import { recordingMediaExpiredSql, recordingMediaExpiresAtSql } from "@/data/recording-media";
 import type { WaveformLane } from "@/data/recording-waveform";
+import { parseTranscriptTurns, type TranscriptTurn } from "@/data/transcript";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 
 export type RecordingAvailability =
@@ -41,6 +54,30 @@ export type RecordingAvailability =
   | { state: "Failed" }
   | { state: "Unavailable"; reason: "disabled" | "not_captured" }
   | { state: "Expired"; expiredAt: string };
+
+export interface CallTranscript {
+  state: "Pending" | "Completed" | "Failed" | "Skipped" | "Expired" | "Unavailable";
+  skipReason?: AnalysisSkipReason;
+  turns?: TranscriptTurn[];
+  failureReason?: string;
+}
+
+export interface LeadAssessmentEvidence {
+  turnIndex: number;
+  startMs: number;
+  quote: string;
+}
+
+export interface CallLeadAssessment {
+  state: "Pending" | "Completed" | "Failed" | "Unavailable";
+  classification?: LeadClassification;
+  score?: number;
+  summary?: string;
+  rationale?: string;
+  processedAt?: string;
+  evidence?: LeadAssessmentEvidence[];
+  failureReason?: string;
+}
 
 export type SpamGateResult = "Passed" | "Blocked" | "Not reached" | "Not used";
 
@@ -65,7 +102,11 @@ export interface CallDetail {
   connectedDurationSeconds: number | null;
   spamGate: SpamGateResult;
   recording: RecordingAvailability;
+  transcript: CallTranscript;
+  leadAssessment: CallLeadAssessment;
   timeline: CallTimelineEntry[];
+  leadReview: LeadReview | null;
+  effectiveLeadClassification: EffectiveLeadClassification;
   twilioCallSid?: string;
 }
 
@@ -113,11 +154,32 @@ type RecordingRow = {
   duration_seconds: number | null;
   transfer_state: "Pending" | "Stored" | "Failed";
   waveform_state: "Pending" | "Stored" | "Failed";
+  transcript_state: "Pending" | "Completed" | "Failed" | "Skipped" | null;
+  transcript_skip_reason: AnalysisSkipReason | null;
+  transcript_failure_reason: string | null;
+  transcript_completed_at: Date | null;
+  lead_assessment_state: "Pending" | "Completed" | "Failed" | null;
+  lead_assessment_failure_reason: string | null;
   expires_at: Date;
   expired: boolean;
 };
 
-const connectedSecondsSql = `case
+type AssessmentRow = {
+  id: string;
+  classification: LeadClassification;
+  score: number;
+  summary: string;
+  rationale: string;
+  processed_at: Date;
+};
+
+interface Analysis {
+  recording: RecordingRow | undefined;
+  assessment: AssessmentRow | undefined;
+  leadReview: LeadReview | null;
+}
+
+export const connectedSecondsSql = `case
   when c.answered_at is null then case when c.state = 'Completed' then 0 end
   else coalesce(
     (select (pe.payload->>'CallDuration')::int from provider_event pe
@@ -144,13 +206,15 @@ const forwardLabels: Readonly<Record<string, [string, CallTimelineEntry["status"
 };
 const terminalCallStatuses = new Set(["completed", "busy", "no-answer", "failed", "canceled"]);
 
-function gatePassed(graph: CallFlowGraph | null, event: EventRow): boolean {
+export type KeypadEvent = Pick<EventRow, "kind" | "idempotency_key" | "digits">;
+
+function gatePassed(graph: CallFlowGraph | null, event: KeypadEvent): boolean {
   const gateNodeId = event.idempotency_key.split(":")[2];
   const gate = graph?.nodes.find((node) => node.id === gateNodeId);
   return gate?.type === "keypad_gate" && event.digits === gate.digit;
 }
 
-function spamGateResult(graph: CallFlowGraph | null, outcome: OutcomeKind | null, events: EventRow[]): SpamGateResult {
+export function spamGateResult(graph: CallFlowGraph | null, outcome: OutcomeKind | null, events: KeypadEvent[]): SpamGateResult {
   if (!graph?.nodes.some((node) => node.type === "keypad_gate")) return "Not used";
   const gathers = events.filter((event) => event.kind === "gather");
   if (gathers.some((event) => gatePassed(graph, event))) return "Passed";
@@ -181,7 +245,7 @@ function eventEntry(graph: CallFlowGraph | null, event: EventRow): [string, Call
 
 function recordingEntries(recording: RecordingRow | undefined): CallTimelineEntry[] {
   if (!recording) return [];
-  const entry = (id: string, label: string, status: CallTimelineEntry["status"], at: Date): CallTimelineEntry => ({ id, label, status, at: at.toISOString() });
+  const entry = timelineEntry;
   if (recording.transfer_state === "Pending") return [entry("recording-transfer", "Recording transfer", "Pending", recording.created_at)];
   if (recording.transfer_state === "Failed" || !recording.stored_at) return [entry("recording-transfer", "Recording transfer failed", "Failed", recording.updated_at)];
   const stored = entry("recording-transfer", "Recording stored", "Completed", recording.stored_at);
@@ -190,12 +254,74 @@ function recordingEntries(recording: RecordingRow | undefined): CallTimelineEntr
   return [stored, entry("recording-waveform", "Waveform generation", "Pending", recording.stored_at)];
 }
 
-function processingTimeline(graph: CallFlowGraph | null, events: EventRow[], recording: RecordingRow | undefined): CallTimelineEntry[] {
+function timelineEntry(id: string, label: string, status: CallTimelineEntry["status"], at: Date): CallTimelineEntry {
+  return { id, label, status, at: at.toISOString() };
+}
+
+function transcriptEntries(recording: RecordingRow | undefined): CallTimelineEntry[] {
+  if (!recording?.transcript_state || !recording.stored_at) return [];
+  if (recording.transcript_state === "Skipped") return [timelineEntry("transcript", "Transcript skipped", "Completed", recording.stored_at)];
+  const entries =
+    recording.transcript_state === "Completed" && recording.transcript_completed_at
+      ? [timelineEntry("transcript", "Transcript completed", "Completed", recording.transcript_completed_at)]
+      : recording.expired
+        ? []
+        : recording.transcript_state === "Failed"
+          ? [timelineEntry("transcript", "Transcription failed", "Failed", recording.updated_at)]
+          : [timelineEntry("transcript", "Transcription", "Pending", recording.stored_at)];
+  return recording.expired ? [...entries, timelineEntry("transcript-expiry", "Transcript expired", "Completed", recording.expires_at)] : entries;
+}
+
+function leadAssessmentEntries(recording: RecordingRow | undefined, assessment: AssessmentRow | undefined): CallTimelineEntry[] {
+  if (!recording?.transcript_completed_at) return [];
+  if (assessment) return [timelineEntry("lead-assessment", "Lead Assessment completed", "Completed", assessment.processed_at)];
+  if (recording.expired) return [];
+  if (recording.lead_assessment_state === "Failed") return [timelineEntry("lead-assessment", "Lead Assessment failed", "Failed", recording.updated_at)];
+  if (recording.lead_assessment_state === "Pending") return [timelineEntry("lead-assessment", "Lead Assessment", "Pending", recording.transcript_completed_at)];
+  return [];
+}
+
+function processingTimeline(graph: CallFlowGraph | null, events: EventRow[], analysis: Analysis): CallTimelineEntry[] {
   const providerEntries = events.flatMap((event): CallTimelineEntry[] => {
     const described = eventEntry(graph, event);
     return described ? [{ id: event.id, label: described[0], status: described[1], at: event.received_at.toISOString() }] : [];
   });
-  return [...providerEntries, ...recordingEntries(recording)].sort((left, right) => left.at.localeCompare(right.at));
+  const reviewEntries = analysis.leadReview ? [{ id: "lead-review", label: "Lead Review added", status: "Completed" as const, at: analysis.leadReview.reviewedAt }] : [];
+  return [
+    ...providerEntries,
+    ...recordingEntries(analysis.recording),
+    ...transcriptEntries(analysis.recording),
+    ...leadAssessmentEntries(analysis.recording, analysis.assessment),
+    ...reviewEntries,
+  ].sort((left, right) => left.at.localeCompare(right.at));
+}
+
+function callTranscript(recording: RecordingRow | undefined, turns: unknown, operator: boolean): CallTranscript {
+  const state = recording?.transcript_state;
+  if (!recording || !state) return { state: "Unavailable" };
+  if (state === "Skipped") return { state, skipReason: recording.transcript_skip_reason ?? undefined };
+  if (recording.expired) return { state: "Expired" };
+  if (state === "Completed") return turns === undefined ? { state: "Unavailable" } : { state, turns: parseTranscriptTurns(turns) };
+  if (state === "Failed") return operator && recording.transcript_failure_reason ? { state, failureReason: recording.transcript_failure_reason } : { state };
+  return { state };
+}
+
+function callLeadAssessment(recording: RecordingRow | undefined, assessment: AssessmentRow | undefined, evidence: LeadAssessmentEvidence[], operator: boolean): CallLeadAssessment {
+  const state = recording?.lead_assessment_state;
+  if (assessment) {
+    const completed: CallLeadAssessment = {
+      state: "Completed",
+      classification: assessment.classification,
+      score: assessment.score,
+      summary: assessment.summary,
+      rationale: assessment.rationale,
+      processedAt: assessment.processed_at.toISOString(),
+    };
+    return recording?.expired ? completed : { ...completed, evidence };
+  }
+  if (!state || state === "Completed") return { state: "Unavailable" };
+  if (state === "Failed") return operator && recording.lead_assessment_failure_reason ? { state, failureReason: recording.lead_assessment_failure_reason } : { state };
+  return { state };
 }
 
 function recordingAvailability(recording: RecordingRow | undefined, graph: CallFlowGraph | null): RecordingAvailability {
@@ -239,6 +365,8 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       if (!row) return null;
       const recordings = await pool.query<RecordingRow>(
         `select r.id, r.created_at, r.updated_at, r.stored_at, r.waveform_generated_at, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state,
+                r.transcript_state, r.transcript_skip_reason, r.transcript_failure_reason, r.transcript_completed_at,
+                r.lead_assessment_state, r.lead_assessment_failure_reason,
                 ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
                 ${recordingMediaExpiredSql("c.started_at", "now()")} as expired
            from recording r
@@ -258,6 +386,30 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       );
       const graph = parseCallFlowGraph(row.graph);
       const recording = recordings.rows[0];
+      const leadReview = await findLeadReview(pool, actor.organizationId, row.id);
+      const operator = canManageWorkspaces(actor);
+      const assessment = recording
+        ? (
+            await pool.query<AssessmentRow>(
+              "select id, classification, score, summary, rationale, processed_at from lead_assessment where recording_id = $1 and organization_id = $2",
+              [recording.id, actor.organizationId],
+            )
+          ).rows[0]
+        : undefined;
+      const contentAvailable = recording !== undefined && !recording.expired;
+      const turns =
+        contentAvailable && recording.transcript_state === "Completed"
+          ? (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [recording.id, actor.organizationId])).rows[0]?.turns
+          : undefined;
+      const evidence =
+        contentAvailable && assessment
+          ? (
+              await pool.query<{ turn_index: number; start_ms: number; quote: string }>(
+                "select turn_index, start_ms, quote from lead_assessment_evidence where lead_assessment_id = $1 order by position",
+                [assessment.id],
+              )
+            ).rows.map((item) => ({ turnIndex: item.turn_index, startMs: item.start_ms, quote: item.quote }))
+          : [];
       const detail: CallDetail = {
         id: row.id,
         workspace: { id: workspace.id, name: workspace.name, reportingTimezone: workspace.reportingTimezone },
@@ -272,9 +424,13 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
         connectedDurationSeconds: row.connected_seconds,
         spamGate: spamGateResult(graph, row.outcome, events.rows),
         recording: recordingAvailability(recording, graph),
-        timeline: processingTimeline(graph, events.rows, recording),
+        transcript: callTranscript(recording, turns, operator),
+        leadAssessment: callLeadAssessment(recording, assessment, evidence, operator),
+        timeline: processingTimeline(graph, events.rows, { recording, assessment, leadReview }),
+        leadReview,
+        effectiveLeadClassification: effectiveLeadClassification({ review: leadReview?.classification ?? null, assessment: assessment?.classification ?? null }),
       };
-      return canManageWorkspaces(actor) ? { ...detail, twilioCallSid: row.twilio_call_sid } : detail;
+      return operator ? { ...detail, twilioCallSid: row.twilio_call_sid } : detail;
     },
 
     async listRecent(workspaceId) {

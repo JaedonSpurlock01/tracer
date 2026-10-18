@@ -21,11 +21,14 @@
  *  and every control, so playback still works when peaks are missing.
  *  Shortcuts listen only inside the player and ignore text fields, sliders,
  *  and select menus, so they never hijack typing. Reduced motion turns off
- *  playhead auto-centering.
+ *  playhead auto-centering. The ready player connects its position and
+ *  seek to an enclosing PlaybackProvider, so the Transcript can follow and
+ *  seek playback without owning the media element.
  *
  * @see
  *  data/call-details.ts
  *  data/recording-media.ts
+ *  components/tracer/playback.tsx
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
@@ -39,6 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { formatClock } from "@/components/tracer/call-format";
+import { useConnectPlayback } from "@/components/tracer/playback";
 import type { RecordingAvailability } from "@/data/call-details";
 import type { WaveformPeaks } from "@/data/recording-waveform";
 
@@ -179,6 +183,8 @@ function ReadyPlayer({ workspaceId, recording }: { workspaceId: string; recordin
     media.currentTime = next;
     setCurrentTime(next);
   }, [duration]);
+
+  useConnectPlayback({ currentTime, playing, seek });
 
   const togglePlay = useCallback(() => {
     const media = audioRef.current;

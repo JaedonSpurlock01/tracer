@@ -275,4 +275,31 @@ describe("IntegrationsView", () => {
     expect(within(screen.getByRole("region", { name: "Trigger.dev" })).getByRole("table", { name: "Recent transfer failures" })).toBeVisible();
     expect(document.body.textContent).not.toContain("organizations/");
   });
+
+  it("shows the OpenAI models, last successful Transcript and Lead Assessment, and recent processing failures", async () => {
+    const time = (value: string) => new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+    const analysis = {
+      transcriptionModel: "whisper-1",
+      leadAssessmentModel: "gpt-5-mini",
+      lastTranscriptAt: "2026-10-14T03:00:00.000Z",
+      lastLeadAssessmentAt: "2026-10-14T03:05:00.000Z",
+      failedCount: 2,
+      lastFailureAt: "2026-10-14T04:00:00.000Z",
+    };
+    const analysisProviders = providers.map((provider) => provider.id === "openai"
+      ? { ...provider, state: "degraded" as const, lastSuccessAt: analysis.lastLeadAssessmentAt, lastFailureAt: analysis.lastFailureAt, analysis }
+      : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: analysisProviders })));
+    render(<IntegrationsView initial={initialData({ providers: analysisProviders })} />);
+    const region = await screen.findByRole("region", { name: "OpenAI" });
+    const value = (term: string) => within(region).getByText(term, { selector: "dt" }).nextElementSibling;
+    expect(value("Transcription model")).toHaveTextContent("whisper-1");
+    expect(value("Lead analysis model")).toHaveTextContent("gpt-5-mini");
+    expect(value("Last successful Transcript")).toHaveTextContent(time(analysis.lastTranscriptAt));
+    expect(value("Last successful Lead Assessment")).toHaveTextContent(time(analysis.lastLeadAssessmentAt));
+    expect(value("Recent processing failures")).toHaveTextContent("2");
+    expect(value("Last failure")).toHaveTextContent(time(analysis.lastFailureAt));
+    expect(within(region).queryByText("Last successful check")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Cloudflare R2" })).queryByText("Transcription model")).not.toBeInTheDocument();
+  });
 });
