@@ -5,9 +5,10 @@
  *
  * @description
  *  Signs users in through the visible email-code flow and the gated E2E OTP
- *  endpoint, connects the fake Twilio account, and creates or archives
- *  Active Workspaces through the same pages and server interfaces a browser
- *  journey uses.
+ *  endpoint, connects the fake Twilio account, creates or archives Active
+ *  Workspaces through the same pages and server interfaces a browser
+ *  journey uses, and delivers Twilio webhooks signed with the fake
+ *  account's Auth Token.
  *
  * @remarks
  *  The helper crosses the same public boundaries as a browser journey.
@@ -19,6 +20,11 @@
  * -------------------------------------------------------------------------
  */
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
+
+import { signTwilioRequest } from "../../data/twilio-signature";
+
+const baseURL = "http://127.0.0.1:3000";
+const twilioAuthToken = "e2e-auth-token";
 
 export async function signInAsOperator(page: Page, request: APIRequestContext): Promise<void> {
   await signIn(page, request, "operator@example.com");
@@ -51,7 +57,7 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
     await expect(page.getByRole("button", { name: "Sync Numbers" })).toBeVisible();
   }
   await page.getByRole("button", { name: "Set Auth Token" }).click();
-  await page.getByLabel("Auth Token", { exact: true }).fill("e2e-auth-token");
+  await page.getByLabel("Auth Token", { exact: true }).fill(twilioAuthToken);
   await page.getByRole("button", { name: "Save Auth Token" }).click();
   await expect(page.getByText("Twilio Auth Token saved.")).toBeVisible();
   await page.getByRole("button", { name: "Sync Numbers" }).click();
@@ -69,7 +75,7 @@ export async function archiveActiveWorkspaces(page: Page, namePrefix: string): P
   }, namePrefix);
 }
 
-export async function createActiveWorkspace(page: Page, name: string): Promise<string> {
+export async function createActiveWorkspace(page: Page, name: string, options: { recording?: boolean } = {}): Promise<string> {
   await page.goto("/workspaces");
   await page.getByRole("button", { name: "Create Workspace" }).first().click();
   await page.getByLabel("Workspace name").fill(name);
@@ -77,11 +83,19 @@ export async function createActiveWorkspace(page: Page, name: string): Promise<s
   await page.getByRole("radio", { disabled: false }).first().check();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Destination Number").fill("+14155550199");
+  if (options.recording) await page.getByRole("switch", { name: "Recording enabled" }).click();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByText("Incoming Call")).toBeVisible();
   await page.getByRole("button", { name: "Create and Activate" }).click();
   await expect(page.getByRole("status")).toHaveText(`${name} is Active.`);
   await page.getByLabel("Search workspaces").fill(name);
   const link = page.getByRole("row", { name: new RegExp(name) }).getByRole("link", { name: new RegExp(name) });
-  return new URL((await link.getAttribute("href")) ?? "", "http://127.0.0.1:3000").pathname.split("/")[2] ?? "";
+  return new URL((await link.getAttribute("href")) ?? "", baseURL).pathname.split("/")[2] ?? "";
+}
+
+export async function twilioCallback(request: APIRequestContext, path: string, params: Record<string, string>): Promise<void> {
+  const url = `${baseURL}${path}`;
+  const signature = await signTwilioRequest({ authToken: twilioAuthToken, url, params });
+  const response = await request.post(url, { form: params, headers: { "x-twilio-signature": signature } });
+  expect(response.status(), path).toBeLessThan(300);
 }

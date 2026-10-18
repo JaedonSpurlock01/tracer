@@ -9,7 +9,9 @@
  *  account menu and current Organization.
  *
  * @remarks
- *  Route authorization remains server-side before shell content renders.
+ *  Route authorization remains server-side before shell content renders. The
+ *  inset may shrink below its content width so wide Data Grids scroll inside
+ *  their Frame instead of widening the page beside the Sidebar.
  *
  * @see
  *  components/tracer/app-sidebar.tsx
@@ -43,7 +45,7 @@ export default async function AppLayout({ children }: AppLayoutProps) {
         actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role }}
         organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
       />
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="flex h-12 items-center gap-2 border-b border-border px-4">
           <SidebarTrigger />
         </header>

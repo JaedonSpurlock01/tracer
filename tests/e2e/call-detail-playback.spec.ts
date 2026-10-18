@@ -31,15 +31,12 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { Pool } from "pg";
 
-import { signTwilioRequest } from "../../data/twilio-signature";
-import { archiveActiveWorkspaces, ensureTwilioNumbers, signInAsOperator } from "./helpers";
+import { archiveActiveWorkspaces, ensureTwilioNumbers, signInAsOperator, twilioCallback } from "./helpers";
 
-const baseURL = "http://127.0.0.1:3000";
 const databaseUrl = "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e";
-const authToken = "e2e-auth-token";
 const durationSeconds = 10;
 const sampleRate = 8000;
 
@@ -75,13 +72,6 @@ function peaksJson(): string {
 
 function putLocalObject(key: string, file: string, contentType: string): void {
   execFileSync("corepack", ["pnpm", "exec", "wrangler", "r2", "object", "put", `tracer-recordings-test/${key}`, "--file", file, "--content-type", contentType, "--local", "--config", "wrangler.test.jsonc"], { stdio: "pipe" });
-}
-
-async function twilioCallback(request: APIRequestContext, path: string, params: Record<string, string>): Promise<void> {
-  const url = `${baseURL}${path}`;
-  const signature = await signTwilioRequest({ authToken, url, params });
-  const response = await request.post(url, { form: params, headers: { "x-twilio-signature": signature } });
-  expect(response.status(), path).toBeLessThan(300);
 }
 
 test("an Operator opens Call Detail from Recent Calls, controls playback, follows the Transcript, and adds a Lead Review", async ({ page, request }, testInfo) => {
