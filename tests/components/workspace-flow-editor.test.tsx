@@ -17,7 +17,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fitView = vi.fn();
@@ -123,6 +123,15 @@ describe("WorkspaceFlowEditor", () => {
     render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
     expect(screen.getByText("Published v1")).toBeVisible();
     expect(screen.getByRole("button", { name: "Edit Flow" })).toBeVisible();
+  });
+
+  it("renders the Workspace tabs below the Publish toolbar with Flow current", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    expect(screen.getByRole("button", { name: "Publish" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "Flow" })).toHaveAttribute("aria-current", "page");
   });
 
   it("PUTs the published graph when Edit Flow is selected", async () => {

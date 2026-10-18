@@ -129,6 +129,18 @@ describe("RecordingPlayer", () => {
     expect(await screen.findByRole("button", { name: "Play" })).toBeVisible();
   });
 
+  it("starts playback on open when asked to play, as from the Calls Play Recording action", async () => {
+    fetchMock.mockResolvedValue(peaksResponse(dualPeaks));
+    render(<RecordingPlayer workspaceId="workspace-1" recording={ready} autoPlay />);
+    await waitFor(() => expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeVisible();
+  });
+
+  it("does not start playback on open by default", async () => {
+    await renderReady();
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  });
+
   it("seeks with an accessible seek control that announces the time", async () => {
     await renderReady();
     const seek = screen.getByRole("slider", { name: "Seek" });

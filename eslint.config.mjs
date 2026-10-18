@@ -7,7 +7,10 @@
  *  Applies the Next.js core, accessibility, and TypeScript rule sets.
  *
  * @remarks
- *  Generated build and test artifacts are excluded from linting.
+ *  Generated build and test artifacts are excluded from linting. The ReUI
+ *  Filters and Cascader sources are kept exactly as the registry ships
+ *  them, so the two React Compiler rules they intentionally break are
+ *  turned off for those directories only.
  *
  * @see
  *  package.json
@@ -22,6 +25,10 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
+  {
+    files: ["components/reui/filters/**", "components/reui/cascader/**"],
+    rules: { "react-hooks/set-state-in-effect": "off", "react-hooks/refs": "off" },
+  },
   globalIgnores([
     ".next/**",
     ".open-next/**",

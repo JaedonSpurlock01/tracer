@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M14 is next
-- **Next milestone:** M14 - Calls and Activity Operations
+- **Current milestone:** M14 - Calls and Activity Operations
+- **Next milestone:** M15 - Dashboard and Workspace Analytics
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-17
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. No milestone is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is In Progress on `milestone/m14-calls-activity-operations`.
 
 ## Status model
 
@@ -181,7 +181,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M11 | Durable Recording Transfer | Complete | Staging | M10 |
 | M12 | Waveform Playback and Call Detail | Complete | Preview and Staging | M11 |
 | M13 | Transcript, Lead Assessment, and Lead Review | Complete | Staging | M12 |
-| M14 | Calls and Activity Operations | Not Started | Preview and Staging | M13 |
+| M14 | Calls and Activity Operations | In Progress | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Not Started | Preview and Staging | M14 |
 | M16 | Reports and Recording Exports | Not Started | Staging | M15 |
 | M17 | Retention, Purge, and Lifecycle Automation | Not Started | Staging | M16 |
@@ -849,10 +849,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M14 - Calls and Activity Operations
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Users can search, filter, and investigate authorized Calls and follow expandable operational Activity.
 - **Depends on:** M13
 - **Target environment:** Preview and Staging
+- **Execution note:** Activity reads an append-only Call event table that each lifecycle writer (Twilio voice and status webhooks, Recording transfer, Transcript, Lead Assessment, and Lead Review) appends to in the same transaction as the state change it records, so every step, failures included, carries its exact time, and each Lead Review add or update is its own event, which provides the review history M13 deferred; the migration backfills events for existing Calls from their persisted state. One Activity entry per Call is the grouping of its events, never a duplicated row. Export Recordings and Export CSV appear disabled on Calls until M16 builds them, and Download MP3 stays out of the row actions until then. With no date filter, Calls covers all time and Activity covers the last 7 days with Load more. Play Recording opens Call Detail and starts the M12 player, so playback keeps one authorized surface. Call Detail opened from Calls or Activity keeps the source filters for its back link and adds the previous and next Call navigation M12 deferred. M14 also builds the Workspace tabs from DESIGN (Overview, Calls, Flow for Operators, and Settings, with Reports added when M16 builds it), which no earlier milestone built and which Workspace Calls needs as its entry point. The Calls filter query supports AND and OR condition groups from the ReUI Filters advanced popover, so its Add group action works rather than being a dead control.
 
 #### Vertical slices
 

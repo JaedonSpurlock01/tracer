@@ -5,7 +5,8 @@
  *
  * @description
  *  Covers routing metadata, published flow steps, the Edit Flow link, and
- *  the Recent Calls list with its links to Call Detail and Empty state.
+ *  the Recent Calls list with its links to Call Detail, View Calls, and
+ *  Empty state, and the Workspace tabs below the header.
  *
  * @remarks
  *  Overview tests use the public component boundary.
@@ -133,12 +134,24 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(rows[0]).toHaveTextContent("1:23");
     expect(rows[1]).toHaveTextContent("Unknown caller");
     expect(rows[1]).toHaveTextContent("In Progress");
-    expect(screen.queryByRole("link", { name: "View Calls" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View Calls" })).toHaveAttribute("href", "/workspaces/workspace-1/calls");
   });
 
   it("explains that Calls appear after the first inbound Call when the Workspace has none", () => {
     render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} recentCalls={[]} />);
     expect(screen.getByText("Recent Calls")).toBeVisible();
     expect(screen.getByText("No Calls yet. Calls appear after the first inbound Call reaches the Tracking Number.")).toBeVisible();
+  });
+
+  it("renders the Workspace tabs below the Workspace header with Overview current, hiding Flow and Settings from Client Viewers", () => {
+    const { rerender } = render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} />);
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    expect(screen.getByRole("heading", { level: 1, name: "Phoenix Office" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(nav.compareDocumentPosition(screen.getByText("Routing health")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+
+    rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} readOnly />);
+    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls"]);
   });
 });

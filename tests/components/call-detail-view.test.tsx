@@ -23,7 +23,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CallDetailView from "@/components/tracer/call-detail-view";
@@ -143,9 +143,16 @@ describe("CallDetailView", () => {
     expect(within(timeline).getByText("Failed")).toBeVisible();
   });
 
+  it("starts the Recording player when opened from Play Recording", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+    render(<CallDetailView call={call} operator={false} autoPlay />);
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    play.mockRestore();
+  });
+
   it("offers no actions deferred to later milestones", () => {
     render(<CallDetailView call={call} operator />);
-    for (const name of ["Download MP3", "Export Call", "Purge Media", "Previous Call", "Next Call"]) {
+    for (const name of ["Download MP3", "Export Call", "Purge Media"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }
@@ -161,5 +168,40 @@ describe("CallDetailView", () => {
     const region = screen.getByRole("region", { name: "Processing timeline" });
     for (const label of ["Transcript completed", "Lead Assessment failed", "Lead Review added"]) expect(within(region).getByText(label)).toBeVisible();
     expect(within(region).getByText("Failed")).toBeVisible();
+  });
+
+  it("links back to the source list and steps to the previous and next Call in it", () => {
+    render(
+      <CallDetailView
+        call={call}
+        operator={false}
+        navigation={{
+          back: "/calls?sort=leadScore&order=asc",
+          previous: "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc",
+          next: "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc",
+        }}
+      />,
+    );
+    const header = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    expect(within(header).getByRole("link", { name: "Back to Calls" })).toHaveAttribute("href", "/calls?sort=leadScore&order=asc");
+    const navigation = within(header).getByRole("group", { name: "Call navigation" });
+    expect(within(navigation).getByRole("link", { name: "Previous Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
+    expect(within(navigation).getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
+    expect(screen.getByRole("link", { name: "Back to Calls" }).compareDocumentPosition(screen.getByRole("heading", { level: 1 })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("disables previous or next Call at either end of the list", () => {
+    render(<CallDetailView call={call} operator navigation={{ back: "/workspaces/workspace-1/calls", previous: null, next: "/workspaces/workspace-1/calls/call-2" }} />);
+    expect(screen.getByRole("button", { name: "Previous Call" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Previous Call" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
+  });
+
+  it("falls back to Workspace Calls for the back link and renders no Workspace tabs", () => {
+    render(<CallDetailView call={call} operator />);
+    expect(screen.getByRole("link", { name: "Back to Calls" })).toHaveAttribute("href", "/workspaces/workspace-1/calls");
+    expect(screen.getByRole("button", { name: "Previous Call" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next Call" })).toBeDisabled();
+    expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
   });
 });

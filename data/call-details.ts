@@ -15,7 +15,8 @@
  *  Recording, Transcript, and Lead Assessment states, and the Lead Review,
  *  the current Lead Review, and the effective Lead classification from the
  *  Lead Review or the Recording's Lead Assessment. Lists the five newest
- *  Calls of a Workspace for Recent Calls.
+ *  Calls of a Workspace for Recent Calls. Shares the connected duration and
+ *  Recording availability rules with the Calls list.
  *
  * @remarks
  *  The Twilio call SID and the secret-free Transcript and Lead Assessment
@@ -31,6 +32,7 @@
  * @see
  *  data/workspace-authorization.ts
  *  data/recording-media.ts
+ *  data/calls.ts
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
@@ -324,7 +326,9 @@ function callLeadAssessment(recording: RecordingRow | undefined, assessment: Ass
   return { state };
 }
 
-function recordingAvailability(recording: RecordingRow | undefined, graph: CallFlowGraph | null): RecordingAvailability {
+export type RecordingAvailabilityRow = Pick<RecordingRow, "id" | "channels" | "duration_seconds" | "transfer_state" | "waveform_state" | "expires_at" | "expired">;
+
+export function recordingAvailability(recording: RecordingAvailabilityRow | undefined, graph: CallFlowGraph | null): RecordingAvailability {
   if (!recording) {
     const recorded = graph?.nodes.some((node) => node.type === "recording_disclosure") ?? false;
     return { state: "Unavailable", reason: recorded ? "not_captured" : "disabled" };
