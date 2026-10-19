@@ -81,10 +81,14 @@ function windowDays(window: AnalyticsWindow): number {
   return Math.round((toTime(window.to) - toTime(window.from)) / dayMs) + 1;
 }
 
+// Bounds keep the prior window and trend buckets small and well formed.
+const earliestCustomDate = "2000-01-01";
+const maxCustomDays = 3660;
+
 export function analyticsRangeFromSearchParams(params: SearchParams): AnalyticsRange {
   const from = calendarDate(read(params, "from"));
   const to = calendarDate(read(params, "to"));
-  if (from && to && from <= to) return { kind: "custom", from, to };
+  if (from && to && from <= to && from >= earliestCustomDate && windowDays({ from, to }) <= maxCustomDays) return { kind: "custom", from, to };
   if (from || to) return defaultAnalyticsRange;
   const range = read(params, "range");
   if (range === "all") return { kind: "all" };

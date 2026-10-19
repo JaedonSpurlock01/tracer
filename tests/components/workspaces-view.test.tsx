@@ -91,9 +91,9 @@ describe("WorkspacesView", () => {
       workspaces: [north, south, workspace],
       total: 3,
       stats: {
-        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" } },
-        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null } },
-        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null } },
+        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" } },
+        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null } },
+        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null } },
       },
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));

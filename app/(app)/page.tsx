@@ -50,6 +50,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
   const data = await withTracerRuntime(async ({ pool }) => {
     const readable = await createReadableWorkspaces(pool, actor).list({ pageSize: 2 });
     if (!operator && readable.total === 1) return { onlyWorkspaceId: readable.workspaces[0].id };
+    if (!operator && readable.total === 0) return { noWorkspaces: true as const };
     if (readable.total === 0) return { workspaceCount: 0, summary: null, recentCalls: null };
     const [summary, recentCalls] = await Promise.all([
       orNull(createAnalytics(pool, actor).summary({ range })),
@@ -58,6 +59,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
     return { workspaceCount: readable.total, summary, recentCalls };
   });
   if ("onlyWorkspaceId" in data) redirect(`/workspaces/${data.onlyWorkspaceId}`);
+  if ("noWorkspaces" in data) redirect("/workspaces");
 
   return (
     <HomeDashboard

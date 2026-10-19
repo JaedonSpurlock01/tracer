@@ -26,8 +26,10 @@
  *  entirely unless the actor reads more than one Workspace. The Workspaces
  *  list reads each Workspace's Calls and Good Leads for the last 30 days in
  *  its reporting timezone, its last Call, and its webhook health, and
- *  Workspace Overview reads the same last Call and webhook health as its
- *  routing health.
+ *  Workspace Overview reads its last successful inbound Call (the newest
+ *  Call not ending Failed) and the same webhook health as its routing
+ *  health. A stats failure leaves the Workspace list readable with its stat
+ *  columns unavailable.
  *
  * @remarks
  *  Every aggregate reads the Calls list source, readable Workspace
@@ -135,6 +137,7 @@ export interface WorkspaceListStats {
   callsLast30Days: number;
   goodLeadsLast30Days: number;
   lastCallAt: string | null;
+  lastSuccessfulInboundCallAt: string | null;
   integrationHealth: WebhookHealth;
 }
 
@@ -197,7 +200,13 @@ function webhookHealth(state: WorkspaceState, lastAccepted: Date | null): Webhoo
 }
 
 export async function withWorkspaceListStats(analytics: Analytics, result: WorkspaceListResult): Promise<WorkspaceListWithStats> {
-  return { ...result, stats: await analytics.workspaceListStats(result.workspaces.map((workspace) => workspace.id)) };
+  try {
+    return { ...result, stats: await analytics.workspaceListStats(result.workspaces.map((workspace) => workspace.id)) };
+  } catch (error) {
+    // The list stays usable; its stat columns render as unavailable.
+    console.error("Workspace list stats failed", error);
+    return { ...result, stats: {} };
+  }
 }
 
 export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () => Date } = {}): Analytics {
@@ -303,11 +312,12 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
           where ${readable} and w.id = any(${ids}::text[])`,
         values.slice(0, values.length - 2),
       ),
-      pool.query<{ workspace_id: string; calls: number; good_leads: number; last_call_at: Date | null }>(
+      pool.query<{ workspace_id: string; calls: number; good_leads: number; last_call_at: Date | null; last_successful_at: Date | null }>(
         `select c.workspace_id,
                 count(*) filter (where ${recent})::int as calls,
                 count(*) filter (where ${recent} and ${goodLeadSql})::int as good_leads,
-                max(c.started_at) as last_call_at
+                max(c.started_at) as last_call_at,
+                max(c.started_at) filter (where c.outcome is distinct from 'Failed') as last_successful_at
            from ${callSource}
           where ${readable} and c.workspace_id = any(${ids}::text[])
           group by c.workspace_id`,
@@ -321,6 +331,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
         callsLast30Days: stats?.calls ?? 0,
         goodLeadsLast30Days: stats?.good_leads ?? 0,
         lastCallAt: stats?.last_call_at?.toISOString() ?? null,
+        lastSuccessfulInboundCallAt: stats?.last_successful_at?.toISOString() ?? null,
         integrationHealth: webhookHealth(row.state, row.last_accepted_voice_at),
       }];
     }));
@@ -362,7 +373,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
     workspaceListStats,
     async routingHealth(workspaceId) {
       const stats = (await workspaceListStats([workspaceId]))[workspaceId];
-      return stats ? { lastSuccessfulInboundCallAt: stats.lastCallAt, webhook: stats.integrationHealth } : null;
+      return stats ? { lastSuccessfulInboundCallAt: stats.lastSuccessfulInboundCallAt, webhook: stats.integrationHealth } : null;
     },
   };
 }

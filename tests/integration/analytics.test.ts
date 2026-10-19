@@ -43,7 +43,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createAnalytics } from "@/data/analytics";
+import { createAnalytics, withWorkspaceListStats, type Analytics } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -438,10 +438,10 @@ describe("Workspaces list stats and routing health", () => {
   it("report 30-day Calls and Good Leads, the last Call, and webhook health from recorded voice webhooks", async () => {
     const stats = await analytics(operator).workspaceListStats(["north", "south", "east", "setup", "other-workspace"]);
     expect(stats).toEqual({
-      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" } },
-      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null } },
-      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" } },
-      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } },
+      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" } },
+      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null } },
+      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" } },
+      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } },
     });
   });
 
@@ -460,5 +460,24 @@ describe("Workspaces list stats and routing health", () => {
       webhook: { status: "Warning", lastAcceptedVoiceWebhookAt: null },
     });
     expect(await analytics(singleViewer).routingHealth("south")).toBeNull();
+  });
+
+  it("keep a later Failed Call out of the last successful inbound Call while Last Call still shows it", async () => {
+    await seedOrganization("routing");
+    await seedWorkspace({ organizationId: "routing", id: "routing-west", name: "West Roofing", timezone: "UTC", trackingNumber: "+14155550191" });
+    await seedCall({ id: "routing-missed", workspaceId: "routing-west", startedAt: "2026-10-16T12:00:00Z", outcome: "Missed", forwarded: true });
+    await seedCall({ id: "routing-failed", workspaceId: "routing-west", startedAt: "2026-10-17T12:00:00Z", outcome: "Failed" });
+    const routingOperator = actor({ organizationId: "routing", userId: "routing-operator", role: "Operator", timezone: "UTC" });
+    expect((await analytics(routingOperator).workspaceListStats(["routing-west"]))["routing-west"]).toMatchObject({
+      lastCallAt: "2026-10-17T12:00:00.000Z",
+      lastSuccessfulInboundCallAt: "2026-10-16T12:00:00.000Z",
+    });
+    expect((await analytics(routingOperator).routingHealth("routing-west"))?.lastSuccessfulInboundCallAt).toBe("2026-10-16T12:00:00.000Z");
+  });
+
+  it("keep the Workspace list readable when its stats fail", async () => {
+    const failing = { workspaceListStats: () => Promise.reject(new Error("stats down")) } as unknown as Analytics;
+    const listed = { workspaces: [], total: 0, page: 1, pageSize: 25 } as unknown as Parameters<typeof withWorkspaceListStats>[1];
+    expect(await withWorkspaceListStats(failing, listed)).toEqual({ ...listed, stats: {} });
   });
 });

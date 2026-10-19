@@ -52,8 +52,8 @@ describe("Analytics range", () => {
     expect(analyticsRangeSearchParams(defaultAnalyticsRange).toString()).toBe("");
   });
 
-  it("falls back to 30 Days for unknown presets and malformed, partial, or reversed custom dates", () => {
-    for (const query of ["range=14d", "from=2026-02-30&to=2026-03-04", "from=2026-03-01", "from=2026-03-09&to=2026-03-04", "to=2026-03-04"]) {
+  it("falls back to 30 Days for unknown presets and malformed, partial, reversed, pre-2000, or over-ten-year custom dates", () => {
+    for (const query of ["range=14d", "from=2026-02-30&to=2026-03-04", "from=2026-03-01", "from=2026-03-09&to=2026-03-04", "to=2026-03-04", "from=0001-01-01&to=2026-10-18", "from=1999-12-31&to=2000-01-05", "from=2026-01-01&to=9999-12-31"]) {
       expect(analyticsRangeFromSearchParams(new URLSearchParams(query))).toEqual(defaultAnalyticsRange);
     }
   });
