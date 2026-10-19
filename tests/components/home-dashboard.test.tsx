@@ -4,7 +4,8 @@
  * @brief  Verifies the Home dashboard regions and their states.
  *
  * @description
- *  Covers the header scope, date controls, and disabled Generate Report;
+ *  Covers the header scope, date controls, and Generate Report opening the
+ *  dialog over every accessible Workspace;
  *  Workspace performance shown only when the summary carries it; Recent
  *  Calls linking to Call Detail with the global Calls list as its source
  *  and View Calls carrying the range; a failed region showing Retry while
@@ -83,6 +84,11 @@ const props = {
   summary,
   recentCalls,
   callsHref: "/calls?from=2026-10-12&to=2026-10-18",
+  reportScope: {
+    kind: "global" as const,
+    workspaces: [{ id: "workspace-1", name: "Acme Plumbing" }, { id: "workspace-2", name: "Quiet Dental" }],
+    accountTimeZone: "America/Chicago",
+  },
 };
 
 beforeEach(() => {
@@ -96,6 +102,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  Object.defineProperty(Element.prototype, "getAnimations", { value: () => [], configurable: true });
 });
 
 afterEach(() => {
@@ -104,17 +111,26 @@ afterEach(() => {
 });
 
 describe("HomeDashboard", () => {
-  it("shows the scope, the date controls, and Generate Report disabled until Reports exist", () => {
+  it("shows the scope, the date controls, and Generate Report", () => {
     const { rerender } = render(<HomeDashboard {...props} />);
     expect(screen.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
     expect(screen.getByText("All Workspaces")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Generate Report" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate Report" })).toBeEnabled();
     expect(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "7 Days" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "90 Days" }));
     expect(router.push).toHaveBeenCalledWith("/?range=90d", { scroll: false });
 
     rerender(<HomeDashboard {...props} operator={false} workspaceCount={3} />);
     expect(screen.getByText("3 Workspaces")).toBeVisible();
+  });
+
+  it("opens Generate Report over every accessible Workspace", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ preview: { matchedCalls: 5 }, recordingExportLimit: 500 }), { status: 200 })));
+    render(<HomeDashboard {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Generate Report" }));
+    expect(await screen.findByRole("dialog", { name: "Generate Report" })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Acme Plumbing" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Quiet Dental" })).toBeChecked();
   });
 
   it("compares Workspaces only when the summary carries Workspace performance", () => {

@@ -82,6 +82,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  Object.defineProperty(Element.prototype, "getAnimations", { value: () => [], configurable: true });
 });
 
 afterEach(() => {
@@ -195,10 +196,10 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(screen.getByRole("heading", { level: 1, name: "Phoenix Office" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(nav.compareDocumentPosition(screen.getByText("Routing health")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
 
     rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} readOnly />);
-    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls"]);
+    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Reports"]);
   });
 
   it("reports Twilio webhook health and the last successful inbound Call in routing health", () => {
@@ -243,16 +244,19 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(router.refresh).toHaveBeenCalled();
   });
 
-  it("gives Operators Edit Flow and Workspace Settings, and Client Viewers a disabled Generate Report and Reports", () => {
+  it("gives Operators Edit Flow and Workspace Settings, and Client Viewers Generate Report and Workspace Reports", async () => {
     const { rerender } = render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} />);
     expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
     expect(screen.getByRole("link", { name: "Workspace Settings" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/general");
     expect(screen.queryByRole("button", { name: "Generate Report" })).not.toBeInTheDocument();
 
     rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} readOnly />);
-    expect(screen.getByRole("button", { name: "Generate Report" })).toBeDisabled();
-    expect(screen.getByRole("link", { name: "Reports" })).toHaveAttribute("href", "/reports");
+    expect(screen.getAllByRole("link", { name: "Reports" }).map((link) => link.getAttribute("href"))).toEqual(["/workspaces/workspace-1/reports", "/workspaces/workspace-1/reports"]);
     expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ preview: { matchedCalls: 5 }, recordingExportLimit: 500 }), { status: 200 })));
+    fireEvent.click(screen.getByRole("button", { name: "Generate Report" }));
+    expect(await screen.findByRole("dialog", { name: "Generate Report" })).toBeVisible();
+    expect(screen.getByText(`${workspace.name}, in ${workspace.reportingTimezone}`)).toBeVisible();
   });
 
   it("keeps historical analytics readable for an Archived Workspace and removes live-routing actions", () => {

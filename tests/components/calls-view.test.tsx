@@ -6,7 +6,7 @@
  * @description
  *  Covers the DESIGN column order with the Workspace column omitted in
  *  Workspace scope, dates in the result's timezone, the In Progress badge,
- *  the effective Lead classification and Lead Score, disabled export
+ *  the effective Lead classification and Lead Score, the export
  *  actions, the No Calls Empty state, a fetch error with Retry inside the
  *  grid, Open Call and Play Recording only for a playable Recording, row
  *  selection, server sorting and paging kept in the URL with Skeleton rows
@@ -128,24 +128,21 @@ describe("CallsView", () => {
     const nav = screen.getByRole("navigation", { name: "Workspace" });
     expect(screen.getByRole("heading", { level: 1, name: "Calls" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(nav.compareDocumentPosition(screen.getByRole("searchbox", { name: "Search Calls" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Reports"]);
     expect(within(nav).getByRole("link", { name: "Calls" })).toHaveAttribute("aria-current", "page");
 
     rerender(<CallsView initialResult={result} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} operator />);
-    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
 
     rerender(<CallsView initialResult={result} initialQuery={defaultQuery} />);
     expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
   });
 
-  it("shows Export Recordings and Export CSV disabled until exports arrive", async () => {
+  it("offers Export Recordings as the primary action and Export CSV as the secondary action", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
-    const recordings = screen.getByRole("button", { name: "Export Recordings" });
-    expect(recordings).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
-    fireEvent.focus(recordings.parentElement!);
-    expect(await screen.findAllByText("Exports arrive in a later release.")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Export Recordings" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled();
   });
 
   it("offers Play Recording only for a playable Recording and opens Call Detail from a row", () => {

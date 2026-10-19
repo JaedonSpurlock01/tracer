@@ -14,7 +14,8 @@
  *  The summary and Recent Calls load as separate regions, so a failure in
  *  one renders that region's Retry while the other still renders. Recent
  *  Calls read the first page of the global Calls list in its default
- *  order, the same list a Recent Calls row returns to. View Calls carries
+ *  order, the same list a Recent Calls row returns to. Generate Report
+ *  offers the readable Workspaces with the actor's account timezone. View Calls carries
  *  the range as the Calls Started filter, resolved against today in the
  *  actor's timezone like the summary.
  *
@@ -51,12 +52,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
     const readable = await createReadableWorkspaces(pool, actor).list({ pageSize: 2 });
     if (!operator && readable.total === 1) return { onlyWorkspaceId: readable.workspaces[0].id };
     if (!operator && readable.total === 0) return { noWorkspaces: true as const };
-    if (readable.total === 0) return { workspaceCount: 0, summary: null, recentCalls: null };
-    const [summary, recentCalls] = await Promise.all([
+    if (readable.total === 0) return { workspaceCount: 0, summary: null, recentCalls: null, workspaces: [] };
+    const calls = createCallList(pool, actor);
+    const [summary, recentCalls, workspaces] = await Promise.all([
       orNull(createAnalytics(pool, actor).summary({ range })),
-      orNull(createCallList(pool, actor).list({ page: 1, sort: defaultCallSort, filters: emptyCallFilters })),
+      orNull(calls.list({ page: 1, sort: defaultCallSort, filters: emptyCallFilters })),
+      calls.workspaceOptions(),
     ]);
-    return { workspaceCount: readable.total, summary, recentCalls };
+    return { workspaceCount: readable.total, summary, recentCalls, workspaces };
   });
   if ("onlyWorkspaceId" in data) redirect(`/workspaces/${data.onlyWorkspaceId}`);
   if ("noWorkspaces" in data) redirect("/workspaces");
@@ -69,6 +72,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
       summary={data.summary}
       recentCalls={data.recentCalls}
       callsHref={analyticsCallsHref("/calls", range, calendarDateInTimeZone(new Date(), actor.timezone))}
+      reportScope={{ kind: "global", workspaces: data.workspaces, accountTimeZone: actor.timezone }}
     />
   );
 }

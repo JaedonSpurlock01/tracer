@@ -8,8 +8,8 @@
  *  context and the Call Outcome Badge, the Call facts definition list with
  *  the Operator-only Twilio call SID, Recording and retention status
  *  including Expired media, the processing timeline with its Transcript,
- *  Lead Assessment, and Lead Review entries, and the absence of actions
- *  deferred to later milestones.
+ *  Lead Assessment, and Lead Review entries, Export Call in the header, and
+ *  the absence of Purge Media, which waits for a later milestone.
  *
  * @remarks
  *  The player is covered by recording-player.test.tsx and the Transcript,
@@ -164,12 +164,11 @@ describe("CallDetailView", () => {
     }
   });
 
-  it("offers no actions deferred to later milestones", () => {
+  it("offers Export Call and no Purge Media, which waits for a later milestone", () => {
     render(<CallDetailView call={call} operator />);
-    for (const name of ["Export Call", "Purge Media"]) {
-      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
-    }
+    expect(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Export Call" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Purge Media" })).not.toBeInTheDocument();
   });
 
   it("renders Transcript, Lead Assessment, and Lead Review entries in the processing timeline", () => {

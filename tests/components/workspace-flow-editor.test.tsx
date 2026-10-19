@@ -130,7 +130,7 @@ describe("WorkspaceFlowEditor", () => {
     render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
     const nav = screen.getByRole("navigation", { name: "Workspace" });
     expect(screen.getByRole("button", { name: "Publish" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
     expect(within(nav).getByRole("link", { name: "Flow" })).toHaveAttribute("aria-current", "page");
   });
 
