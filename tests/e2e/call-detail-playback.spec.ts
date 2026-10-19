@@ -197,7 +197,7 @@ test("an Operator opens Call Detail from Recent Calls, controls playback, follow
     await expect(review.getByText("Reporting result")).toBeVisible();
     await page.reload();
     await expect(page.getByRole("region", { name: "Lead Review" }).getByText("Caller was a vendor.")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 }).locator("xpath=..").getByText("Not Good Lead", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).locator("xpath=../..").getByText("Not Good Lead", { exact: true })).toBeVisible();
   } finally {
     await pool.end();
   }
