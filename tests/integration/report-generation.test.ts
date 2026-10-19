@@ -1,7 +1,7 @@
 /**
  * -------------------------------------------------------------------------
  * @file   report-generation.test.ts
- * @brief  Verifies Calls CSV generation for report and Calls export jobs.
+ * @brief  Verifies report PDF and Calls CSV generation for report and Calls export jobs.
  *
  * @description
  *  Runs report generation against a real PostgreSQL database with a fake
@@ -9,17 +9,22 @@
  *  times in the job's report timezone across Workspaces, the Workspace
  *  column, Lead Review precedence in the effective Lead classification,
  *  that Calls outside the job's Workspaces never appear even when the
- *  export filters name them, idempotent reruns, and failure recording.
+ *  export filters name them, idempotent reruns, and failure recording. A
+ *  PDF and CSV report completes only with both artifacts, and its PDF
+ *  bytes and extracted text name the Workspaces, period, timezone, and
+ *  Total Calls; a PDF-only single-Workspace report has no comparison.
  *
  * @remarks
  *  Jobs are created through the report job domain so their stored
  *  parameters are real. Call instants are non-round, and a small page size
  *  makes generation walk several pages. Workspaces, users, and Access
- *  Grants are seeded directly.
+ *  Grants are seeded directly. PDF text is extracted with the dev-only
+ *  pdfjs-dist, so the check reads the rendered file rather than the model.
  *
  * @see
  *  data/report-generation.ts
  *  data/report-csv.ts
+ *  data/report-pdf.tsx
  *  data/report-jobs.ts
  *
  * @author Jaedon Spurlock
@@ -28,6 +33,7 @@
 import { createHash } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -79,6 +85,16 @@ function fakeR2(): FakeR2 {
 }
 
 const text = (r2: FakeR2, key: string) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(r2.objects.get(key)?.bytes);
+
+async function pdfText(bytes: Uint8Array): Promise<string[]> {
+  const document = await getDocument({ data: bytes.slice() }).promise;
+  const pages: string[] = [];
+  for (let number = 1; number <= document.numPages; number += 1) {
+    const content = await (await document.getPage(number)).getTextContent();
+    pages.push(content.items.map((item) => ("str" in item ? item.str : "")).filter(Boolean).join(" "));
+  }
+  return pages;
+}
 
 const generate = (r2: FakeR2, jobId: string) => generateReportJob({ pool: pool!, objects: r2, now: () => new Date("2026-10-14T15:41:27.906Z"), pageSize: 2 }, jobId);
 
@@ -320,15 +336,66 @@ describe("Report CSV generation", () => {
     expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(0);
   });
 
-  it("stores the CSV but keeps a report that also asks for a PDF Generating until the PDF exists", async () => {
-    const job = await create({ kind: "report", scope: { kind: "workspace", workspaceId: "north" }, period: { kind: "previousWeek" }, files: ["pdf", "csv"] });
+  it("completes a PDF and CSV report only once both files exist, with the PDF naming its Workspaces, period, timezone, and Total Calls", async () => {
+    const job = await create({ kind: "report", scope: { kind: "global", workspaceIds: ["north", "south"], timeZone: "America/Denver" }, period: { kind: "previousWeek" }, files: ["pdf", "csv"] });
     const r2 = fakeR2();
 
     await generate(r2, job.id);
 
-    expect(r2.puts).toEqual([`reports/${job.id}/calls.csv`]);
+    const pdfKey = `reports/${job.id}/report.pdf`;
+    const csvKey = `reports/${job.id}/calls.csv`;
+    expect([...r2.objects.keys()].sort()).toEqual([csvKey, pdfKey]);
+    const pdf = r2.objects.get(pdfKey)!;
+    expect(pdf.contentType).toBe("application/pdf");
+    expect(new TextDecoder().decode(pdf.bytes.subarray(0, 5))).toBe("%PDF-");
+    const pages = await pdfText(pdf.bytes);
+    expect(pages[0]).toContain("North Plumbing");
+    expect(pages[0]).toContain("South Roofing, Inc.");
+    expect(pages[0]).toContain("Previous Week");
+    expect(pages[0]).toContain("Oct 5, 2026 - Oct 11, 2026");
+    expect(pages[0]).toContain("America/Denver");
+    expect(pages[1]).toContain("Combined summary");
+    expect(pages[1]).toContain("Total Calls 4");
+    expect(pages.join("\n")).toContain("Lead Assessment (estimate)");
+    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    const artifacts = await pool!.query("select file_kind, r2_key, byte_size::int as byte_size, content_type from report_artifact where job_id = $1 order by file_kind", [job.id]);
+    expect(artifacts.rows).toEqual([
+      { file_kind: "csv", r2_key: csvKey, byte_size: r2.objects.get(csvKey)!.bytes.byteLength, content_type: "text/csv; charset=utf-8" },
+      { file_kind: "pdf", r2_key: pdfKey, byte_size: pdf.bytes.byteLength, content_type: "application/pdf" },
+    ]);
+  });
+
+  it("completes a PDF-only single-Workspace report with just its PDF, titled by the Workspace and without a Workspace comparison", async () => {
+    const job = await create({ kind: "report", scope: { kind: "workspace", workspaceId: "north" }, period: { kind: "all" }, files: ["pdf"] });
+    const r2 = fakeR2();
+
+    await generate(r2, job.id);
+
+    expect(r2.puts).toEqual([`reports/${job.id}/report.pdf`]);
+    const pages = await pdfText(r2.objects.get(`reports/${job.id}/report.pdf`)!.bytes);
+    expect(pages[0]).toContain("All Time");
+    expect(pages[0]).toContain("America/New_York");
+    expect(pages[1]).toContain("North Plumbing");
+    expect(pages[1]).toContain("Total Calls 4");
+    expect(pages.join("\n")).not.toContain("Workspace comparison");
+    expect((await pool!.query("select file_kind from report_artifact where job_id = $1", [job.id])).rows).toEqual([{ file_kind: "pdf" }]);
+    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+  });
+
+  it("keeps a PDF report Generating when its upload fails and completes it on the rerun by overwriting the same key", async () => {
+    const job = await create({ kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "previousWeek" }, files: ["pdf"] });
+    const r2 = fakeR2();
+    r2.putFailure = new R2ObjectError(503);
+
+    await expect(generate(r2, job.id)).rejects.toEqual(new R2ObjectError(503));
     expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
-    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(0);
+
+    r2.putFailure = null;
+    await generate(r2, job.id);
+
+    expect(r2.puts).toEqual([`reports/${job.id}/report.pdf`, `reports/${job.id}/report.pdf`]);
+    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(1);
   });
 
   it("uses the requester's account timezone for a global Calls export, as global Calls does, even for one Workspace", async () => {

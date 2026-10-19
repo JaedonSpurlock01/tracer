@@ -13,12 +13,18 @@
  *  database failure is retried without hammering the provider. The pg
  *  driver stays external so its optional native binding is not bundled.
  *  The Audio Waveform extension installs audiowaveform only in deployed
- *  images, so the local Dev runner needs it installed on its PATH.
+ *  images, so the local Dev runner needs it installed on its PATH. The
+ *  report PDF renderer and React stay external because pdfkit loads its
+ *  standard font metrics through package subpath imports that a bundle
+ *  cannot resolve, and React must be the copy the renderer imports. The
+ *  Additional Files extension copies the embedded Geist TTFs to the same
+ *  relative path in the image, where the renderer reads them.
  *
  * @see
  *  trigger/recording-transfer.ts
  *  trigger/recording-recovery.ts
  *  trigger/recording-waveform.ts
+ *  data/report-fonts.ts
  *  https://trigger.dev/docs/config/config-file
  *  https://trigger.dev/docs/config/extensions/audioWaveform
  *
@@ -26,7 +32,10 @@
  * -------------------------------------------------------------------------
  */
 import { audioWaveform } from "@trigger.dev/build/extensions/audioWaveform";
+import { additionalFiles } from "@trigger.dev/build/extensions/core";
 import { defineConfig } from "@trigger.dev/sdk";
+
+import { reportFontPaths } from "./data/report-fonts";
 
 export default defineConfig({
   project: "proj_tdulgcojxncuxbsettnq",
@@ -43,7 +52,7 @@ export default defineConfig({
     },
   },
   build: {
-    external: ["pg"],
-    extensions: [audioWaveform()],
+    external: ["pg", "@react-pdf/renderer", "react"],
+    extensions: [audioWaveform(), additionalFiles({ files: Object.values(reportFontPaths).map((file) => `./${file}`) })],
   },
 });

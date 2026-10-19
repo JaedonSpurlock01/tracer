@@ -46,7 +46,10 @@
  *  applicable. Signature rejections are not part of it, because the
  *  webhook handler answers a bad signature with a 403 and records no
  *  provider event. The clock is injectable so ranges resolve against a
- *  fixed today in tests.
+ *  fixed today in tests. The aggregates take the Workspace condition they
+ *  read within, so the dashboard uses the actor's readable Workspaces and
+ *  a report, which generates in Trigger.dev without an actor, uses its
+ *  job's Organization and Workspace ids; the download rechecks access.
  *
  * @see
  *  data/analytics-range.ts
@@ -74,8 +77,10 @@ import {
 } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import { connectedSecondsSql } from "@/data/call-details";
+import { outcomeKinds, type OutcomeKind } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { callSource, effectiveClassificationSql, filterConditions } from "@/data/calls";
+import { leadClassifications, type LeadClassification } from "@/data/lead-classification";
 import type { WorkspaceListResult } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
 import { createReadableWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
@@ -209,88 +214,103 @@ export async function withWorkspaceListStats(analytics: Analytics, result: Works
   }
 }
 
+// The Workspace condition a surface reads within: the actor's readable Workspaces, or a report job's Workspaces.
+type ScopeSql = (values: unknown[]) => string;
+
+function scopeConditions(scope: ScopeSql, values: unknown[], workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): string {
+  const conditions = [scope(values)];
+  if (workspaceId) {
+    values.push(workspaceId);
+    conditions.push(`c.workspace_id = $${values.length}`);
+  }
+  if (window) conditions.push(...filterConditions({ ...emptyCallFilters, startedFrom: window.from, startedTo: window.to }, values, { scoped: workspaceId !== null, timeZone }));
+  return conditions.join(" and ");
+}
+
+async function aggregate(pool: Pool, scope: ScopeSql, workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): Promise<AggregateRow> {
+  const values: unknown[] = [];
+  const where = scopeConditions(scope, values, workspaceId, window, timeZone);
+  return (await pool.query<AggregateRow>(`select ${aggregateColumns} from ${callSource} where ${where}`, values)).rows[0];
+}
+
+async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string, interval: AnalyticsTrendInterval, today: string) {
+  const values: unknown[] = [];
+  const where = scopeConditions(scope, values, workspaceId, window, timeZone);
+  values.push(timeZone);
+  const rows = await pool.query<{ day: string; total_calls: number; answered_calls: number; good_leads: number }>(
+    `select to_char((c.started_at at time zone $${values.length})::date, 'YYYY-MM-DD') as day,
+            count(*)::int as total_calls,
+            count(*) filter (where ${answeredSql})::int as answered_calls,
+            count(*) filter (where ${goodLeadSql})::int as good_leads
+       from ${callSource}
+      where ${where}
+      group by 1
+      order by 1`,
+    values,
+  );
+  const first = rows.rows[0]?.day;
+  const trendWindow = window ?? { from: first && first < today ? first : today, to: today };
+  const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0 }));
+  const byStart = new Map(points.map((point) => [analyticsBucketStart(interval, point.start), point]));
+  for (const row of rows.rows) {
+    const point = byStart.get(analyticsBucketStart(interval, row.day));
+    if (!point) continue;
+    point.totalCalls += row.total_calls;
+    point.answeredCalls += row.answered_calls;
+    point.goodLeads += row.good_leads;
+  }
+  return { window: trendWindow, points };
+}
+
+async function workspacePerformance(pool: Pool, scope: ScopeSql, window: AnalyticsWindow | null, timeZone: string): Promise<WorkspacePerformanceRow[] | null> {
+  const readable: unknown[] = [];
+  const listed = await pool.query<{ id: string; name: string; tracking_number: string | null }>(
+    `select w.id, w.name, na.phone_number as tracking_number
+       from workspace w
+       left join number_assignment na on na.workspace_id = w.id and na.organization_id = w.organization_id and na.ended_at is null
+      where ${scope(readable)}`,
+    readable,
+  );
+  if (listed.rows.length <= 1) return null;
+  const values: unknown[] = [];
+  const where = scopeConditions(scope, values, null, window, timeZone);
+  const aggregates = await pool.query<AggregateRow & { workspace_id: string }>(
+    `select c.workspace_id, ${aggregateColumns} from ${callSource} where ${where} group by c.workspace_id`,
+    values,
+  );
+  const byWorkspace = new Map(aggregates.rows.map((row) => [row.workspace_id, row]));
+  return listed.rows
+    .map((workspace): WorkspacePerformanceRow => {
+      const row = byWorkspace.get(workspace.id);
+      const totalCalls = row?.total_calls ?? 0;
+      const goodLeads = row?.good_leads ?? 0;
+      return {
+        workspace: { id: workspace.id, name: workspace.name },
+        trackingNumber: workspace.tracking_number,
+        totalCalls,
+        answerRate: row ? ratio(row.answered_forwarded_calls, row.forwarded_calls) : null,
+        goodLeads,
+        leadRate: ratio(goodLeads, totalCalls),
+      };
+    })
+    .sort((a, b) => b.totalCalls - a.totalCalls || a.workspace.name.localeCompare(b.workspace.name) || a.workspace.id.localeCompare(b.workspace.id));
+}
+
+function summaryKpis(current: AggregateRow, previous: AggregateRow | null): AnalyticsKpis {
+  const values = kpiValues(current);
+  const prior = previous ? kpiValues(previous) : undefined;
+  return {
+    totalCalls: kpi(values.totalCalls, prior?.totalCalls),
+    answerRate: rateKpi(values.answerRate, prior?.answerRate),
+    goodLeads: kpi(values.goodLeads, prior?.goodLeads),
+    averageConnectedSeconds: kpi(values.averageConnectedSeconds, prior?.averageConnectedSeconds),
+  };
+}
+
 export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () => Date } = {}): Analytics {
   const workspaces = createReadableWorkspaces(pool, actor);
   const now = options.now ?? (() => new Date());
-
-  function scopeConditions(values: unknown[], workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): string {
-    const conditions = [readableWorkspaceSql(actor, values)];
-    if (workspaceId) {
-      values.push(workspaceId);
-      conditions.push(`c.workspace_id = $${values.length}`);
-    }
-    if (window) conditions.push(...filterConditions({ ...emptyCallFilters, startedFrom: window.from, startedTo: window.to }, values, { scoped: workspaceId !== null, timeZone }));
-    return conditions.join(" and ");
-  }
-
-  async function aggregate(workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): Promise<AggregateRow> {
-    const values: unknown[] = [];
-    const where = scopeConditions(values, workspaceId, window, timeZone);
-    return (await pool.query<AggregateRow>(`select ${aggregateColumns} from ${callSource} where ${where}`, values)).rows[0];
-  }
-
-  async function trend(workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string, interval: AnalyticsTrendInterval, today: string) {
-    const values: unknown[] = [];
-    const where = scopeConditions(values, workspaceId, window, timeZone);
-    values.push(timeZone);
-    const rows = await pool.query<{ day: string; total_calls: number; answered_calls: number; good_leads: number }>(
-      `select to_char((c.started_at at time zone $${values.length})::date, 'YYYY-MM-DD') as day,
-              count(*)::int as total_calls,
-              count(*) filter (where ${answeredSql})::int as answered_calls,
-              count(*) filter (where ${goodLeadSql})::int as good_leads
-         from ${callSource}
-        where ${where}
-        group by 1
-        order by 1`,
-      values,
-    );
-    const first = rows.rows[0]?.day;
-    const trendWindow = window ?? { from: first && first < today ? first : today, to: today };
-    const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0 }));
-    const byStart = new Map(points.map((point) => [analyticsBucketStart(interval, point.start), point]));
-    for (const row of rows.rows) {
-      const point = byStart.get(analyticsBucketStart(interval, row.day));
-      if (!point) continue;
-      point.totalCalls += row.total_calls;
-      point.answeredCalls += row.answered_calls;
-      point.goodLeads += row.good_leads;
-    }
-    return { window: trendWindow, points };
-  }
-
-  async function workspacePerformance(window: AnalyticsWindow | null, timeZone: string): Promise<WorkspacePerformanceRow[] | null> {
-    const readable: unknown[] = [];
-    const listed = await pool.query<{ id: string; name: string; tracking_number: string | null }>(
-      `select w.id, w.name, na.phone_number as tracking_number
-         from workspace w
-         left join number_assignment na on na.workspace_id = w.id and na.organization_id = w.organization_id and na.ended_at is null
-        where ${readableWorkspaceSql(actor, readable)}`,
-      readable,
-    );
-    if (listed.rows.length <= 1) return null;
-    const values: unknown[] = [];
-    const where = scopeConditions(values, null, window, timeZone);
-    const aggregates = await pool.query<AggregateRow & { workspace_id: string }>(
-      `select c.workspace_id, ${aggregateColumns} from ${callSource} where ${where} group by c.workspace_id`,
-      values,
-    );
-    const byWorkspace = new Map(aggregates.rows.map((row) => [row.workspace_id, row]));
-    return listed.rows
-      .map((workspace): WorkspacePerformanceRow => {
-        const row = byWorkspace.get(workspace.id);
-        const totalCalls = row?.total_calls ?? 0;
-        const goodLeads = row?.good_leads ?? 0;
-        return {
-          workspace: { id: workspace.id, name: workspace.name },
-          trackingNumber: workspace.tracking_number,
-          totalCalls,
-          answerRate: row ? ratio(row.answered_forwarded_calls, row.forwarded_calls) : null,
-          goodLeads,
-          leadRate: ratio(goodLeads, totalCalls),
-        };
-      })
-      .sort((a, b) => b.totalCalls - a.totalCalls || a.workspace.name.localeCompare(b.workspace.name) || a.workspace.id.localeCompare(b.workspace.id));
-  }
+  const readableScope: ScopeSql = (values) => readableWorkspaceSql(actor, values);
 
   async function workspaceListStats(workspaceIds: string[]): Promise<Record<string, WorkspaceListStats>> {
     if (workspaceIds.length === 0) return {};
@@ -348,24 +368,17 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
       const previousWindow = previousAnalyticsWindow(window);
       const interval = analyticsTrendInterval(query.range);
       const [current, previous, trendResult, performance] = await Promise.all([
-        aggregate(workspaceId, window, timeZone),
-        previousWindow ? aggregate(workspaceId, previousWindow, timeZone) : null,
-        trend(workspaceId, window, timeZone, interval, today),
-        workspace ? null : workspacePerformance(window, timeZone),
+        aggregate(pool, readableScope, workspaceId, window, timeZone),
+        previousWindow ? aggregate(pool, readableScope, workspaceId, previousWindow, timeZone) : null,
+        trend(pool, readableScope, workspaceId, window, timeZone, interval, today),
+        workspace ? null : workspacePerformance(pool, readableScope, window, timeZone),
       ]);
-      const values = kpiValues(current);
-      const prior = previous ? kpiValues(previous) : undefined;
       return {
         timeZone,
         workspace: workspace ? { id: workspace.id, name: workspace.name } : null,
         window: trendResult.window,
         previousWindow,
-        kpis: {
-          totalCalls: kpi(values.totalCalls, prior?.totalCalls),
-          answerRate: rateKpi(values.answerRate, prior?.answerRate),
-          goodLeads: kpi(values.goodLeads, prior?.goodLeads),
-          averageConnectedSeconds: kpi(values.averageConnectedSeconds, prior?.averageConnectedSeconds),
-        },
+        kpis: summaryKpis(current, previous),
         trend: { interval, points: trendResult.points },
         workspacePerformance: performance,
       };
@@ -375,5 +388,119 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
       const stats = (await workspaceListStats([workspaceId]))[workspaceId];
       return stats ? { lastSuccessfulInboundCallAt: stats.lastSuccessfulInboundCallAt, webhook: stats.integrationHealth } : null;
     },
+  };
+}
+
+export interface ReportAnalyticsScope {
+  organizationId: string;
+  workspaceIds: string[];
+  timeZone: string;
+  window: AnalyticsWindow | null;
+}
+
+export interface ReportAnalyticsSummary {
+  timeZone: string;
+  window: AnalyticsWindow;
+  previousWindow: AnalyticsWindow | null;
+  kpis: AnalyticsKpis & { leadRate: AnalyticsKpi };
+  trend: { interval: AnalyticsTrendInterval; points: AnalyticsTrendPoint[] };
+  outcomes: { outcome: OutcomeKind | "In Progress"; calls: number }[];
+  classifications: { classification: LeadClassification; reviewed: number; assessed: number }[];
+  unclassifiedCalls: number;
+  notableGoodLeads: NotableGoodLead[];
+  workspacePerformance: WorkspacePerformanceRow[] | null;
+}
+
+export interface NotableGoodLead {
+  callId: string;
+  workspace: { id: string; name: string };
+  startedAt: string;
+  callerNumber: string | null;
+  outcome: OutcomeKind | null;
+  connectedSeconds: number | null;
+  leadScore: number | null;
+  source: "review" | "assessment";
+  summary: string | null;
+}
+
+function reportScopeSql(scope: ReportAnalyticsScope): ScopeSql {
+  return (values) => {
+    values.push(scope.organizationId, scope.workspaceIds);
+    return `w.organization_id = $${values.length - 1} and w.id = any($${values.length}::text[])`;
+  };
+}
+
+async function distributions(pool: Pool, scope: ScopeSql, window: AnalyticsWindow | null, timeZone: string) {
+  const values: unknown[] = [];
+  const where = scopeConditions(scope, values, null, window, timeZone);
+  const rows = (await pool.query<{ outcome: OutcomeKind | null; classification: LeadClassification | null; reviewed: boolean; calls: number }>(
+    `select c.outcome, ${effectiveClassificationSql} as classification, lr.classification is not null as reviewed, count(*)::int as calls
+       from ${callSource}
+      where ${where}
+      group by 1, 2, 3`,
+    values,
+  )).rows;
+  const sum = (match: (row: (typeof rows)[number]) => boolean) => rows.filter(match).reduce((total, row) => total + row.calls, 0);
+  return {
+    outcomes: [...outcomeKinds, "In Progress" as const].map((outcome) => ({ outcome, calls: sum((row) => (row.outcome ?? "In Progress") === outcome) })),
+    classifications: leadClassifications.map((classification) => ({
+      classification,
+      reviewed: sum((row) => row.classification === classification && row.reviewed),
+      assessed: sum((row) => row.classification === classification && !row.reviewed),
+    })),
+    unclassifiedCalls: sum((row) => row.classification === null),
+  };
+}
+
+async function notableGoodLeads(pool: Pool, scope: ScopeSql, window: AnalyticsWindow | null, timeZone: string, limit: number): Promise<NotableGoodLead[]> {
+  const values: unknown[] = [];
+  const where = scopeConditions(scope, values, null, window, timeZone);
+  values.push(limit);
+  const rows = (await pool.query<{ id: string; workspace_id: string; workspace_name: string; started_at: Date; caller_number: string | null; outcome: OutcomeKind | null; connected_seconds: number | null; lead_score: number | null; reviewed: boolean; summary: string | null }>(
+    `select c.id, c.workspace_id, w.name as workspace_name, c.started_at, c.caller_number, c.outcome, ${connectedSecondsSql} as connected_seconds,
+            la.score as lead_score, lr.classification is not null as reviewed, la.summary
+       from ${callSource}
+      where ${where} and ${goodLeadSql}
+      order by la.score desc nulls last, c.started_at desc, c.id
+      limit $${values.length}`,
+    values,
+  )).rows;
+  return rows.map((row) => ({
+    callId: row.id,
+    workspace: { id: row.workspace_id, name: row.workspace_name },
+    startedAt: row.started_at.toISOString(),
+    callerNumber: row.caller_number,
+    outcome: row.outcome,
+    connectedSeconds: row.connected_seconds,
+    leadScore: row.lead_score,
+    source: row.reviewed ? "review" : "assessment",
+    summary: row.summary,
+  }));
+}
+
+export async function reportAnalyticsSummary(pool: Pool, scope: ReportAnalyticsScope, options: { now: Date; notableGoodLeadLimit: number }): Promise<ReportAnalyticsSummary> {
+  const sql = reportScopeSql(scope);
+  const { window, timeZone } = scope;
+  const previousWindow = previousAnalyticsWindow(window);
+  const interval = analyticsTrendInterval(window ? { kind: "custom", ...window } : { kind: "all" });
+  const [current, previous, trendResult, distribution, notable, performance] = await Promise.all([
+    aggregate(pool, sql, null, window, timeZone),
+    previousWindow ? aggregate(pool, sql, null, previousWindow, timeZone) : null,
+    trend(pool, sql, null, window, timeZone, interval, calendarDateInTimeZone(options.now, timeZone)),
+    distributions(pool, sql, window, timeZone),
+    notableGoodLeads(pool, sql, window, timeZone, options.notableGoodLeadLimit),
+    workspacePerformance(pool, sql, window, timeZone),
+  ]);
+  const values = kpiValues(current);
+  const prior = previous ? kpiValues(previous) : undefined;
+  return {
+    timeZone,
+    window: trendResult.window,
+    previousWindow,
+    kpis: { ...summaryKpis(current, previous), leadRate: rateKpi(ratio(values.goodLeads, values.totalCalls), prior && ratio(prior.goodLeads, prior.totalCalls)) },
+    trend: { interval, points: trendResult.points },
+    ...distribution,
+    notableGoodLeads: notable,
+    workspacePerformance: performance,
   };
 }

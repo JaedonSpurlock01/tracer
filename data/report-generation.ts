@@ -5,7 +5,10 @@
  *
  * @description
  *  Marks a Queued job Generating, writes the files it asked for to private
- *  R2 under `reports/{jobId}/`, and completes it with their artifacts. The
+ *  R2 under `reports/{jobId}/`, and completes it with their artifacts only
+ *  once every requested file exists. The report PDF reads the analytics
+ *  service for the combined scope and, for several Workspaces, each
+ *  Workspace in name order, builds the document model, and renders it. The
  *  Calls CSV holds every matching Call, oldest first: for a report, every
  *  Call started in the job's stored period window, or every Call for All
  *  Time; for a Calls export, the Calls filter query or the one selected
@@ -29,11 +32,15 @@
  *  a row that stays small, and the Recording ZIP slice adds a multipart
  *  upload. Rows reuse the Calls list source, row columns, filter compiler,
  *  and row mapping, so classification and availability rules exist once.
- *  The PDF and Recording ZIP are not built yet: a job that asks for either
- *  stays Generating rather than completing without it.
+ *  The PDF is rendered in memory and uploaded the same way. The Recording
+ *  ZIP is not built yet: a job that asks for it stays Generating rather
+ *  than completing without it.
  *
  * @see
  *  data/report-csv.ts
+ *  data/report-document.ts
+ *  data/report-pdf.tsx
+ *  data/analytics.ts
  *  data/report-jobs.ts
  *  data/calls.ts
  *  data/r2-objects.ts
@@ -47,9 +54,12 @@ import type { Pool } from "pg";
 import { totalSecondsSql } from "@/data/call-details";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { callListColumns, callListItem, callSource, filterConditions, type CallListRow } from "@/data/calls";
+import { reportAnalyticsSummary } from "@/data/analytics";
 import { R2ObjectError, sha256Hex, type RecordingObjects } from "@/data/r2-objects";
 import { reportCsvHeader, reportCsvRows, type ReportCsvCall, type TranscriptAvailability } from "@/data/report-csv";
+import { buildReportDocument, reportNotableGoodLeadLimit } from "@/data/report-document";
 import { completeReportJob, failReportJob, startReportJob, type ReportArtifact, type ReportFileKind, type ReportJob } from "@/data/report-jobs";
+import { renderReportPdf } from "@/data/report-pdf";
 
 export interface ReportGenerationDependencies {
   pool: Pool;
@@ -62,8 +72,14 @@ export const reportCsvContentType = "text/csv; charset=utf-8";
 
 const defaultPageSize = 500;
 
+export const reportPdfContentType = "application/pdf";
+
 export function reportCsvObjectKey(jobId: string): string {
   return `reports/${jobId}/calls.csv`;
+}
+
+export function reportPdfObjectKey(jobId: string): string {
+  return `reports/${jobId}/report.pdf`;
 }
 
 type ReportCallRow = CallListRow & {
@@ -145,15 +161,36 @@ async function storeCallsCsv(deps: ReportGenerationDependencies, job: ReportJob,
   return { file: "csv", r2Key: key, byteSize: body.byteLength, contentType: reportCsvContentType };
 }
 
+async function storeReportPdf(deps: ReportGenerationDependencies, job: ReportJob, organizationId: string): Promise<ReportArtifact> {
+  if (!("period" in job.parameters)) throw new Error("Only a report job has a PDF");
+  const workspaces = (await deps.pool.query<{ id: string; name: string }>(
+    "select id, name from workspace where organization_id = $1 and id = any($2::text[]) order by name, id",
+    [organizationId, job.workspaceIds],
+  )).rows;
+  const generatedAt = deps.now();
+  const scope = { organizationId, workspaceIds: job.workspaceIds, timeZone: job.timeZone, window: job.parameters.window };
+  const options = { now: generatedAt, notableGoodLeadLimit: reportNotableGoodLeadLimit };
+  const combined = await reportAnalyticsSummary(deps.pool, scope, options);
+  const sections = [];
+  if (workspaces.length > 1) {
+    for (const workspace of workspaces) sections.push({ workspace, summary: await reportAnalyticsSummary(deps.pool, { ...scope, workspaceIds: [workspace.id] }, options) });
+  }
+  const body = await renderReportPdf(buildReportDocument({ generatedAt, timeZone: job.timeZone, period: job.parameters.period, workspaces, combined, sections }));
+  const key = reportPdfObjectKey(job.id);
+  await deps.objects.put(key, body, { sizeBytes: body.byteLength, sha256: await sha256Hex(body) }, reportPdfContentType);
+  return { file: "pdf", r2Key: key, byteSize: body.byteLength, contentType: reportPdfContentType };
+}
+
 export async function generateReportJob(deps: ReportGenerationDependencies, jobId: string): Promise<void> {
   const started = await startReportJob(deps.pool, jobId);
   if (!started) return;
   const { job, organizationId } = started;
   const files: readonly ReportFileKind[] = job.parameters.files;
   const artifacts: ReportArtifact[] = [];
+  if (files.includes("pdf")) artifacts.push(await storeReportPdf(deps, job, organizationId));
   if (files.includes("csv")) artifacts.push(await storeCallsCsv(deps, job, organizationId));
-  // The PDF and Recording ZIP slices plug in here, each storing its file and pushing its artifact.
-  if (files.some((file) => file !== "csv")) return;
+  // The Recording ZIP slice plugs in here, storing its file and pushing its artifact.
+  if (artifacts.length < files.length) return;
   await completeReportJob(deps.pool, job.id, artifacts, deps.now());
 }
 

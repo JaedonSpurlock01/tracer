@@ -20,7 +20,11 @@
  *  or another Organization. The Workspaces list stats and routing health
  *  report 30-day Calls and Good Leads, the last Call, and webhook health
  *  from recorded voice provider events. Totals and Good Leads match the
- *  Calls list for the same scope and Started dates.
+ *  Calls list for the same scope and Started dates. Report analytics read
+ *  a job's Workspaces, window, and timezone with Lead Rate, the Call
+ *  Outcome and effective Lead classification distributions, notable Good
+ *  Leads by AI lead score then recency up to a limit, and a Workspace
+ *  comparison only for several Workspaces of the job's Organization.
  *
  * @remarks
  *  Calls, Call events, Recordings, Lead Assessments, Lead Reviews, and
@@ -43,7 +47,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createAnalytics, withWorkspaceListStats, type Analytics } from "@/data/analytics";
+import { createAnalytics, reportAnalyticsSummary, withWorkspaceListStats, type Analytics, type ReportAnalyticsScope } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -140,6 +144,7 @@ interface SeedCall {
   forwarded?: boolean;
   connectedSeconds?: number;
   assessment?: Classification;
+  score?: number;
   review?: Classification;
 }
 
@@ -174,8 +179,8 @@ async function seedCall(input: SeedCall): Promise<void> {
     );
     await pool!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
-       values ($1, $2, $3, $4, $5, 61, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
-      [`${input.id}-assessment`, workspace.organization_id, input.id, `${input.id}-recording`, input.assessment],
+       values ($1, $2, $3, $4, $5, $6, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
+      [`${input.id}-assessment`, workspace.organization_id, input.id, `${input.id}-recording`, input.assessment, input.score ?? 61],
     );
   }
   if (input.review) {
@@ -186,8 +191,8 @@ async function seedCall(input: SeedCall): Promise<void> {
 const northCurrent: SeedCall[] = [
   { id: "north-a1", workspaceId: "north", startedAt: "2026-10-12T15:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 41, assessment: "Good Lead" },
   { id: "north-a2", workspaceId: "north", startedAt: "2026-10-13T04:30:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 67, assessment: "Good Lead", review: "Not Good Lead" },
-  { id: "north-a3", workspaceId: "north", startedAt: "2026-10-13T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 88, assessment: "Uncertain", review: "Good Lead" },
-  { id: "north-a4", workspaceId: "north", startedAt: "2026-10-14T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 125, assessment: "Good Lead" },
+  { id: "north-a3", workspaceId: "north", startedAt: "2026-10-13T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 88, assessment: "Uncertain", score: 74, review: "Good Lead" },
+  { id: "north-a4", workspaceId: "north", startedAt: "2026-10-14T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 125, assessment: "Good Lead", score: 88 },
   { id: "north-a5", workspaceId: "north", startedAt: "2026-10-15T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 203, assessment: "Not Good Lead" },
   { id: "north-a6", workspaceId: "north", startedAt: "2026-10-16T16:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 19 },
   { id: "north-a7", workspaceId: "north", startedAt: "2026-10-18T15:00:00Z", outcome: "Answered", forwarded: true, connectedSeconds: 239 },
@@ -479,5 +484,76 @@ describe("Workspaces list stats and routing health", () => {
     const failing = { workspaceListStats: () => Promise.reject(new Error("stats down")) } as unknown as Analytics;
     const listed = { workspaces: [], total: 0, page: 1, pageSize: 25 } as unknown as Parameters<typeof withWorkspaceListStats>[1];
     expect(await withWorkspaceListStats(failing, listed)).toEqual({ ...listed, stats: {} });
+  });
+});
+
+describe("Report analytics", () => {
+  const northWeek: ReportAnalyticsScope = { organizationId: "fleet", workspaceIds: ["north"], timeZone: "America/Chicago", window: { from: "2026-10-12", to: "2026-10-18" } };
+  const report = (scope: ReportAnalyticsScope, notableGoodLeadLimit = 10) => reportAnalyticsSummary(pool!, scope, { now, notableGoodLeadLimit });
+
+  it("compute the dashboard KPIs and Lead Rate over the job's Workspaces, window, and timezone with equal prior comparisons", async () => {
+    const summary = await report(northWeek);
+    expect(summary.timeZone).toBe("America/Chicago");
+    expect(summary.window).toEqual({ from: "2026-10-12", to: "2026-10-18" });
+    expect(summary.previousWindow).toEqual({ from: "2026-10-05", to: "2026-10-11" });
+    const { kpis } = summary;
+    expect(kpis.totalCalls).toEqual({ value: 17, comparison: { previous: 6, change: 11 / 6, unit: "relative" } });
+    expect(kpis.goodLeads).toEqual({ value: 5, comparison: { previous: 2, change: 1.5, unit: "relative" } });
+    expect(kpis.answerRate.value).toBeCloseTo(7 / 11, 10);
+    expect(kpis.averageConnectedSeconds.value).toBeCloseTo(782 / 7, 10);
+    expect(kpis.leadRate.value).toBeCloseTo(5 / 17, 10);
+    expect(kpis.leadRate.comparison!.previous).toBeCloseTo(2 / 6, 10);
+    expect(kpis.leadRate.comparison!.change).toBeCloseTo(5 / 17 - 2 / 6, 10);
+    expect(kpis.leadRate.comparison!.unit).toBe("points");
+    expect(summary.trend.interval).toBe("day");
+    expect(points(summary)).toEqual((await analytics(operator).summary({ workspaceId: "north", range: sevenDays }))!.trend.points.map((point) => [point.start, point.totalCalls, point.answeredCalls, point.goodLeads]));
+  });
+
+  it("distribute Calls by Call Outcome, In Progress included, and by effective Lead classification with Lead Review precedence and its source", async () => {
+    const summary = await report(northWeek);
+    expect(summary.outcomes).toEqual([
+      { outcome: "Answered", calls: 7 },
+      { outcome: "Voicemail", calls: 3 },
+      { outcome: "Missed", calls: 2 },
+      { outcome: "Abandoned", calls: 1 },
+      { outcome: "Blocked", calls: 2 },
+      { outcome: "Failed", calls: 1 },
+      { outcome: "In Progress", calls: 1 },
+    ]);
+    expect(summary.classifications).toEqual([
+      { classification: "Good Lead", reviewed: 2, assessed: 3 },
+      { classification: "Not Good Lead", reviewed: 1, assessed: 1 },
+      { classification: "Uncertain", reviewed: 0, assessed: 0 },
+    ]);
+    expect(summary.unclassifiedCalls).toBe(10);
+  });
+
+  it("list notable Good Leads by AI lead score then recency up to the limit, with Lead Review precedence and its source", async () => {
+    const summary = await report(northWeek, 4);
+    expect(summary.notableGoodLeads).toEqual([
+      { callId: "north-a4", workspace: { id: "north", name: "North Plumbing" }, startedAt: "2026-10-14T16:00:00.000Z", callerNumber: "+13125550142", outcome: "Answered", connectedSeconds: 125, leadScore: 88, source: "assessment", summary: "Caller asked for a quote." },
+      { callId: "north-a3", workspace: { id: "north", name: "North Plumbing" }, startedAt: "2026-10-13T16:00:00.000Z", callerNumber: "+13125550142", outcome: "Answered", connectedSeconds: 88, leadScore: 74, source: "review", summary: "Caller asked for a quote." },
+      { callId: "north-v2", workspace: { id: "north", name: "North Plumbing" }, startedAt: "2026-10-17T02:00:00.000Z", callerNumber: "+13125550142", outcome: "Voicemail", connectedSeconds: 0, leadScore: 61, source: "review", summary: "Caller asked for a quote." },
+      { callId: "north-v1", workspace: { id: "north", name: "North Plumbing" }, startedAt: "2026-10-14T03:00:00.000Z", callerNumber: "+13125550142", outcome: "Voicemail", connectedSeconds: 0, leadScore: 61, source: "assessment", summary: "Caller asked for a quote." },
+    ]);
+  });
+
+  it("compare only the job's Workspaces, withholding the comparison for one Workspace and never counting another Organization", async () => {
+    const combined = await report({ ...northWeek, workspaceIds: ["north", "south"] });
+    expect(combined.kpis.totalCalls.value).toBe(21);
+    expect(combined.workspacePerformance?.map((row) => [row.workspace.name, row.totalCalls, row.goodLeads])).toEqual([["North Plumbing", 17, 5], ["South Dental", 4, 1]]);
+    expect((await report(northWeek)).workspacePerformance).toBeNull();
+    const foreign = await report({ ...northWeek, workspaceIds: ["north", "other-workspace"] });
+    expect(foreign.kpis.totalCalls.value).toBe(17);
+    expect(foreign.workspacePerformance).toBeNull();
+  });
+
+  it("show no comparison for All Time, Lead Rate included", async () => {
+    const summary = await report({ ...northWeek, window: null });
+    expect(summary.previousWindow).toBeNull();
+    expect(summary.window).toEqual({ from: "2026-09-01", to: "2026-10-18" });
+    expect(summary.trend.interval).toBe("month");
+    expect(summary.kpis.totalCalls).toEqual({ value: 24, comparison: null });
+    expect(summary.kpis.leadRate).toEqual({ value: 8 / 24, comparison: null });
   });
 });
