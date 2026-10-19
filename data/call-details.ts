@@ -181,6 +181,8 @@ interface Analysis {
   leadReview: LeadReview | null;
 }
 
+export const totalSecondsSql = "coalesce(c.duration_seconds, extract(epoch from c.ended_at - c.started_at)::int)";
+
 export const connectedSecondsSql = `case
   when c.answered_at is null then case when c.state = 'Completed' then 0 end
   else coalesce(
@@ -357,7 +359,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       if (!workspace) return null;
       const result = await pool.query<CallRow>(
         `select c.id, c.twilio_call_sid, c.tracking_number, c.caller_number, c.state, c.outcome, c.forward_node_id, c.started_at, c.ended_at,
-                coalesce(c.duration_seconds, extract(epoch from c.ended_at - c.started_at)::int) as total_seconds,
+                ${totalSecondsSql} as total_seconds,
                 ${connectedSecondsSql} as connected_seconds,
                 f.graph
            from call c

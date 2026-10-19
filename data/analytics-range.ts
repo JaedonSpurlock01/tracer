@@ -13,6 +13,9 @@
  *  and 30 Days, weekly Monday through Sunday for 90 Days, and monthly for
  *  All Time; a custom range is daily up to 31 days, weekly up to 180 days,
  *  and monthly beyond. Buckets are clipped to the window and carry a label.
+ *  The custom range bounds, the UTC instant of local midnight on a
+ *  calendar date, and a timezone's UTC offset at an instant are shared
+ *  with Reports.
  *
  * @remarks
  *  The range lives in the URL as `range=7d|30d|90d|all`, or as the `from`
@@ -85,11 +88,16 @@ function windowDays(window: AnalyticsWindow): number {
 const earliestCustomDate = "2000-01-01";
 const maxCustomDays = 3660;
 
+export function customAnalyticsWindow(fromValue: string, toValue: string): AnalyticsWindow | null {
+  const from = calendarDate(fromValue);
+  const to = calendarDate(toValue);
+  return from && to && from <= to && from >= earliestCustomDate && windowDays({ from, to }) <= maxCustomDays ? { from, to } : null;
+}
+
 export function analyticsRangeFromSearchParams(params: SearchParams): AnalyticsRange {
-  const from = calendarDate(read(params, "from"));
-  const to = calendarDate(read(params, "to"));
-  if (from && to && from <= to && from >= earliestCustomDate && windowDays({ from, to }) <= maxCustomDays) return { kind: "custom", from, to };
-  if (from || to) return defaultAnalyticsRange;
+  const custom = customAnalyticsWindow(read(params, "from"), read(params, "to"));
+  if (custom) return { kind: "custom", ...custom };
+  if (calendarDate(read(params, "from")) || calendarDate(read(params, "to"))) return defaultAnalyticsRange;
   const range = read(params, "range");
   if (range === "all") return { kind: "all" };
   const days = analyticsPresetDays.find((preset) => range === `${preset}d`);
@@ -110,6 +118,18 @@ export function calendarDateInTimeZone(instant: Date, timeZone: string): string 
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
   const part = (type: string) => parts.find((entry) => entry.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function timeZoneOffsetMs(time: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" }).formatToParts(new Date(time));
+  const part = (type: string) => Number(parts.find((entry) => entry.type === type)?.value);
+  return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second")) - Math.floor(time / 1000) * 1000;
+}
+
+export function startOfCalendarDateInTimeZone(date: string, timeZone: string): Date {
+  const midnight = toTime(date);
+  const guess = midnight - timeZoneOffsetMs(midnight, timeZone);
+  return new Date(midnight - timeZoneOffsetMs(guess, timeZone));
 }
 
 export function analyticsWindow(range: AnalyticsRange, today: string): AnalyticsWindow | null {
