@@ -355,7 +355,7 @@ export function recordingAvailability(recording: RecordingAvailabilityRow | unde
   };
 }
 
-export function downloadableMp3RecordingId(recording: RecordingAvailabilityRow | undefined): string | null {
+export function downloadableMp3RecordingId(recording: Pick<RecordingAvailabilityRow, "id" | "expired" | "transfer_state" | "mp3_state"> | undefined): string | null {
   return recording && !recording.expired && recording.transfer_state === "Stored" && recording.mp3_state === "Stored" ? recording.id : null;
 }
 

@@ -34,7 +34,15 @@ import type { Actor } from "@/data/authorization";
 import type { ReadableWorkspaces } from "@/data/workspace-authorization";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
-export type ReportRequestErrorCode = "invalid_period" | "invalid_timezone" | "empty_scope" | "empty_files" | "workspace_unavailable";
+export type ReportRequestErrorCode =
+  | "invalid_period"
+  | "invalid_timezone"
+  | "empty_scope"
+  | "empty_files"
+  | "workspace_unavailable"
+  | "no_matching_calls"
+  | "no_recordings"
+  | "export_too_large";
 
 export class ReportRequestError extends Error {
   constructor(public readonly code: ReportRequestErrorCode) {

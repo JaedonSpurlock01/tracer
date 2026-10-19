@@ -17,9 +17,19 @@
  *  nothing. Rows carry the Workspace name, start times in the job's report
  *  timezone, the canonical Call Outcome, Lead Review precedence in the
  *  effective Lead classification, and Recording and Transcript
- *  availability under the 12-month media expiry. A job that is already
- *  Completed or Failed is left as it is, so a rerun is a no-op. A failure
- *  that exhausts retries is recorded on the job with a concise reason.
+ *  availability under the 12-month media expiry. The Recording ZIP holds
+ *  `manifest.csv`, the CSV columns plus each Call's file path and
+ *  Recording export outcome, and one MP3 per retained Recording at
+ *  `recordings/{yyyymmdd-hhmmss}_{callId}.mp3`, named from the start time
+ *  in the job's timezone so names sort by time and never collide or carry
+ *  a caller number. A Recording that is expired, missing, processing, or
+ *  failed is omitted and its reason recorded in the manifest, including
+ *  one whose media expires or whose MP3 disappears while the export runs,
+ *  so the job still completes. A single-Call Export Call adds
+ *  `transcript.txt` and `lead-assessment.json` beside an included MP3. A
+ *  job that is already Completed or Failed is left as it is, so a rerun is
+ *  a no-op. A failure that exhausts retries is recorded on the job with a
+ *  concise reason.
  *
  * @remarks
  *  Trigger.dev delivers at least once. A rerun of a Generating job, after a
@@ -29,12 +39,14 @@
  *  exact stored start time as the cursor, so a large job never loads every
  *  row at once. The R2 helper signs one PUT with the whole body's SHA-256,
  *  so the CSV is assembled in memory before upload; at a few hundred bytes
- *  a row that stays small, and the Recording ZIP slice adds a multipart
- *  upload. Rows reuse the Calls list source, row columns, filter compiler,
- *  and row mapping, so classification and availability rules exist once.
- *  The PDF is rendered in memory and uploaded the same way. The Recording
- *  ZIP is not built yet: a job that asks for it stays Generating rather
- *  than completing without it.
+ *  a row that stays small. The PDF is rendered in memory and uploaded the
+ *  same way. The Recording ZIP can pass several gigabytes, so it streams
+ *  through the STORE-mode ZIP writer into a multipart upload, holding one
+ *  MP3 and one part at a time; only the manifest text is kept until the
+ *  end, where it is written last because it records each MP3's outcome. A
+ *  rerun aborts any unfinished upload of the same key and starts again,
+ *  and a failure aborts the upload it began before rethrowing, so no
+ *  partial archive is ever completed.
  *
  * @see
  *  data/report-csv.ts
@@ -42,7 +54,9 @@
  *  data/report-pdf.tsx
  *  data/analytics.ts
  *  data/report-jobs.ts
- *  data/calls.ts
+ *  data/report-selection.ts
+ *  data/call-export-documents.ts
+ *  data/zip-writer.ts
  *  data/r2-objects.ts
  *  trigger/report-generation.ts
  *
@@ -51,26 +65,24 @@
  */
 import type { Pool } from "pg";
 
-import { totalSecondsSql } from "@/data/call-details";
-import { emptyCallFilters } from "@/data/call-list-query";
-import { callListColumns, callListItem, callSource, filterConditions, type CallListRow } from "@/data/calls";
 import { reportAnalyticsSummary } from "@/data/analytics";
-import { R2ObjectError, sha256Hex, type RecordingObjects } from "@/data/r2-objects";
-import { reportCsvHeader, reportCsvRows, type ReportCsvCall, type TranscriptAvailability } from "@/data/report-csv";
+import { callExportDocuments } from "@/data/call-export-documents";
+import { R2ObjectError, sha256Hex, type ArtifactObjects } from "@/data/r2-objects";
+import { isoInTimeZone, reportCsvHeader, reportCsvRows, reportManifestHeader, reportManifestRows, type RecordingExportOutcome, type ReportManifestCall } from "@/data/report-csv";
 import { buildReportDocument, reportNotableGoodLeadLimit } from "@/data/report-document";
 import { completeReportJob, failReportJob, startReportJob, type ReportArtifact, type ReportFileKind, type ReportJob } from "@/data/report-jobs";
 import { renderReportPdf } from "@/data/report-pdf";
+import { reportJobCalls, type ReportSelectionCall } from "@/data/report-selection";
+import { createZipWriter, type ZipWriter } from "@/data/zip-writer";
 
 export interface ReportGenerationDependencies {
   pool: Pool;
-  objects: RecordingObjects;
+  objects: ArtifactObjects;
   now: () => Date;
   pageSize?: number;
 }
 
 export const reportCsvContentType = "text/csv; charset=utf-8";
-
-const defaultPageSize = 500;
 
 export const reportPdfContentType = "application/pdf";
 
@@ -82,71 +94,63 @@ export function reportPdfObjectKey(jobId: string): string {
   return `reports/${jobId}/report.pdf`;
 }
 
-type ReportCallRow = CallListRow & {
-  tracking_number: string;
-  total_seconds: number | null;
-  transcript_state: "Pending" | "Completed" | "Failed" | "Skipped" | null;
-  started_at_cursor: string;
+export const reportZipContentType = "application/zip";
+
+export function reportZipObjectKey(jobId: string): string {
+  return `reports/${jobId}/recordings.zip`;
+}
+
+function recordingFileName(call: ReportSelectionCall, timeZone: string): string {
+  const local = isoInTimeZone(call.startedAt, timeZone).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+  return `recordings/${local}_${call.id}.mp3`;
+}
+
+const omittedOutcomes: Readonly<Record<Exclude<ReportSelectionCall["recordingExport"], "Retained">, RecordingExportOutcome>> = {
+  Expired: "Expired",
+  "No Recording": "No Recording",
+  Processing: "Processing",
+  Failed: "Failed",
 };
 
-function transcriptAvailability(row: ReportCallRow): TranscriptAvailability {
-  if (!row.recording_id || !row.transcript_state) return "Unavailable";
-  if (row.transcript_state === "Skipped") return "Skipped";
-  if (row.expired) return "Expired";
-  return row.transcript_state === "Completed" ? "Available" : row.transcript_state;
+async function addRecording(deps: ReportGenerationDependencies, zip: ZipWriter, call: ReportSelectionCall, timeZone: string, modifiedAt: Date): Promise<ReportManifestCall> {
+  if (call.recordingExport !== "Retained" || !call.mp3ObjectKey) return { ...call, recordingFile: null, recordingExport: call.recordingExport === "Retained" ? "Missing" : omittedOutcomes[call.recordingExport] };
+  if (call.mediaExpiresAt && call.mediaExpiresAt <= deps.now()) return { ...call, recordingFile: null, recordingExport: "Expired" };
+  const mp3 = await deps.objects.get(call.mp3ObjectKey);
+  if (!mp3) return { ...call, recordingFile: null, recordingExport: "Missing" };
+  const recordingFile = recordingFileName(call, timeZone);
+  await zip.addFile(recordingFile, mp3, modifiedAt);
+  return { ...call, recordingFile, recordingExport: "Included" };
 }
 
-function reportCsvCall(row: ReportCallRow): ReportCsvCall {
-  const item = callListItem(row);
-  return {
-    id: item.id,
-    workspaceName: item.workspace.name,
-    trackingNumber: row.tracking_number,
-    callerNumber: item.callerNumber,
-    startedAt: row.started_at,
-    state: item.state,
-    outcome: item.outcome,
-    totalDurationSeconds: row.total_seconds,
-    connectedDurationSeconds: item.connectedDurationSeconds,
-    effectiveLeadClassification: item.effectiveLeadClassification,
-    leadScore: item.leadScore,
-    leadReview: row.review_classification !== null,
-    recording: item.recording,
-    transcript: transcriptAvailability(row),
-  };
-}
-
-function selectionConditions(job: ReportJob, values: unknown[]): string[] {
-  const scope = { scoped: false, timeZone: job.timeZone };
-  if ("period" in job.parameters) {
-    const window = job.parameters.window;
-    return window ? filterConditions({ ...emptyCallFilters, startedFrom: window.from, startedTo: window.to }, values, scope) : [];
-  }
-  const selection = job.parameters.selection;
-  if (selection.kind === "filters") return filterConditions(selection.filters, values, scope);
-  values.push(selection.callId);
-  return [`c.id = $${values.length}`];
-}
-
-export async function* reportJobCalls(pool: Pool, organizationId: string, job: ReportJob, pageSize = defaultPageSize): AsyncGenerator<ReportCsvCall[]> {
-  const values: unknown[] = [organizationId, job.workspaceIds];
-  const where = ["c.organization_id = $1", "c.workspace_id = any($2::text[])", ...selectionConditions(job, values)].join(" and ");
-  let cursor: { startedAt: string; id: string } | null = null;
-  for (;;) {
-    const page = [...values];
-    const after: string = cursor ? ` and (c.started_at, c.id) > ($${page.push(cursor.startedAt)}::timestamptz, $${page.push(cursor.id)})` : "";
-    const rows: ReportCallRow[] = (await pool.query<ReportCallRow>(
-      `select ${callListColumns}, c.tracking_number, ${totalSecondsSql} as total_seconds, r.transcript_state, c.started_at::text as started_at_cursor
-         from ${callSource}
-        where ${where}${after}
-        order by c.started_at, c.id
-        limit $${page.push(pageSize)}`,
-      page,
-    )).rows;
-    if (rows.length > 0) yield rows.map(reportCsvCall);
-    if (rows.length < pageSize) return;
-    const last: ReportCallRow = rows[rows.length - 1];
-    cursor = { startedAt: last.started_at_cursor, id: last.id };
+async function storeRecordingZip(deps: ReportGenerationDependencies, job: ReportJob, organizationId: string): Promise<ReportArtifact> {
+  const key = reportZipObjectKey(job.id);
+  await deps.objects.abortMultipartUploads(key);
+  const upload = await deps.objects.createMultipartUpload(key, reportZipContentType);
+  try {
+    const zip = createZipWriter(upload);
+    const modifiedAt = deps.now();
+    const manifest = [reportManifestHeader()];
+    const singleCall = "selection" in job.parameters && job.parameters.selection.kind === "call";
+    let exportCall: { id: string; recordingId: string } | undefined;
+    for await (const calls of reportJobCalls(deps.pool, organizationId, job, deps.pageSize)) {
+      const rows: ReportManifestCall[] = [];
+      for (const call of calls) {
+        const row = await addRecording(deps, zip, call, job.timeZone, modifiedAt);
+        if (singleCall && row.recordingExport === "Included" && call.recordingId) exportCall = { id: call.id, recordingId: call.recordingId };
+        rows.push(row);
+      }
+      manifest.push(reportManifestRows(rows, job.timeZone));
+    }
+    if (exportCall) {
+      for (const document of await callExportDocuments(deps.pool, organizationId, exportCall)) await zip.addFile(document.name, document.bytes, modifiedAt);
+    }
+    await zip.addFile("manifest.csv", new TextEncoder().encode(manifest.join("")), modifiedAt);
+    await zip.finish();
+    const { sizeBytes } = await upload.complete();
+    return { file: "zip", r2Key: key, byteSize: sizeBytes, contentType: reportZipContentType };
+  } catch (error) {
+    await upload.abort().catch(() => undefined);
+    throw error;
   }
 }
 
@@ -189,8 +193,7 @@ export async function generateReportJob(deps: ReportGenerationDependencies, jobI
   const artifacts: ReportArtifact[] = [];
   if (files.includes("pdf")) artifacts.push(await storeReportPdf(deps, job, organizationId));
   if (files.includes("csv")) artifacts.push(await storeCallsCsv(deps, job, organizationId));
-  // The Recording ZIP slice plugs in here, storing its file and pushing its artifact.
-  if (artifacts.length < files.length) return;
+  if (files.includes("zip")) artifacts.push(await storeRecordingZip(deps, job, organizationId));
   await completeReportJob(deps.pool, job.id, artifacts, deps.now());
 }
 

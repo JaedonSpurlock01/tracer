@@ -11,8 +11,14 @@
  *  rules, except that a global Calls export uses the requester's account
  *  timezone, as global Calls does, so its Started-date filters and start
  *  times match the page it came from. It resolves a report's period in
- *  that timezone, rejects a report that selects no files, then queues the
- *  job with metadata kept for 90 days. A duplicate submission by the same
+ *  that timezone, rejects a report that selects no files, then previews the
+ *  selection and rejects a report or export matching no Calls as
+ *  `no_matching_calls`, and a Recording ZIP with no retained Recording as
+ *  `no_recordings` or with more than 500 as `export_too_large`, before it
+ *  queues the job with metadata kept for 90 days. The same preview,
+ *  counting matched Calls, retained Recordings, expired media, Calls
+ *  without a Recording, and Recordings still processing or failed, backs
+ *  the export confirmation. A Calls CSV is not capped. A duplicate submission by the same
  *  requester with the same normalized parameters, the sorted Workspace
  *  ids, timezone, kind, period or selection, and files, returns the existing job while it is Queued, Generating, or
  *  Completed with unexpired artifacts; a Failed or expired job does not
@@ -36,7 +42,10 @@
  *  express artifact expiry, which depends on the current time. The
  *  generation run is requested through the Trigger.dev REST API, like
  *  Recording processing, with the idempotency key `report-generation:{jobId}`,
- *  after the job commits so the run always finds it. A refused download
+ *  after the job commits so the run always finds it. The preview runs
+ *  before the transaction, as one aggregate query over the shared
+ *  selection, which only counts Calls started before the request time, so
+ *  generation, which uses the stored request time, covers the same Calls. A refused download
  *  returns null whether or not the job exists, so other users learn
  *  nothing about it. Artifacts live in their own table keyed by job and
  *  file kind, because a report holds one or two files and an export one.
@@ -46,6 +55,7 @@
  *  data/report-period.ts
  *  data/workspace-authorization.ts
  *  data/report-generation.ts
+ *  data/report-selection.ts
  *  data/recording-processing.ts
  *  DESIGN.md
  *
@@ -62,6 +72,7 @@ import type { CallFilters } from "@/data/call-list-query";
 import { triggerTaskRun, type TriggerTaskRequestOptions } from "@/data/recording-processing";
 import { resolveReportPeriod, type ReportPeriod } from "@/data/report-period";
 import { ReportRequestError, resolveReportScope, type ReportScopeRequest } from "@/data/report-request";
+import { previewReportSelection, type ReportSelection, type ReportSelectionPreview } from "@/data/report-selection";
 import type { ReadableWorkspaces } from "@/data/workspace-authorization";
 
 export type ReportFileKind = "pdf" | "csv" | "zip";
@@ -172,6 +183,34 @@ export function createTriggerReportGeneration(options: TriggerTaskRequestOptions
   };
 }
 
+async function resolveReportSelection(actor: Actor, readable: Pick<ReadableWorkspaces, "find">, request: ReportJobRequest, now: Date): Promise<ReportSelection> {
+  const scope = await resolveReportScope(readable, actor, request.scope);
+  const workspaceIds = scope.workspaces.map(({ id }) => id).sort();
+  const timeZone = request.kind === "call_export" && request.scope.kind === "global" ? actor.timezone : scope.timeZone;
+  return { workspaceIds, timeZone, parameters: jobParameters(request, timeZone, now), requestedAt: now };
+}
+
+export type ReportJobPreview = ReportSelectionPreview;
+
+export const recordingExportLimit = 500;
+
+function enforceSelectionLimits(parameters: ReportJobParameters, preview: ReportJobPreview): void {
+  if (preview.matchedCalls === 0) throw new ReportRequestError("no_matching_calls");
+  if (parameters.files[0] !== "zip") return;
+  if (preview.retainedRecordings === 0) throw new ReportRequestError("no_recordings");
+  if (preview.retainedRecordings > recordingExportLimit) throw new ReportRequestError("export_too_large");
+}
+
+export async function previewReportJob(
+  pool: Pool,
+  actor: Actor,
+  readable: Pick<ReadableWorkspaces, "find">,
+  request: ReportJobRequest,
+  now: Date,
+): Promise<ReportJobPreview> {
+  return previewReportSelection(pool, actor.organizationId, await resolveReportSelection(actor, readable, request, now));
+}
+
 export async function createReportJob(
   pool: Pool,
   actor: Actor,
@@ -179,10 +218,9 @@ export async function createReportJob(
   request: ReportJobRequest,
   now: Date,
 ): Promise<{ job: ReportJob; created: boolean }> {
-  const scope = await resolveReportScope(readable, actor, request.scope);
-  const workspaceIds = scope.workspaces.map(({ id }) => id).sort();
-  const timeZone = request.kind === "call_export" && request.scope.kind === "global" ? actor.timezone : scope.timeZone;
-  const parameters = jobParameters(request, timeZone, now);
+  const selection = await resolveReportSelection(actor, readable, request, now);
+  const { workspaceIds, timeZone, parameters } = selection;
+  enforceSelectionLimits(parameters, await previewReportSelection(pool, actor.organizationId, selection));
   const fingerprint = await parametersFingerprint({ kind: request.kind, workspaceIds, timeZone, parameters });
   const client = await pool.connect();
   try {

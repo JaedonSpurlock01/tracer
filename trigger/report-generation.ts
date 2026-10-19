@@ -15,8 +15,13 @@
  *  job-derived idempotency key `report-generation:{jobId}`. The task's own
  *  queue is dedicated to report generation, and its concurrency limit keeps
  *  large reports from crowding the database and R2. Retries rerun
- *  generation safely because a rerun rewrites the same object keys and a
- *  Completed job is left as it is.
+ *  generation safely because a rerun rewrites the same object keys, aborts
+ *  a stale Recording ZIP multipart upload before restarting it, and leaves
+ *  a Completed job as it is. A Recording ZIP of up to 500 MP3s, each up to
+ *  about 115 MB for a 4-hour Call at 64 kbps, moves one MP3 at a time, so
+ *  the task overrides the 300-second default with an hour of compute and
+ *  uses the 1 vCPU, 1 GB small-2x machine to hold one MP3 and
+ *  an 8 MiB part beside the Node runtime.
  *
  * @see
  *  data/report-generation.ts
@@ -36,6 +41,8 @@ import { requiredEnvironment, taskPool } from "@/trigger/environment";
 export const reportGeneration = task({
   id: reportGenerationTaskId,
   concurrency: { total: 2 },
+  maxDuration: 3600,
+  machine: "small-2x",
   run: async (payload: { jobId: string }) => {
     const pool = taskPool();
     try {

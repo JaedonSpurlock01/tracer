@@ -9,7 +9,8 @@
  *  times in the job's report timezone across Workspaces, the Workspace
  *  column, Lead Review precedence in the effective Lead classification,
  *  that Calls outside the job's Workspaces never appear even when the
- *  export filters name them, idempotent reruns, and failure recording. A
+ *  export filters name them, that an export of a Call outside them is never
+ *  queued, idempotent reruns, and failure recording. A
  *  PDF and CSV report completes only with both artifacts, and its PDF
  *  bytes and extracted text name the Workspaces, period, timezone, and
  *  Total Calls; a PDF-only single-Workspace report has no comparison.
@@ -41,9 +42,10 @@ import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { migrateDatabase } from "@/data/migrate";
-import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import { R2ObjectError, type ArtifactObjects, type StoredObject } from "@/data/r2-objects";
 import { generateReportJob, recordReportGenerationFailure } from "@/data/report-generation";
 import { createReportJob, type ReportJobRequest } from "@/data/report-jobs";
+import { ReportRequestError } from "@/data/report-request";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 let container: StartedPostgreSqlContainer | undefined;
@@ -56,7 +58,7 @@ const viewer: Actor = { userId: "report-viewer", organizationId: "fleet", role: 
 const header =
   "\uFEFFCall ID,Workspace,Tracking Number Dialed,Caller Number,Started At,Call Outcome,Total Duration Seconds,Connected Duration Seconds,Effective Lead Classification,AI Lead Score,Lead Review,Recording Availability,Transcript Availability\r\n";
 
-interface FakeR2 extends RecordingObjects {
+interface FakeR2 extends ArtifactObjects {
   objects: Map<string, { bytes: Uint8Array; contentType: string }>;
   puts: string[];
   putFailure: Error | null;
@@ -80,6 +82,10 @@ function fakeR2(): FakeR2 {
     async get(key) {
       return r2.objects.get(key)?.bytes ?? null;
     },
+    async createMultipartUpload() {
+      throw new Error("A report PDF or Calls CSV uploads with one PUT");
+    },
+    async abortMultipartUploads() {},
   };
   return r2;
 }
@@ -274,18 +280,18 @@ describe("Report CSV generation", () => {
     expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
   });
 
-  it("writes one selected Call, and nothing for a Call outside the job's Workspaces", async () => {
+  it("writes one selected Call, and refuses to queue an export of a Call outside the job's Workspaces", async () => {
     const r2 = fakeR2();
     const own = await create({ kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection: { kind: "call", callId: "south-voicemail" }, file: "csv" });
-    const outside = await create({ kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection: { kind: "call", callId: "west-answered" }, file: "csv" });
 
     await generate(r2, own.id);
-    await generate(r2, outside.id);
 
     expect(text(r2, `reports/${own.id}/calls.csv`)).toBe(
       header + `south-voicemail,"South Roofing, Inc.",+14155550127,+818055501942,2026-10-09T10:12:48+09:00,Voicemail,74,0,None,,No,Ready,Skipped\r\n`,
     );
-    expect(text(r2, `reports/${outside.id}/calls.csv`)).toBe(header);
+    await expect(create({ kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection: { kind: "call", callId: "west-answered" }, file: "csv" })).rejects.toEqual(
+      new ReportRequestError("no_matching_calls"),
+    );
   });
 
   it("leaves a Completed job and its artifact unchanged when Trigger.dev delivers the run again", async () => {
@@ -304,7 +310,7 @@ describe("Report CSV generation", () => {
   });
 
   it("keeps a job Generating when the upload fails and completes it on the rerun by overwriting the same key", async () => {
-    const job = await create({ kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "previousMonth" }, files: ["csv"] });
+    const job = await create({ kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "previousWeek" }, files: ["csv"] });
     const r2 = fakeR2();
     r2.putFailure = new R2ObjectError(503);
 
@@ -315,7 +321,9 @@ describe("Report CSV generation", () => {
     await generate(r2, job.id);
 
     expect(r2.puts).toEqual([`reports/${job.id}/calls.csv`, `reports/${job.id}/calls.csv`]);
-    expect(text(r2, `reports/${job.id}/calls.csv`)).toBe(header);
+    expect(text(r2, `reports/${job.id}/calls.csv`)).toBe(
+      header + `south-voicemail,"South Roofing, Inc.",+14155550127,+818055501942,2026-10-09T10:12:48+09:00,Voicemail,74,0,None,,No,Ready,Skipped\r\n`,
+    );
     expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
   });
 

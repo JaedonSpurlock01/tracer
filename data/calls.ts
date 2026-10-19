@@ -170,7 +170,7 @@ export function callListItem(row: CallListRow): CallListItem {
 export const callSource = `call c
            join workspace w on w.id = c.workspace_id and w.organization_id = c.organization_id
            left join lateral (
-             select r.id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state, r.transcript_state, r.lead_assessment_state,
+             select r.id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state, r.mp3_object_key, r.transcript_state, r.lead_assessment_state,
                     ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
                     ${recordingMediaExpiredSql("c.started_at", "now()")} as expired
                from recording r

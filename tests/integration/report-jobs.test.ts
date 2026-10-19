@@ -16,7 +16,10 @@
  *  Workspaces, users, and Access Grants are seeded directly, and actors are
  *  built directly, because readability comes from the readable Workspace
  *  helper over the database. Every instant is passed explicitly so expiry
- *  is deterministic.
+ *  is deterministic. Every request matches at least one seeded Call with a
+ *  retained Recording, because a report or export matching no Calls, and a
+ *  Recording ZIP with no retained Recording, are rejected before a job is
+ *  recorded.
  *
  * @see
  *  data/report-jobs.ts
@@ -70,6 +73,43 @@ async function seedWorkspace(id: string, name: string, timezone: string): Promis
   );
 }
 
+async function seedCalls(): Promise<void> {
+  for (const workspaceId of ["north", "south"]) {
+    await pool!.query(
+      `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
+       values ($1, 'fleet', $2, $3, 'Call Number', true, now(), now(), now(), now())`,
+      [`${workspaceId}-number`, `PN${workspaceId.padEnd(32, "0")}`, workspaceId === "north" ? "+14155550113" : "+14155550127"],
+    );
+    await pool!.query(
+      "insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) select $1, 'fleet', $2, $3, phone_number, now(), now() from twilio_number where id = $3",
+      [`${workspaceId}-assignment`, workspaceId, `${workspaceId}-number`],
+    );
+    await pool!.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, 'fleet', $2, 1, '{}'::jsonb, now())", [`${workspaceId}-flow`, workspaceId]);
+  }
+  const calls: Array<[string, string, string, string, boolean]> = [
+    ["call-1", "north", "2026-10-06T15:47:31.204Z", "Answered", true],
+    ["call-3", "north", "2026-09-04T13:22:48.517Z", "Answered", true],
+    ["north-june", "north", "2026-06-17T18:41:09.326Z", "Missed", false],
+    ["call-2", "south", "2026-08-11T02:33:57.814Z", "Voicemail", true],
+    ["call-4", "south", "2026-10-08T05:19:26.942Z", "Answered", true],
+    ["call-unreachable", "south", "2026-09-12T07:58:13.061Z", "Missed", false],
+  ];
+  for (const [index, [id, workspaceId, startedAt, outcome, recorded]] of calls.entries()) {
+    await pool!.query(
+      `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number, state, outcome, outcome_reason, started_at, created_at, updated_at)
+       select $1, 'fleet', $2, $2 || '-assignment', $2 || '-flow', $3, phone_number, '+12125550164', 'Completed', $4, 'flow_outcome', $5, now(), now() from number_assignment where id = $2 || '-assignment'`,
+      [id, workspaceId, `CA${String(index + 1).padStart(32, "0")}`, outcome, startedAt],
+    );
+    if (!recorded) continue;
+    await pool!.query(
+      `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
+                              mp3_state, mp3_object_key, mp3_size_bytes, mp3_generated_at, created_at, updated_at)
+       values ($1 || '-recording', 'fleet', $2, $1, $3, 'connected', 2, 'Stored', $1 || '.wav', 41_873, 'checksum', now(), 'Stored', $1 || '.mp3', 6_917, now(), now(), now())`,
+      [id, workspaceId, `RE${String(index + 1).padStart(32, "0")}`],
+    );
+  }
+}
+
 async function seedUser(id: string, timezone: string): Promise<void> {
   await pool!.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ($1, $1, $1 || '@example.com', true, 'Active', $2, now(), now())`,
@@ -92,6 +132,7 @@ beforeAll(async () => {
   await seedUser("fleet-viewer", "Europe/Berlin");
   await grant("fleet-viewer", "north");
   await grant("fleet-viewer", "south");
+  await seedCalls();
 }, 120_000);
 
 afterAll(async () => {

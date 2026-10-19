@@ -10,7 +10,11 @@
  *  Outcome or In Progress, total and connected duration in whole seconds,
  *  effective Lead classification or None, AI Lead Score, whether a Lead
  *  Review exists as Yes or No, Recording availability, and Transcript
- *  availability. A missing value is an empty cell.
+ *  availability. A missing value is an empty cell. A Recording ZIP manifest
+ *  has the same columns plus the Recording file's path inside the archive
+ *  and its Recording export outcome: Included, or why it was omitted, as
+ *  Expired, No Recording, Processing, Failed, or Missing when its MP3 is
+ *  gone from storage.
  *
  * @remarks
  *  The header starts with a UTF-8 byte order mark so Excel decodes
@@ -56,6 +60,13 @@ export interface ReportCsvCall {
   transcript: TranscriptAvailability;
 }
 
+export type RecordingExportOutcome = "Included" | "Expired" | "No Recording" | "Processing" | "Failed" | "Missing";
+
+export interface ReportManifestCall extends ReportCsvCall {
+  recordingFile: string | null;
+  recordingExport: RecordingExportOutcome;
+}
+
 const columns = [
   "Call ID",
   "Workspace",
@@ -98,24 +109,32 @@ function optional(value: number | string | null): string {
   return value === null ? "" : String(value);
 }
 
+function callCells(call: ReportCsvCall, timeZone: string): string[] {
+  return [
+    call.id,
+    call.workspaceName,
+    call.trackingNumber,
+    optional(call.callerNumber),
+    isoInTimeZone(call.startedAt, timeZone),
+    call.state === "In Progress" ? "In Progress" : optional(call.outcome),
+    optional(call.totalDurationSeconds),
+    optional(call.connectedDurationSeconds),
+    call.effectiveLeadClassification?.classification ?? "None",
+    optional(call.leadScore),
+    call.leadReview ? "Yes" : "No",
+    call.recording,
+    call.transcript,
+  ];
+}
+
 export function reportCsvRows(calls: readonly ReportCsvCall[], timeZone: string): string {
-  return calls
-    .map((call) =>
-      line([
-        call.id,
-        call.workspaceName,
-        call.trackingNumber,
-        optional(call.callerNumber),
-        isoInTimeZone(call.startedAt, timeZone),
-        call.state === "In Progress" ? "In Progress" : optional(call.outcome),
-        optional(call.totalDurationSeconds),
-        optional(call.connectedDurationSeconds),
-        call.effectiveLeadClassification?.classification ?? "None",
-        optional(call.leadScore),
-        call.leadReview ? "Yes" : "No",
-        call.recording,
-        call.transcript,
-      ]),
-    )
-    .join("");
+  return calls.map((call) => line(callCells(call, timeZone))).join("");
+}
+
+export function reportManifestHeader(): string {
+  return `\uFEFF${line([...columns, "Recording File", "Recording Export"])}`;
+}
+
+export function reportManifestRows(calls: readonly ReportManifestCall[], timeZone: string): string {
+  return calls.map((call) => line([...callCells(call, timeZone), optional(call.recordingFile), call.recordingExport])).join("");
 }
