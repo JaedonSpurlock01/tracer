@@ -12,7 +12,10 @@
  *  show Skeleton rows while it loads. Any search or filter change returns
  *  to the first page. Rows open Call Detail, and Play Recording opens it
  *  with playback started; both carry this list's URL as the `back` param so
- *  Call Detail can return to it and step through it. Workspace Calls fixes the Workspace scope, omits
+ *  Call Detail can return to it and step through it. Download MP3 appears
+ *  only when the row's Recording has a retained MP3 and downloads it
+ *  through the Workspace-authorized MP3 route. Workspace Calls fixes the
+ *  Workspace scope, omits
  *  the Workspace column and filter, and shows the Workspace tabs below the
  *  header.
  *
@@ -278,10 +281,15 @@ export default function CallsView({
             <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back)} prefetch>
               Open Call
             </Link>
+            {row.original.mp3RecordingId ? (
+              <a className={buttonVariants({ variant: "ghost", size: "sm" })} href={`/api/workspaces/${row.original.workspace.id}/recordings/${row.original.mp3RecordingId}/mp3`} download>
+                Download MP3
+              </a>
+            ) : null}
           </div>
         ),
         enableSorting: false,
-        size: 230,
+        size: 340,
         meta: { skeleton: <Skeleton className="h-8 w-32" /> },
       },
     ];

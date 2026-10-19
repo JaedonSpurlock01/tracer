@@ -46,6 +46,7 @@ const call: CallDetail = {
   connectedDurationSeconds: 78,
   spamGate: "Passed",
   recording: { state: "Ready", id: "recording-1", channels: 2, lanes: ["Caller", "Business"], durationSeconds: 83, waveform: true, expiresAt: "2027-10-16T20:04:05.000Z" },
+  mp3RecordingId: null,
   timeline: [
     { id: "event-1", label: "Call received", status: "Completed", at: "2026-10-16T20:04:05.000Z" },
     { id: "recording-transfer", label: "Recording stored", status: "Completed", at: "2026-10-16T20:05:50.000Z" },
@@ -150,9 +151,22 @@ describe("CallDetailView", () => {
     play.mockRestore();
   });
 
+  it("offers Download MP3 in the header whenever the read model gives a downloadable MP3, even while the waveform is Pending", () => {
+    const { rerender } = render(<CallDetailView call={{ ...call, mp3RecordingId: "recording-1" }} operator={false} />);
+    const header = () => screen.getByRole("heading", { level: 1 }).closest("header")!;
+    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("download");
+    rerender(<CallDetailView call={{ ...call, recording: { state: "Processing", stage: "waveform" }, mp3RecordingId: "recording-1" }} operator={false} />);
+    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    for (const recording of [call.recording, { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" }] as CallDetail["recording"][]) {
+      rerender(<CallDetailView call={{ ...call, recording, mp3RecordingId: null }} operator={false} />);
+      expect(screen.queryByRole("link", { name: "Download MP3" })).not.toBeInTheDocument();
+    }
+  });
+
   it("offers no actions deferred to later milestones", () => {
     render(<CallDetailView call={call} operator />);
-    for (const name of ["Download MP3", "Export Call", "Purge Media"]) {
+    for (const name of ["Export Call", "Purge Media"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }

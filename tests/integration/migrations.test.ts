@@ -118,6 +118,9 @@ it("migrates a clean database to the latest authentication and Organization sche
     "recording_cleanup_requires_stored_check",
     "recording_lead_assessment_requires_transcript_check",
     "recording_lead_assessment_state_check",
+    "recording_mp3_requires_stored_check",
+    "recording_mp3_state_check",
+    "recording_mp3_stored_metadata_check",
     "recording_source_check",
     "recording_stored_metadata_check",
     "recording_transcript_requires_stored_check",
@@ -144,6 +147,21 @@ it("migrates a clean database to the latest authentication and Organization sche
   ]);
   const waveformRecoveryIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_waveform_unfinished_created_at_idx'");
   expect(waveformRecoveryIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(waveform_state <> 'Stored'::text\)$/) }]);
+  const mp3Columns = await pool.query<{ column_name: string; column_default: string | null; is_nullable: string }>(
+    `select column_name, column_default, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = 'recording' and column_name like 'mp3_%'
+      order by column_name`,
+  );
+  expect(mp3Columns.rows).toEqual([
+    { column_name: "mp3_failure_reason", column_default: null, is_nullable: "YES" },
+    { column_name: "mp3_generated_at", column_default: null, is_nullable: "YES" },
+    { column_name: "mp3_object_key", column_default: null, is_nullable: "YES" },
+    { column_name: "mp3_size_bytes", column_default: null, is_nullable: "YES" },
+    { column_name: "mp3_state", column_default: "'Pending'::text", is_nullable: "NO" },
+  ]);
+  const mp3RecoveryIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_mp3_unfinished_created_at_idx'");
+  expect(mp3RecoveryIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(mp3_state <> 'Stored'::text\)$/) }]);
   const analysisRecoveryIndexes = await pool.query<{ indexname: string; indexdef: string }>(
     "select indexname, indexdef from pg_indexes where indexname in ('recording_transcript_unfinished_created_at_idx', 'recording_lead_assessment_unfinished_created_at_idx') order by indexname",
   );
@@ -182,7 +200,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(18);
+  expect(Number(result.rows[0].count)).toBe(19);
 }, 30_000);
 
 it("enforces Transcript, immutable Lead Assessment, and one current Lead Review per Call invariants", async () => {

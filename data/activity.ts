@@ -67,7 +67,7 @@ export interface ActivityStep {
   reviewerName?: string | null;
 }
 
-export interface ActivityEntry extends Omit<CallListItem, "leadScore" | "recording"> {
+export interface ActivityEntry extends Omit<CallListItem, "leadScore" | "recording" | "mp3RecordingId"> {
   day: string;
   cursor: string;
   steps: ActivityStep[];

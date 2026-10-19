@@ -47,6 +47,7 @@ const answered: CallListItem = {
   effectiveLeadClassification: { classification: "Not Good Lead", source: "review" },
   leadScore: 82,
   recording: "Ready",
+  mp3RecordingId: "recording-1",
 };
 const inProgress: CallListItem = {
   id: "call-2",
@@ -59,6 +60,7 @@ const inProgress: CallListItem = {
   effectiveLeadClassification: null,
   leadScore: null,
   recording: "Unavailable",
+  mp3RecordingId: null,
 };
 const result: CallListResult = { calls: [inProgress, answered], total: 2, page: 1, pageSize: 25, timeZone: "America/Chicago", workspace: null, hasCalls: true };
 const defaultQuery: CallListQuery = { page: 1, sort: { column: "startedAt", direction: "desc" }, filters: emptyCallFilters };
@@ -157,6 +159,21 @@ describe("CallsView", () => {
     expect(within(pending).getByRole("link", { name: "Open Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
     fireEvent.click(within(pending).getByText("Quiet Dental"));
     expect(push).toHaveBeenCalledWith("/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
+  });
+
+  it("offers Download MP3 in the row actions whenever the Recording's MP3 is retained, even without Play Recording", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const processing: CallListItem = { ...answered, id: "call-3", callerNumber: "+13125550199", mp3RecordingId: null };
+    const waveformPending: CallListItem = { ...answered, id: "call-4", callerNumber: "+13125550188", recording: "Processing", mp3RecordingId: "recording-4" };
+    render(<CallsView initialResult={{ ...result, calls: [inProgress, answered, processing, waveformPending], total: 4 }} initialQuery={defaultQuery} />);
+    const pendingRow = screen.getByRole("row", { name: /\+13125550188/ });
+    expect(within(pendingRow).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-4/mp3");
+    expect(within(pendingRow).queryByRole("link", { name: "Play Recording" })).toBeNull();
+    const download = within(screen.getByRole("row", { name: /\+13125550142/ })).getByRole("link", { name: "Download MP3" });
+    expect(download).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    expect(download).toHaveAttribute("download");
+    expect(within(screen.getByRole("row", { name: /\+13125550199/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
+    expect(within(screen.getByRole("row", { name: /Unknown caller/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
   });
 
   it("opens Call Detail carrying the list's page, sort, and filters from rows and row actions", () => {

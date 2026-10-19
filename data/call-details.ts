@@ -16,7 +16,10 @@
  *  the current Lead Review, and the effective Lead classification from the
  *  Lead Review or the Recording's Lead Assessment. Lists the five newest
  *  Calls of a Workspace for Recent Calls. Shares the connected duration and
- *  Recording availability rules with the Calls list.
+ *  Recording availability rules with the Calls list. Both expose the
+ *  Recording id for Download MP3 whenever its MP3 is Stored and its media
+ *  has not expired, independent of the waveform state that Play Recording
+ *  waits for.
  *
  * @remarks
  *  The Twilio call SID and the secret-free Transcript and Lead Assessment
@@ -104,6 +107,7 @@ export interface CallDetail {
   connectedDurationSeconds: number | null;
   spamGate: SpamGateResult;
   recording: RecordingAvailability;
+  mp3RecordingId: string | null;
   transcript: CallTranscript;
   leadAssessment: CallLeadAssessment;
   timeline: CallTimelineEntry[];
@@ -156,6 +160,7 @@ type RecordingRow = {
   duration_seconds: number | null;
   transfer_state: "Pending" | "Stored" | "Failed";
   waveform_state: "Pending" | "Stored" | "Failed";
+  mp3_state: "Pending" | "Stored" | "Failed";
   transcript_state: "Pending" | "Completed" | "Failed" | "Skipped" | null;
   transcript_skip_reason: AnalysisSkipReason | null;
   transcript_failure_reason: string | null;
@@ -328,7 +333,7 @@ function callLeadAssessment(recording: RecordingRow | undefined, assessment: Ass
   return { state };
 }
 
-export type RecordingAvailabilityRow = Pick<RecordingRow, "id" | "channels" | "duration_seconds" | "transfer_state" | "waveform_state" | "expires_at" | "expired">;
+export type RecordingAvailabilityRow = Pick<RecordingRow, "id" | "channels" | "duration_seconds" | "transfer_state" | "waveform_state" | "mp3_state" | "expires_at" | "expired">;
 
 export function recordingAvailability(recording: RecordingAvailabilityRow | undefined, graph: CallFlowGraph | null): RecordingAvailability {
   if (!recording) {
@@ -348,6 +353,10 @@ export function recordingAvailability(recording: RecordingAvailabilityRow | unde
     waveform: recording.waveform_state === "Stored",
     expiresAt: recording.expires_at.toISOString(),
   };
+}
+
+export function downloadableMp3RecordingId(recording: RecordingAvailabilityRow | undefined): string | null {
+  return recording && !recording.expired && recording.transfer_state === "Stored" && recording.mp3_state === "Stored" ? recording.id : null;
 }
 
 export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
@@ -370,7 +379,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       const row = result.rows[0];
       if (!row) return null;
       const recordings = await pool.query<RecordingRow>(
-        `select r.id, r.created_at, r.updated_at, r.stored_at, r.waveform_generated_at, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state,
+        `select r.id, r.created_at, r.updated_at, r.stored_at, r.waveform_generated_at, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state,
                 r.transcript_state, r.transcript_skip_reason, r.transcript_failure_reason, r.transcript_completed_at,
                 r.lead_assessment_state, r.lead_assessment_failure_reason,
                 ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
@@ -430,6 +439,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
         connectedDurationSeconds: row.connected_seconds,
         spamGate: spamGateResult(graph, row.outcome, events.rows),
         recording: recordingAvailability(recording, graph),
+        mp3RecordingId: downloadableMp3RecordingId(recording),
         transcript: callTranscript(recording, turns, operator),
         leadAssessment: callLeadAssessment(recording, assessment, evidence, operator),
         timeline: processingTimeline(graph, events.rows, { recording, assessment, leadReview }),

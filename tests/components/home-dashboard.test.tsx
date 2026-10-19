@@ -61,6 +61,7 @@ function call(id: string, overrides: Partial<CallListItem> = {}): CallListItem {
     effectiveLeadClassification: { classification: "Good Lead", source: "review" },
     leadScore: null,
     recording: "Unavailable",
+    mp3RecordingId: null,
     ...overrides,
   };
 }

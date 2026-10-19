@@ -5,7 +5,7 @@
  *
  * @description
  *  Triggers one Recording transfer run, or with the waveform,
- *  transcription, or Lead Assessment task id one run of that stage, per
+ *  transcription, Lead Assessment, or MP3 task id one run of that stage, per
  *  Recording by posting its id and Recording-derived idempotency key to
  *  Trigger.dev. Report generation reuses the same request. Without a secret key the request does nothing, so the
  *  Recording stays Pending for the recovery sweep. A queued run waits up to
@@ -25,6 +25,7 @@
  *  trigger/recording-waveform.ts
  *  trigger/recording-transcription.ts
  *  trigger/recording-lead-assessment.ts
+ *  trigger/recording-mp3.ts
  *  https://trigger.dev/docs/management/tasks/trigger
  *
  * @author Jaedon Spurlock
@@ -39,6 +40,8 @@ export const recordingWaveformTaskId = "recording-waveform";
 export const recordingTranscriptionTaskId = "recording-transcription";
 
 export const recordingLeadAssessmentTaskId = "recording-lead-assessment";
+
+export const recordingMp3TaskId = "recording-mp3";
 
 export interface TriggerTaskRequestOptions {
   secretKey: string | undefined;

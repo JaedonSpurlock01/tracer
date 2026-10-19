@@ -6,7 +6,8 @@
  * @description
  *  Every 12 hours, re-requests processing for Recordings whose transfer or
  *  Twilio cleanup stalled, and waveform generation, transcription, or the
- *  Lead Assessment for transferred Recordings whose stage stalled.
+ *  Lead Assessment for transferred Recordings whose stage stalled, and
+ *  backfills MP3 derivation for Stored Recordings without an MP3.
  *
  * @remarks
  *  Registration stays thin so the sweep is tested as an ordinary function.
@@ -23,7 +24,7 @@
  */
 import { schedules } from "@trigger.dev/sdk";
 
-import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingMp3TaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
 import { sweepStuckRecordings } from "@/data/recording-recovery";
 import { requiredEnvironment, taskPool } from "@/trigger/environment";
 
@@ -54,6 +55,11 @@ export const recordingRecovery = schedules.task({
             secretKey: requiredEnvironment("TRIGGER_SECRET_KEY"),
             baseUrl: process.env.TRIGGER_API_URL,
             taskId: recordingLeadAssessmentTaskId,
+          }),
+          recordingMp3: createTriggerRecordingProcessing({
+            secretKey: requiredEnvironment("TRIGGER_SECRET_KEY"),
+            baseUrl: process.env.TRIGGER_API_URL,
+            taskId: recordingMp3TaskId,
           }),
         },
         payload.timestamp,

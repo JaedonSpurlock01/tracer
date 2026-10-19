@@ -142,8 +142,8 @@ function fakeTranscription(failure: Error | null = null): RecordingProcessing & 
   };
 }
 
-function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform(), transcription = fakeTranscription()): RecordingTransferDependencies {
-  return { pool: pool!, masterKey, twilio, objects: r2, waveform, transcription, now: () => now };
+function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform(), transcription = fakeTranscription(), mp3 = fakeWaveform()): RecordingTransferDependencies {
+  return { pool: pool!, masterKey, twilio, objects: r2, waveform, transcription, mp3, now: () => now };
 }
 
 let sequence = 0;
@@ -337,6 +337,29 @@ describe("Recording transfer", () => {
     await expect(transferRecording(dependencies(twilio, fakeR2(), waveform), recording.id)).rejects.toBe(twilio.downloadFailure);
 
     expect(waveform.requests).toEqual([]);
+  });
+
+  it("requests MP3 derivation with its Recording-derived idempotency key once the Recording is Stored, and still cleans up when that request fails", async () => {
+    const recording = await pendingRecording("connected");
+    const twilio = fakeTwilio();
+    const mp3 = fakeWaveform(new Error("Trigger.dev is unavailable"));
+    twilio.media.set(recording.sid, recording.bytes);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2(), fakeWaveform(), fakeTranscription(), mp3), recording.id)).resolves.toBeUndefined();
+
+    expect(mp3.requests).toEqual([{ request: { id: recording.id, organizationId, idempotencyKey: `recording-mp3:${recording.id}` }, transferState: "Stored" }]);
+    expect(twilio.deletes).toEqual([{ sid: recording.sid, transferState: "Stored" }]);
+  });
+
+  it("does not request MP3 derivation for a Recording that failed to store", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const mp3 = fakeWaveform();
+    twilio.downloadFailure = new TwilioClientError("unavailable", null);
+
+    await expect(transferRecording(dependencies(twilio, fakeR2(), fakeWaveform(), fakeTranscription(), mp3), recording.id)).rejects.toBe(twilio.downloadFailure);
+
+    expect(mp3.requests).toEqual([]);
   });
 
   describe("analysis eligibility at Stored time", () => {

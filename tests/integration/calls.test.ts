@@ -104,6 +104,7 @@ interface ListedCall {
   effectiveLeadClassification: { classification: string; source: string } | null;
   leadScore: number | null;
   recording: string;
+  mp3RecordingId: string | null;
 }
 
 interface ListedCalls {
@@ -340,6 +341,25 @@ describe.sequential("Calls rows", () => {
     await seedCall({ id: "expired-call", workspaceId: "ungranted-active", minutesAgo: 60 * 24 * 400, recording: "Stored" });
     const { body } = await listCalls(operatorCookie, "?workspaceId=ungranted-active");
     expect(body.calls.find((call) => call.id === "expired-call")?.recording).toBe("Expired");
+  });
+
+  it("offers the MP3 download by Recording id whenever its MP3 is Stored and media is retained, whatever the waveform state", async () => {
+    await pool!.query(
+      "update recording set mp3_state = 'Stored', mp3_object_key = 'recordings/' || id || '.mp3', mp3_size_bytes = 512, mp3_generated_at = now() where id in ('reviewed-call-recording', 'expired-call-recording', 'assessed-call-recording')",
+    );
+    await pool!.query("update recording set waveform_state = 'Failed', waveform_object_key = null, waveform_generated_at = null where id = 'assessed-call-recording'");
+    const { body } = await listCalls(operatorCookie);
+    const byId = new Map(body.calls.map((call) => [call.id, call]));
+    expect(byId.get("reviewed-call")).toMatchObject({ recording: "Ready", mp3RecordingId: "reviewed-call-recording" });
+    expect(byId.get("assessed-call")).toMatchObject({ mp3RecordingId: "assessed-call-recording" });
+    expect(byId.get("expired-call")).toMatchObject({ recording: "Expired", mp3RecordingId: null });
+    expect(byId.get("ungranted-call")).toMatchObject({ recording: "Unavailable", mp3RecordingId: null });
+    await pool!.query("update recording set waveform_state = 'Pending' where id = 'assessed-call-recording'");
+    const pending = (await listCalls(operatorCookie)).body.calls.find((call) => call.id === "assessed-call");
+    expect(pending).toMatchObject({ recording: "Processing", mp3RecordingId: "assessed-call-recording" });
+    await pool!.query("update recording set mp3_state = 'Failed', mp3_object_key = null, mp3_size_bytes = null where id = 'assessed-call-recording'");
+    expect((await listCalls(operatorCookie)).body.calls.find((call) => call.id === "assessed-call")).toMatchObject({ mp3RecordingId: null });
+    await pool!.query("update recording set waveform_state = 'Stored', waveform_object_key = 'recordings/assessed-call.wav.peaks.json', waveform_generated_at = now(), mp3_state = 'Pending' where id = 'assessed-call-recording'");
   });
 });
 
