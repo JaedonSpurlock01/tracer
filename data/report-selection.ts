@@ -17,7 +17,8 @@
  *  preview counts the same selection: matched Calls, retained Recordings
  *  whose MP3 can be downloaded, expired media, Calls without a Recording,
  *  and Recordings still processing or failed, which together account for
- *  every matched Call.
+ *  every matched Call. A global Calls export's stored scope is narrowed to
+ *  the distinct Workspaces of the Calls its selection matches.
  *
  * @remarks
  *  A Recording is retained exactly when Download MP3 would offer it, so the
@@ -159,6 +160,12 @@ export async function previewReportSelection(pool: Pool, organizationId: string,
     preview[counters[recordingExportState(group)]] += group.count;
   }
   return preview;
+}
+
+export async function reportSelectionWorkspaceIds(pool: Pool, organizationId: string, selection: ReportSelection): Promise<string[]> {
+  const { where, values } = selectionWhere(organizationId, selection);
+  const result = await pool.query<{ workspace_id: string }>(`select distinct c.workspace_id from ${callSource} where ${where} order by 1`, values);
+  return result.rows.map(({ workspace_id }) => workspace_id);
 }
 
 export async function* reportJobCalls(pool: Pool, organizationId: string, selection: ReportSelection, pageSize = defaultPageSize): AsyncGenerator<ReportSelectionCall[]> {

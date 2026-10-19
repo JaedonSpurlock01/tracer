@@ -10,7 +10,9 @@
  *  resolves its Workspace scope and timezone through the report request
  *  rules, except that a global Calls export uses the requester's account
  *  timezone, as global Calls does, so its Started-date filters and start
- *  times match the page it came from. It resolves a report's period in
+ *  times match the page it came from, and its stored scope is only the
+ *  readable Workspaces of the Calls it matches, so losing access to an
+ *  unrelated Workspace never blocks its download. It resolves a report's period in
  *  that timezone, rejects a report that selects no files, then previews the
  *  selection and rejects a report or export matching no Calls as
  *  `no_matching_calls`, and a Recording ZIP with no retained Recording as
@@ -28,7 +30,13 @@
  *  starts a second run; a run that cannot be started records the job
  *  Failed so a resubmission queues a fresh one. Generation moves only a
  *  Queued or Generating job to Generating, so a late rerun of a Completed
- *  or Failed job finds nothing to do. Report history lists only the
+ *  or Failed job finds nothing to do. Regenerating a Failed job, or a
+ *  Completed job whose artifacts expired, requests a new job for its
+ *  requester from the stored scope, timezone, and parameters, with a
+ *  report's period pinned to its stored window as a Custom Range, while
+ *  the requester can still read every Workspace in its scope; it follows
+ *  the same limits, duplicate rule, and generation request as a new
+ *  submission. Report history lists only the
  *  requester's jobs within metadata retention, newest first. A download
  *  is authorized only for the
  *  requester of a Completed job with unexpired artifacts who can still
@@ -72,7 +80,7 @@ import type { CallFilters } from "@/data/call-list-query";
 import { triggerTaskRun, type TriggerTaskRequestOptions } from "@/data/recording-processing";
 import { resolveReportPeriod, type ReportPeriod } from "@/data/report-period";
 import { ReportRequestError, resolveReportScope, type ReportScopeRequest } from "@/data/report-request";
-import { previewReportSelection, type ReportSelection, type ReportSelectionPreview } from "@/data/report-selection";
+import { previewReportSelection, reportSelectionWorkspaceIds, type ReportSelection, type ReportSelectionPreview } from "@/data/report-selection";
 import type { ReadableWorkspaces } from "@/data/workspace-authorization";
 
 export type ReportFileKind = "pdf" | "csv" | "zip";
@@ -211,17 +219,10 @@ export async function previewReportJob(
   return previewReportSelection(pool, actor.organizationId, await resolveReportSelection(actor, readable, request, now));
 }
 
-export async function createReportJob(
-  pool: Pool,
-  actor: Actor,
-  readable: Pick<ReadableWorkspaces, "find">,
-  request: ReportJobRequest,
-  now: Date,
-): Promise<{ job: ReportJob; created: boolean }> {
-  const selection = await resolveReportSelection(actor, readable, request, now);
-  const { workspaceIds, timeZone, parameters } = selection;
+async function insertReportJob(pool: Pool, actor: Actor, kind: ReportJob["kind"], selection: ReportSelection): Promise<{ job: ReportJob; created: boolean }> {
+  const { workspaceIds, timeZone, parameters, requestedAt: now } = selection;
   enforceSelectionLimits(parameters, await previewReportSelection(pool, actor.organizationId, selection));
-  const fingerprint = await parametersFingerprint({ kind: request.kind, workspaceIds, timeZone, parameters });
+  const fingerprint = await parametersFingerprint({ kind, workspaceIds, timeZone, parameters });
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -238,7 +239,7 @@ export async function createReportJob(
       `insert into report_job (id, organization_id, requester_user_id, kind, workspace_ids, time_zone, parameters, fingerprint, requested_at, metadata_expire_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        returning ${jobColumns}`,
-      [randomUUID(), actor.organizationId, actor.userId, request.kind, workspaceIds, timeZone, JSON.stringify(parameters), fingerprint, now, new Date(now.getTime() + metadataRetentionMs)],
+      [randomUUID(), actor.organizationId, actor.userId, kind, workspaceIds, timeZone, JSON.stringify(parameters), fingerprint, now, new Date(now.getTime() + metadataRetentionMs)],
     )).rows[0];
     await client.query("commit");
     return { job: toReportJob(row), created: !existing };
@@ -250,15 +251,19 @@ export async function createReportJob(
   }
 }
 
-export async function requestReportJob(
+export async function createReportJob(
   pool: Pool,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   request: ReportJobRequest,
   now: Date,
-  generation: ReportGeneration,
 ): Promise<{ job: ReportJob; created: boolean }> {
-  const result = await createReportJob(pool, actor, readable, request, now);
+  const selection = await resolveReportSelection(actor, readable, request, now);
+  const scoped = request.kind === "call_export" && request.scope.kind === "global" ? { ...selection, workspaceIds: await reportSelectionWorkspaceIds(pool, actor.organizationId, selection) } : selection;
+  return insertReportJob(pool, actor, request.kind, scoped);
+}
+
+async function startReportGeneration(pool: Pool, result: { job: ReportJob; created: boolean }, generation: ReportGeneration): Promise<{ job: ReportJob; created: boolean }> {
   if (!result.created) return result;
   try {
     await generation.request(result.job);
@@ -267,6 +272,39 @@ export async function requestReportJob(
     throw new ReportGenerationUnavailableError();
   }
   return result;
+}
+
+export async function requestReportJob(
+  pool: Pool,
+  actor: Actor,
+  readable: Pick<ReadableWorkspaces, "find">,
+  request: ReportJobRequest,
+  now: Date,
+  generation: ReportGeneration,
+): Promise<{ job: ReportJob; created: boolean }> {
+  return startReportGeneration(pool, await createReportJob(pool, actor, readable, request, now), generation);
+}
+
+export async function regenerateReportJob(
+  pool: Pool,
+  actor: Actor,
+  readable: Pick<ReadableWorkspaces, "find">,
+  jobId: string,
+  now: Date,
+  generation: ReportGeneration,
+): Promise<{ job: ReportJob; created: boolean } | "not_found" | "not_regenerable"> {
+  const row = (await pool.query<ReportJobRow>(
+    `select ${jobColumns} from report_job where id = $1 and organization_id = $2 and requester_user_id = $3 and metadata_expire_at > $4`,
+    [jobId, actor.organizationId, actor.userId, now],
+  )).rows[0];
+  if (!row) return "not_found";
+  const source = toReportJob(row);
+  if ((await Promise.all(source.workspaceIds.map((id) => readable.find(id)))).includes(null)) return "not_found";
+  if (!reportJobRegenerable(source, now)) return "not_regenerable";
+  const parameters: ReportJobParameters =
+    "period" in source.parameters && source.parameters.window ? { ...source.parameters, period: { kind: "custom", ...source.parameters.window } } : source.parameters;
+  const selection = { workspaceIds: source.workspaceIds, timeZone: source.timeZone, parameters, requestedAt: now };
+  return startReportGeneration(pool, await insertReportJob(pool, actor, source.kind, selection), generation);
 }
 
 export interface ReportArtifact {
@@ -310,6 +348,10 @@ export async function listReportJobs(pool: Pool, actor: Actor, now: Date): Promi
     [actor.organizationId, actor.userId, now],
   );
   return result.rows.map(toReportJob);
+}
+
+export function reportJobRegenerable(job: Pick<ReportJob, "status" | "artifactsExpireAt">, now: Date): boolean {
+  return job.status === "Failed" || (job.status === "Completed" && job.artifactsExpireAt !== null && job.artifactsExpireAt <= now);
 }
 
 export interface ReportDownload {

@@ -15,7 +15,9 @@
  *  without it accepted Recordings stay Pending for the recovery sweep. The
  *  transcription and Lead Assessment requests behind an Operator's Retry
  *  exist only with that key, so a Retry fails visibly instead of silently
- *  doing nothing.
+ *  doing nothing. Report generation likewise exists only with that key, so
+ *  a report or export request is refused before a job is recorded rather
+ *  than left Queued with no run.
  *
  * @see
  *  data/tracer-auth.ts
@@ -34,6 +36,7 @@ import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
 import { type ProviderConfiguration } from "@/data/provider-health";
 import type { RecordingProcessing } from "@/data/recording";
 import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId } from "@/data/recording-processing";
+import { createTriggerReportGeneration, type ReportGeneration } from "@/data/report-jobs";
 import {
   createCloudflareTransactionalEmail,
   type SendEmail,
@@ -71,6 +74,7 @@ export interface TracerRuntime {
   recordingTranscription: RecordingProcessing | undefined;
   recordingLeadAssessment: RecordingProcessing | undefined;
   recordingBucket: R2Bucket | undefined;
+  reportGeneration: ReportGeneration | undefined;
 }
 
 function requiredBinding(bindings: AuthBindings, name: keyof AuthBindings): string {
@@ -164,6 +168,7 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       recordingTranscription: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingTranscriptionTaskId }) : undefined,
       recordingLeadAssessment: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingLeadAssessmentTaskId }) : undefined,
       recordingBucket: bindings.R2,
+      reportGeneration: triggerSecretKey ? createTriggerReportGeneration({ secretKey: triggerSecretKey }) : undefined,
     });
   } finally {
     await pool.end();
