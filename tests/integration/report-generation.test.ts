@@ -86,6 +86,9 @@ function fakeR2(): FakeR2 {
       throw new Error("A report PDF or Calls CSV uploads with one PUT");
     },
     async abortMultipartUploads() {},
+    async delete(key) {
+      r2.objects.delete(key);
+    },
   };
   return r2;
 }

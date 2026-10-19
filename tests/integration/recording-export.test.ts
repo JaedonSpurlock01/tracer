@@ -114,6 +114,9 @@ function fakeR2(): FakeR2 {
     async abortMultipartUploads(key) {
       r2.staleAborts.push(key);
     },
+    async delete(key) {
+      r2.objects.delete(key);
+    },
   };
   for (const callId of ["north-expired", "north-reviewed", "north-voicemail", "south-answered", "west-answered"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
   return r2;

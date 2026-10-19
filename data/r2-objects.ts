@@ -13,7 +13,9 @@
  *  multipart upload: writes are cut into equal 8 MiB parts, only the last
  *  one shorter, each uploaded as soon as it fills, and completion lists
  *  every part's ETag in order. A rerun first aborts every unfinished
- *  upload of the same key, and a failed upload can be aborted.
+ *  upload of the same key, and a failed upload can be aborted. An expired
+ *  artifact is removed with a signed DELETE that treats an absent object as
+ *  already deleted.
  *
  * @remarks
  *  The Trigger.dev task runs outside Cloudflare, so it reaches R2 through
@@ -63,6 +65,7 @@ export interface MultipartUpload {
 export interface ArtifactObjects extends RecordingObjects {
   createMultipartUpload(key: string, contentType: string): Promise<MultipartUpload>;
   abortMultipartUploads(key: string): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export const multipartPartSizeBytes = 8 * 1024 * 1024;
@@ -194,6 +197,11 @@ export function createR2RecordingObjects(options: {
         uploadId: unescapeXml(/<UploadId>([^<]*)<\/UploadId>/.exec(upload)?.[1] ?? ""),
       }));
       for (const upload of uploads.filter((candidate) => candidate.key === key && candidate.uploadId)) await abortUpload(key, upload.uploadId);
+    },
+
+    async delete(key) {
+      const response = await send(key, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) throw new R2ObjectError(response.status);
     },
 
     async get(key) {

@@ -406,7 +406,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "report_job", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "report_job", privilege_type: "INSERT" });
   expect(grants.rows).toContainEqual({ table_name: "report_job", privilege_type: "UPDATE" });
-  expect(grants.rows).not.toContainEqual({ table_name: "report_job", privilege_type: "DELETE" });
+  expect(grants.rows).toContainEqual({ table_name: "report_job", privilege_type: "DELETE" });
   expect(grants.rows).toContainEqual({ table_name: "report_artifact", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "report_artifact", privilege_type: "INSERT" });
   expect(grants.rows).not.toContainEqual({ table_name: "report_artifact", privilege_type: "UPDATE" });

@@ -68,6 +68,7 @@ import type { Pool } from "pg";
 import { reportAnalyticsSummary } from "@/data/analytics";
 import { callExportDocuments } from "@/data/call-export-documents";
 import { R2ObjectError, sha256Hex, type ArtifactObjects } from "@/data/r2-objects";
+import { reportCsvObjectKey, reportPdfObjectKey, reportZipObjectKey } from "@/data/report-artifact-lifecycle";
 import { isoInTimeZone, reportCsvHeader, reportCsvRows, reportManifestHeader, reportManifestRows, type RecordingExportOutcome, type ReportManifestCall } from "@/data/report-csv";
 import { buildReportDocument, reportNotableGoodLeadLimit } from "@/data/report-document";
 import { completeReportJob, failReportJob, startReportJob, type ReportArtifact, type ReportFileKind, type ReportJob } from "@/data/report-jobs";
@@ -86,19 +87,7 @@ export const reportCsvContentType = "text/csv; charset=utf-8";
 
 export const reportPdfContentType = "application/pdf";
 
-export function reportCsvObjectKey(jobId: string): string {
-  return `reports/${jobId}/calls.csv`;
-}
-
-export function reportPdfObjectKey(jobId: string): string {
-  return `reports/${jobId}/report.pdf`;
-}
-
 export const reportZipContentType = "application/zip";
-
-export function reportZipObjectKey(jobId: string): string {
-  return `reports/${jobId}/recordings.zip`;
-}
 
 function recordingFileName(call: ReportSelectionCall, timeZone: string): string {
   const local = isoInTimeZone(call.startedAt, timeZone).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
