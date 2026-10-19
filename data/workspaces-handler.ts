@@ -7,7 +7,8 @@
  *  Resolves Active Operators and maps Workspace and routing requests to their
  *  Organization-scoped services. Streams available Recording audio and serves
  *  its waveform peaks, and reads Call Detail and Recent Calls, for any actor
- *  who can currently read its Workspace. Saves an Operator's Lead Review and
+ *  who can currently read its Workspace. The Workspace list carries each
+ *  listed Workspace's analytics list stats. Saves an Operator's Lead Review and
  *  accepts an Operator's Retry of a failed Transcript or Lead Assessment.
  *
  * @remarks
@@ -16,6 +17,7 @@
  *
  * @see
  *  data/workspace-routing.ts
+ *  data/analytics.ts
  *  data/recording-audio.ts
  *  data/recording-media.ts
  *
@@ -25,6 +27,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
+import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
 import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { createCallDetails } from "@/data/call-details";
@@ -165,14 +168,13 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         const url = new URL(request.url);
         const state = url.searchParams.get("state") ?? "All";
         if (state !== "All" && !workspaceStates.includes(state as WorkspaceState)) throw new WorkspacesError("invalid_input");
-        return response(
-          await readable.list({
-            search: url.searchParams.get("search") ?? undefined,
-            state: state as WorkspaceState | "All",
-            page: parsePositiveInteger(url.searchParams.get("page")),
-            pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
-          }),
-        );
+        const listed = await readable.list({
+          search: url.searchParams.get("search") ?? undefined,
+          state: state as WorkspaceState | "All",
+          page: parsePositiveInteger(url.searchParams.get("page")),
+          pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
+        });
+        return response(await withWorkspaceListStats(createAnalytics(options.pool, actor), listed));
       }
       if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
       const leadReviewMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/lead-review$/);

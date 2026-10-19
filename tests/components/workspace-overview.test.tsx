@@ -4,12 +4,18 @@
  * @brief  Verifies Workspace routing health and Call Flow summary.
  *
  * @description
- *  Covers routing metadata, published flow steps, the Edit Flow link, and
- *  the Recent Calls list with its links to Call Detail, View Calls, and
- *  Empty state, and the Workspace tabs below the header.
+ *  Covers routing health with webhook health and the last successful
+ *  inbound Call, a webhook Warning isolated in routing health with an
+ *  Operator-only recovery action, published flow steps, the header actions
+ *  for Operators and Client Viewers, the KPI row and Call trends in the
+ *  Workspace timezone with date controls, a failed analytics region that
+ *  keeps every other region, the Archived label, the Recent Calls list with
+ *  its links to Call Detail, View Calls carrying the range, and Empty
+ *  state, and the Workspace tabs below the header.
  *
  * @remarks
- *  Overview tests use the public component boundary.
+ *  Overview tests use the public component boundary. Navigation is faked at
+ *  the next/navigation boundary.
  *
  * @see
  *  components/tracer/workspace-overview.tsx
@@ -17,11 +23,15 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspaceOverview from "@/components/tracer/workspace-overview";
+import type { AnalyticsSummary } from "@/data/analytics";
 import { generateInitialCallFlow } from "@/data/call-flow";
+
+const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => "/workspaces/workspace-1" }));
 
 const workspace = {
   id: "workspace-1",
@@ -44,7 +54,44 @@ const workspace = {
   archivedAt: null,
 };
 
-afterEach(() => cleanup());
+const summary: AnalyticsSummary = {
+  timeZone: "America/Chicago",
+  workspace: { id: "workspace-1", name: "Phoenix Office" },
+  window: { from: "2026-09-19", to: "2026-10-18" },
+  previousWindow: { from: "2026-08-20", to: "2026-09-18" },
+  kpis: {
+    totalCalls: { value: 17, comparison: { previous: 6, change: 11 / 6, unit: "relative" } },
+    answerRate: { value: 7 / 11, comparison: { previous: 3 / 4, change: 7 / 11 - 3 / 4, unit: "points" } },
+    goodLeads: { value: 5, comparison: { previous: 2, change: 1.5, unit: "relative" } },
+    averageConnectedSeconds: { value: 95, comparison: { previous: null, change: null, unit: "relative" } },
+  },
+  trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5 }] },
+  workspacePerformance: null,
+};
+const analytics = { range: { kind: "days" as const, days: 30 as const }, summary, callsHref: "/workspaces/workspace-1/calls?from=2026-09-19&to=2026-10-18" };
+const healthy = { lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", webhook: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" } };
+
+beforeEach(() => {
+  router.push.mockReset();
+  router.refresh.mockReset();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+function routingHealth(): HTMLElement {
+  return screen.getByRole("region", { name: "Routing health" });
+}
 
 describe("WorkspaceOverview", () => {
   it("renders routing health, Call Flow steps, and Edit Flow link", () => {
@@ -66,9 +113,8 @@ describe("WorkspaceOverview", () => {
         }}
       />,
     );
-    expect(screen.getByText("+14155550100")).toBeVisible();
-    expect(screen.getByText("+14155550101")).toBeVisible();
-    expect(screen.getByText("Routing health")).toBeVisible();
+    expect(within(routingHealth()).getByText("+14155550100")).toBeVisible();
+    expect(within(routingHealth()).getByText("+14155550101")).toBeVisible();
     expect(screen.getByText("Incoming Call")).toBeVisible();
     expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
   });
@@ -153,5 +199,77 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
 
     rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} readOnly />);
     expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls"]);
+  });
+
+  it("reports Twilio webhook health and the last successful inbound Call in routing health", () => {
+    render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} routingHealth={healthy} />);
+    const health = routingHealth();
+    expect(within(health).getByText("Healthy")).toBeVisible();
+    expect(within(health).getByText("Last successful inbound Call").nextElementSibling).toHaveTextContent("Oct 18, 2026, 10:04:05 AM");
+    expect(screen.queryByText(/later milestone/)).not.toBeInTheDocument();
+  });
+
+  it("isolates a webhook Warning in routing health with a recovery action only for Operators", () => {
+    const warning = { lastSuccessfulInboundCallAt: null, webhook: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null } };
+    const { rerender } = render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} routingHealth={warning} analytics={analytics} />);
+    expect(within(routingHealth()).getByText("Needs attention")).toBeVisible();
+    expect(within(routingHealth()).getByText("No accepted Twilio voice webhook for the current Tracking Number.")).toBeVisible();
+    expect(within(routingHealth()).getByRole("link", { name: "Review Number Settings" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/number");
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("17")).toBeVisible();
+
+    rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} routingHealth={warning} analytics={analytics} readOnly />);
+    expect(within(routingHealth()).getByText("Needs attention")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Review Number Settings" })).not.toBeInTheDocument();
+  });
+
+  it("shows the KPI row and Call trends in the Workspace reporting timezone with date controls", () => {
+    render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} recentCalls={[]} />);
+    expect(screen.getAllByText("America/Chicago").length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("-11.4 pts vs previous period")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Call trends" })).getByRole("list", { name: "Chart legend" })).toBeVisible();
+    fireEvent.click(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "7 Days" }));
+    expect(router.push).toHaveBeenCalledWith("/workspaces/workspace-1?range=7d", { scroll: false });
+    expect(screen.getByRole("link", { name: "View Calls" })).toHaveAttribute("href", "/workspaces/workspace-1/calls?from=2026-09-19&to=2026-10-18");
+    expect(screen.queryByRole("region", { name: "Workspace performance" })).not.toBeInTheDocument();
+  });
+
+  it("fails only the analytics region and keeps routing health, the Call Flow, and Recent Calls", () => {
+    render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={{ ...analytics, summary: null }} routingHealth={healthy} recentCalls={[]} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Analytics are unavailable.");
+    expect(within(routingHealth()).getByText("Healthy")).toBeVisible();
+    expect(screen.getByText("Call Flow")).toBeVisible();
+    expect(screen.getByText("Recent Calls")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(router.refresh).toHaveBeenCalled();
+  });
+
+  it("gives Operators Edit Flow and Workspace Settings, and Client Viewers a disabled Generate Report and Reports", () => {
+    const { rerender } = render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} />);
+    expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
+    expect(screen.getByRole("link", { name: "Workspace Settings" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/general");
+    expect(screen.queryByRole("button", { name: "Generate Report" })).not.toBeInTheDocument();
+
+    rerender(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} readOnly />);
+    expect(screen.getByRole("button", { name: "Generate Report" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Reports" })).toHaveAttribute("href", "/reports");
+    expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
+  });
+
+  it("keeps historical analytics readable for an Archived Workspace and removes live-routing actions", () => {
+    const archived = { ...workspace, state: "Archived" as const, archivedAt: "2026-10-01T17:00:00.000Z" };
+    render(<WorkspaceOverview workspace={archived} flow={{ published: null }} analytics={analytics} routingHealth={{ ...healthy, webhook: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } }} />);
+    expect(screen.getByText("Archived Oct 1, 2026. Historical analytics and Calls stay readable; routing is read-only.")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("17")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Review Number Settings" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the analytics with Resume Setup and its checklist while setup is incomplete", () => {
+    const setup = { ...workspace, state: "Setup Required" as const, trackingNumber: null, publishedFlowVersion: null };
+    render(<WorkspaceOverview workspace={setup} flow={{ published: null }} analytics={analytics} />);
+    expect(screen.getByRole("link", { name: "Resume Setup" })).toHaveAttribute("href", "/workspaces?resume=workspace-1");
+    expect(screen.getByRole("heading", { name: "Setup Required" })).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Total Calls" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
   });
 });

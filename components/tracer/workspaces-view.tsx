@@ -5,7 +5,9 @@
  *
  * @description
  *  Loads Organization-scoped Workspaces and guides Operators through Basics,
- *  Number, Routing, and Review before activating a Workspace.
+ *  Number, Routing, and Review before activating a Workspace. Each row shows
+ *  the Workspace's Calls and Good Leads for the last 30 days, its last Call
+ *  in its reporting timezone, and its Twilio webhook health.
  *
  * @remarks
  *  Number selection remains local until activation, while routing and flow
@@ -13,6 +15,7 @@
  *
  * @see
  *  data/workspaces-handler.ts
+ *  data/analytics.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -50,6 +53,8 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { formatCallTime } from "@/components/tracer/call-format";
+import type { WebhookHealth, WorkspaceListStats, WorkspaceListWithStats } from "@/data/analytics";
 import { recordingDisclosureText, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
@@ -72,6 +77,14 @@ type FlowResponse = {
   draft: { graph: CallFlowGraph } | null;
   validation: { valid: boolean; issues: Array<{ code: string; message: string }> } | null;
 };
+
+type WorkspaceRow = WorkspaceRecord & { stats?: WorkspaceListStats };
+
+const healthBadges = {
+  Healthy: ["Healthy", "success-light"],
+  Warning: ["Needs attention", "warning-light"],
+  "Not applicable": ["Not applicable", "outline"],
+} as const satisfies Record<WebhookHealth["status"], readonly [string, string]>;
 
 function stateVariant(state: WorkspaceState): "primary-light" | "success-light" | "destructive-light" {
   return state === "Active" ? "success-light" : state === "Archived" ? "destructive-light" : "primary-light";
@@ -107,13 +120,13 @@ export default function WorkspacesView({
   readOnly = false,
 }: {
   initialTimezone: string;
-  initialResult: WorkspaceListResult;
+  initialResult: WorkspaceListWithStats;
   initialQuery: WorkspacesViewQuery;
   readOnly?: boolean;
 }) {
   const searchParams = useSearchParams();
   const resumeId = searchParams.get("resume");
-  const [result, setResult] = useState<WorkspaceListResult>(initialResult);
+  const [result, setResult] = useState<WorkspaceListWithStats>(initialResult);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [search, setSearch] = useState(initialQuery.search);
@@ -151,6 +164,7 @@ export default function WorkspacesView({
         page: typeof body.page === "number" ? body.page : 1,
         pageSize: typeof body.pageSize === "number" ? body.pageSize : pageSize,
         counts: (body.counts as WorkspaceListResult["counts"]) ?? { setupRequired: 0, active: 0, archived: 0 },
+        stats: (body.stats as WorkspaceListWithStats["stats"]) ?? {},
       });
     } catch {
       setFetchError(true);
@@ -344,7 +358,8 @@ export default function WorkspacesView({
     setBusy(false);
   }
 
-  const columns = useMemo<ColumnDef<DataGridFeatures, WorkspaceRecord>[]>(
+  const rows = useMemo(() => result.workspaces.map((workspace): WorkspaceRow => ({ ...workspace, stats: result.stats[workspace.id] })), [result]);
+  const columns = useMemo<ColumnDef<DataGridFeatures, WorkspaceRow>[]>(
     () => [
       {
         accessorKey: "name",
@@ -364,10 +379,26 @@ export default function WorkspacesView({
       },
       { id: "trackingNumber", header: "Tracking Number", cell: ({ row }) => row.original.trackingNumber ?? "-" },
       { accessorKey: "destinationNumber", header: "Destination Number", cell: ({ row }) => row.original.destinationNumber ?? "-" },
-      { id: "calls", header: "Calls (30d)", cell: () => "-" },
-      { id: "goodLeads", header: "Good Leads (30d)", cell: () => "-" },
-      { id: "lastCall", header: "Last Call", cell: () => "-" },
-      { id: "integrationHealth", header: "Integration health", cell: () => "Not configured" },
+      { id: "calls", header: "Calls (30d)", cell: ({ row }) => <span className="tabular-nums">{row.original.stats?.callsLast30Days ?? "-"}</span> },
+      { id: "goodLeads", header: "Good Leads (30d)", cell: ({ row }) => <span className="tabular-nums">{row.original.stats?.goodLeadsLast30Days ?? "-"}</span> },
+      {
+        id: "lastCall",
+        header: "Last Call",
+        cell: ({ row }) => {
+          const lastCallAt = row.original.stats?.lastCallAt;
+          return <span className="tabular-nums">{lastCallAt ? formatCallTime(lastCallAt, row.original.reportingTimezone) : "-"}</span>;
+        },
+      },
+      {
+        id: "integrationHealth",
+        header: "Integration health",
+        cell: ({ row }) => {
+          const health = row.original.stats?.integrationHealth;
+          if (!health) return "-";
+          const [label, variant] = healthBadges[health.status];
+          return <Badge variant={variant}>{label}</Badge>;
+        },
+      },
       {
         id: "actions",
         header: "",
@@ -389,7 +420,7 @@ export default function WorkspacesView({
   );
   const table = useTable({
     features: dataGridFeatures,
-    data: result.workspaces,
+    data: rows,
     columns,
     getRowId: (row) => row.id,
     state: { pagination },

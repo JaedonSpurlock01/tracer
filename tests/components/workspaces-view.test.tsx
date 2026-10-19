@@ -44,7 +44,7 @@ const workspace = {
   updatedAt: "2026-01-01T00:00:00.000Z",
   archivedAt: null,
 };
-const result = { workspaces: [workspace], total: 1, page: 1, pageSize: 10, counts: { setupRequired: 1, active: 0, archived: 0 } };
+const result = { workspaces: [workspace], total: 1, page: 1, pageSize: 10, counts: { setupRequired: 1, active: 0, archived: 0 }, stats: {} };
 const initial = { initialResult: result, initialQuery: { search: "", state: "All" as const, page: 1 } };
 
 beforeEach(() => {
@@ -81,6 +81,27 @@ describe("WorkspacesView", () => {
     const { container } = render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(screen.getByRole("link", { name: /^Phoenix Office/ })).toBeVisible();
     expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
+  it("shows each Workspace's 30-day Calls, Good Leads, last Call, and integration health", async () => {
+    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const, trackingNumber: "+14155550101" };
+    const south = { ...workspace, id: "south", name: "South Dental", state: "Active" as const, trackingNumber: "+14155550102" };
+    const listed = {
+      ...result,
+      workspaces: [north, south, workspace],
+      total: 3,
+      stats: {
+        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" } },
+        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null } },
+        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null } },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
+    render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
+    const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
+    await waitFor(() => expect(cells(/^North Plumbing/).slice(4, 8)).toEqual(["17", "5", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
+    expect(cells(/^South Dental/).slice(4, 8)).toEqual(["0", "0", "-", "Needs attention"]);
+    expect(cells(/^Phoenix Office/).slice(4, 8)).toEqual(["0", "0", "-", "Not applicable"]);
   });
 
   it("quietly revalidates the server-provided page without a loading skeleton", async () => {

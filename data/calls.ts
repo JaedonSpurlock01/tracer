@@ -134,7 +134,7 @@ export type CallListRow = {
   review_classification: LeadClassification | null;
 };
 
-const effectiveClassificationSql = "coalesce(lr.classification, la.classification)";
+export const effectiveClassificationSql = "coalesce(lr.classification, la.classification)";
 
 const sortExpressions: Readonly<Record<CallSortColumn, string>> = {
   startedAt: "c.started_at",

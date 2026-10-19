@@ -216,6 +216,15 @@ describe.sequential("Workspaces", () => {
     expect(listed.body.counts).toMatchObject({ setupRequired: 5, active: 0, archived: 0 });
   });
 
+  it("lists each listed Workspace's 30-day Calls, Good Leads, last Call, and integration health", async () => {
+    const cookie = await signIn("first@example.com");
+    const listed = await json(new Request("http://localhost:3000/api/workspaces?search=Alpha", { headers: { cookie } }));
+    const id = (listed.body.workspaces as Array<{ id: string }>)[0].id;
+    expect(listed.body.stats).toEqual({
+      [id]: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } },
+    });
+  });
+
   it("updates, archives, restores, and reports active count without provider changes", async () => {
     const cookie = await signIn("first@example.com");
     const listed = await json(new Request("http://localhost:3000/api/workspaces?search=Alpha", { headers: { cookie } }));
