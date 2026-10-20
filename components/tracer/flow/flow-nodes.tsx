@@ -35,7 +35,7 @@ function summary(node: FlowNode): string {
 export default function FlowNodeView({ data: rawData }: NodeProps) {
   const data = rawData as unknown as FlowNode;
   return (
-    <div className="min-w-36 rounded-md border bg-card p-2 text-xs shadow-sm" data-testid={`flow-node-${data.id}`}>
+    <div className="min-w-36 rounded-md border bg-card p-2 text-xs" data-testid={`flow-node-${data.id}`}>
       <strong className="block capitalize">{data.type.replaceAll("_", " ")}</strong>
       <span className="block text-muted-foreground">{summary(data)}</span>
       {data.type !== "incoming_call" && <Handle type="target" position={Position.Top} isConnectable />}

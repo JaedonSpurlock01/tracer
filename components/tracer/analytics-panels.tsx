@@ -52,10 +52,16 @@ import type { AnalyticsComparison, AnalyticsKpi, AnalyticsKpis, AnalyticsTrendPo
 import { analyticsPresetDays, analyticsRangeSearchParams, type AnalyticsRange, type AnalyticsTrendInterval } from "@/data/analytics-range";
 
 const series = [
-  { key: "totalCalls", label: "Total Calls", color: "var(--chart-1)", dash: undefined, dot: "circle" },
+  { key: "totalCalls", label: "Total Calls", color: "var(--chart-3)", dash: undefined, dot: "circle" },
   { key: "answeredCalls", label: "Answered Calls", color: "var(--chart-2)", dash: "6 4", dot: "square" },
-  { key: "goodLeads", label: "Good Leads", color: "var(--chart-3)", dash: "2 3", dot: "diamond" },
+  { key: "goodLeads", label: "Good Leads", color: "var(--chart-1)", dash: "2 3", dot: "diamond" },
 ] as const;
+
+/**
+ * Every range button keeps the outline border so the ButtonGroup's shared
+ * edges stay continuous; the pressed one is told apart by fill and ink.
+ */
+const rangeButtonClassName = "text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground";
 
 const chartConfig = Object.fromEntries(series.map((item) => [item.key, { label: item.label, color: item.color }])) satisfies ChartConfig;
 
@@ -108,7 +114,7 @@ function CustomRange({ range, onRangeChange }: { range: AnalyticsRange; onRangeC
   const [selected, setSelected] = useState<{ from?: Date; to?: Date }>(() => (custom ? { from: localDate(custom.from), to: localDate(custom.to) } : {}));
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button type="button" size="sm" variant={custom ? "secondary" : "outline"} aria-pressed={custom !== null} />}>
+      <PopoverTrigger render={<Button type="button" size="sm" variant="outline" className={rangeButtonClassName} aria-pressed={custom !== null} />}>
         <span className="tabular-nums">{custom ? `${calendarLabel(custom.from)} - ${calendarLabel(custom.to)}` : "Custom"}</span>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-auto">
@@ -155,7 +161,8 @@ export function AnalyticsRangeControls({ range, onRangeChange, disabled = false 
             key={preset.label}
             type="button"
             size="sm"
-            variant={preset.current ? "secondary" : "outline"}
+            variant="outline"
+            className={rangeButtonClassName}
             aria-pressed={preset.current}
             disabled={disabled}
             onClick={() => onRangeChange(preset.range)}
@@ -173,7 +180,7 @@ function KpiTile({ id, label, value, kpi, definition }: { id: string; label: str
   return (
     <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
       <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
-      <p className="text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      <p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
       {kpi.comparison ? <p className="text-xs text-muted-foreground tabular-nums">{formatComparison(kpi.comparison)}</p> : null}
       <p className="text-xs text-muted-foreground">{definition}</p>
     </FramePanel>

@@ -18,23 +18,39 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: (name: string) => (name === "tracer-theme" && cookie.value !== undefined ? { name, value: cookie.value } : undefined) }),
+}));
+
 vi.mock("next/font/google", () => ({
   Geist: () => ({ variable: "font-geist" }),
+  Geist_Mono: () => ({ variable: "font-geist-mono" }),
 }));
 
 import RootLayout from "@/app/layout";
 
 describe("root layout", () => {
-  it("applies dark mode and semantic theme tokens", () => {
-    const markup = renderToStaticMarkup(
-      <RootLayout>
-        <main>Tracer content</main>
-      </RootLayout>,
-    );
+  async function markupFor(value: string | undefined): Promise<string> {
+    cookie.value = value;
+    return renderToStaticMarkup(await RootLayout({ children: <main>Tracer content</main> }));
+  }
 
-    expect(markup).toContain('<html lang="en" class="dark"');
+  it("applies the dark theme by default with semantic theme tokens", async () => {
+    const markup = await markupFor(undefined);
+
+    expect(markup).toContain('<html lang="en" data-theme="dark" class="dark"');
     expect(markup).toContain("bg-background");
     expect(markup).toContain("text-foreground");
     expect(markup).toContain("<main>Tracer content</main>");
+  });
+
+  it("applies the light theme from its cookie without the dark class", async () => {
+    expect(await markupFor("light")).toContain('<html lang="en" data-theme="light">');
+  });
+
+  it("ignores an unknown theme cookie", async () => {
+    expect(await markupFor("neon\" onload=\"x")).toContain('<html lang="en" data-theme="dark" class="dark"');
   });
 });

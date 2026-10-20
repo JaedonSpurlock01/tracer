@@ -48,6 +48,8 @@ import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagina
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "@/components/reui/frame";
+import { EmptyState } from "@/components/tracer/empty-state";
+import { NoReportsArt } from "@/components/tracer/line-art";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -282,12 +284,16 @@ export default function ReportsView({ scope, operator = false }: { scope: Genera
       </Button>
     </div>
   ) : (
-    <div className="flex flex-col items-center gap-3">
-      <p>Reports generate on demand from your Calls. Generate one to see it here.</p>
-      <Button type="button" variant="outline" onClick={() => setGenerateOpen(true)}>
-        Generate Report
-      </Button>
-    </div>
+    <EmptyState
+      art={<NoReportsArt />}
+      title="No Reports yet"
+      description="Reports generate on demand from your Calls. Generate one to see it here."
+      action={
+        <Button type="button" variant="outline" onClick={() => setGenerateOpen(true)}>
+          Generate Report
+        </Button>
+      }
+    />
   );
 
   return (

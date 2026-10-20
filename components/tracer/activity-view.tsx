@@ -49,6 +49,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
+import { EmptyState } from "@/components/tracer/empty-state";
+import { NoActivityArt, NoResultsArt } from "@/components/tracer/line-art";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -198,7 +200,7 @@ function ActivityItem({ entry, step, back, timeZone }: { entry: ActivityEntry; s
         <TimelineSeparator className="group-data-[orientation=vertical]/timeline:-left-7 group-data-[orientation=vertical]/timeline:h-[calc(100%-1.5rem-0.25rem)] group-data-[orientation=vertical]/timeline:translate-y-7" />
         <div className="flex flex-wrap items-center gap-2">
           <TimelineTitle className="text-sm font-semibold">
-            <Link href={callDetailHref({ id: entry.id, workspaceId: entry.workspace.id }, back)} prefetch className="flex flex-wrap items-center gap-2 tabular-nums transition-colors hover:text-muted-foreground">
+            <Link href={callDetailHref({ id: entry.id, workspaceId: entry.workspace.id }, back)} prefetch className="flex flex-wrap items-center gap-2 font-mono tabular-nums transition-colors hover:text-muted-foreground">
               <span>{formatTimeOfDay(entry.startedAt, timeZone)}</span>
               <span>{entry.callerNumber ?? "Unknown caller"}</span>
             </Link>
@@ -216,25 +218,25 @@ function ActivityItem({ entry, step, back, timeZone }: { entry: ActivityEntry; s
         </TimelineIndicator>
       </TimelineHeader>
       <TimelineContent className="mt-2">
-        <Frame stacked dense spacing="sm">
+        <Frame variant="ghost" dense spacing="sm" className="rounded-lg border border-border bg-card">
           <Collapsible className="group/collapsible">
             <CollapsibleTrigger className="flex w-full">
               <FrameHeader className="flex grow flex-row items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="font-medium text-muted-foreground">{entry.workspace.name}</span>
                   {effective ? <LeadClassificationBadge classification={effective.classification} automated={effective.source === "assessment"} /> : null}
-                  <span className="tabular-nums text-muted-foreground">{entry.connectedDurationSeconds === null ? "-" : formatClock(entry.connectedDurationSeconds)}</span>
+                  <span className="font-mono tabular-nums text-muted-foreground">{entry.connectedDurationSeconds === null ? "-" : formatClock(entry.connectedDurationSeconds)}</span>
                 </div>
                 <ChevronRightIcon className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/collapsible:rotate-90 motion-reduce:transition-none" />
               </FrameHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <FramePanel>
+              <FramePanel className="rounded-t-none border-t border-t-border">
                 <ol className="flex flex-col gap-2">
                   {entry.steps.map((step) => (
                     <li key={step.id} className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="w-20 text-xs tabular-nums text-muted-foreground">{step.occurredAt ? formatTimeOfDay(step.occurredAt, timeZone) : null}</span>
+                        <span className="w-20 font-mono text-xs tabular-nums text-muted-foreground">{step.occurredAt ? formatTimeOfDay(step.occurredAt, timeZone) : null}</span>
                         <span data-step-label className="text-sm">{stepLabel(step)}</span>
                       </div>
                       {stepBadge(step)}
@@ -457,18 +459,22 @@ export default function ActivityView({
           <>
             {entries.length === 0 ? (
               <Frame>
-                <FramePanel className="flex flex-col items-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                <FramePanel>
                   {!result.hasCalls ? (
-                    "Call events appear after the first inbound Call."
+                    <EmptyState art={<NoActivityArt />} title="No Activity yet" description="Call events appear after the first inbound Call." />
                   ) : filtered ? (
-                    <>
-                      <p>No Calls match these filters.</p>
-                      <Button type="button" variant="outline" onClick={clearFilters}>
-                        Clear Filters
-                      </Button>
-                    </>
+                    <EmptyState
+                      art={<NoResultsArt />}
+                      title="No matching Calls"
+                      description="No Calls match these filters."
+                      action={
+                        <Button type="button" variant="outline" onClick={clearFilters}>
+                          Clear Filters
+                        </Button>
+                      }
+                    />
                   ) : (
-                    "No Calls in the last 7 days."
+                    <EmptyState art={<NoActivityArt />} title="Quiet week" description="No Calls in the last 7 days." />
                   )}
                 </FramePanel>
               </Frame>

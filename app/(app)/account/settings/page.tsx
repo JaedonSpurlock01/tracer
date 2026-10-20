@@ -6,10 +6,16 @@
  * @description
  *  Loads authenticated profile, membership, and session data and
  *  renders one active settings section through the public auth APIs.
+ *  Profile holds the display name and the chosen Gaze avatar seed, saved
+ *  together; the seed is stored in the user's image field as a token.
+ *  Preferences holds the color theme, applied at once and kept in a cookie,
+ *  and the timezone, saved with Save preferences.
  *
  * @remarks
  *  Email, role, and User State are read-only account facts. Session identity
  *  is matched by token so current-session revocation is immediate and precise.
+ *  The page sits directly in the shell's content padding, and each panel's
+ *  header, fields, and footer share the panel's one content edge.
  *
  * @see
  *  DESIGN.md
@@ -20,23 +26,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import {
-  Frame,
-  FrameDescription,
-  FrameFooter,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "@/components/reui/frame";
+import { Frame, FrameDescription, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AvatarPicker } from "@/components/tracer/avatar-picker";
+import { ThemePicker } from "@/components/tracer/theme-picker";
 import { isValidIanaTimezone, toCanonicalRole, type MembershipRole, type UserState } from "@/data/auth-policy";
+import { avatarImageToken, avatarInitials, avatarSeedFromImage } from "@/data/avatar";
 
 interface SessionRecord {
   id: string;
@@ -47,7 +49,7 @@ interface SessionRecord {
 }
 
 interface AuthSession {
-  user: { id: string; name: string; email: string; state: UserState; timezone: string };
+  user: { id: string; name: string; email: string; state: UserState; timezone: string; image?: string | null };
   session: { token: string };
 }
 
@@ -71,6 +73,7 @@ export default function AccountSettingsPage() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [role, setRole] = useState<"Operator" | "Client Viewer">("Operator");
   const [name, setName] = useState("");
+  const [avatarSeed, setAvatarSeed] = useState("");
   const [timezone, setTimezone] = useState("UTC");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,6 +103,7 @@ export default function AccountSettingsPage() {
       const sessionValue = (await sessionsResponse.json()) as SessionRecord[];
       setSession(current);
       setName(current.user.name);
+      setAvatarSeed(avatarSeedFromImage(current.user.image, current.user.id));
       setTimezone(current.user.timezone);
       setSessions(Array.isArray(sessionValue) ? sessionValue : []);
     } catch {
@@ -127,6 +131,7 @@ export default function AccountSettingsPage() {
       if (!membership?.role) throw new Error("Membership unavailable");
       setSession(current);
       setName(current.user.name);
+      setAvatarSeed(avatarSeedFromImage(current.user.image, current.user.id));
       setTimezone(current.user.timezone);
       setRole(toCanonicalRole(membership.role));
       await loadSecurity();
@@ -149,9 +154,11 @@ export default function AccountSettingsPage() {
       const response = await fetch("/api/auth/update-user", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, image: avatarImageToken(avatarSeed) }),
       });
       setProfileMessage(response.ok ? "Profile saved." : "Profile could not be saved.");
+      // The Sidebar avatar is server-rendered; refresh so it shows the new style.
+      if (response.ok) router.refresh();
     } catch {
       setProfileMessage("Profile could not be saved.");
     } finally {
@@ -221,15 +228,15 @@ export default function AccountSettingsPage() {
   const otherSessions = sessions.filter((value) => value.token !== currentToken);
 
   if (loading) {
-    return <main className="mx-auto flex w-full max-w-5xl gap-6 px-6 py-12"><Skeleton className="h-40 w-44" /><Skeleton className="min-h-96 flex-1" /></main>;
+    return <div className="flex w-full max-w-5xl flex-col gap-6 md:flex-row"><Skeleton className="h-28 w-full md:w-44" /><Skeleton className="min-h-96 flex-1" /></div>;
   }
   if (error || !session) {
-    return <main className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-12"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></main>;
+    return <div className="flex w-full max-w-5xl flex-col items-start gap-3"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></div>;
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-12 md:flex-row">
-      <aside className="w-full shrink-0 md:w-44">
+    <div className="flex w-full max-w-5xl flex-col gap-6 md:flex-row md:items-start">
+      <nav aria-label="Account settings" className="w-full shrink-0 md:w-44">
         <div className="flex min-w-max flex-row gap-1 overflow-x-auto md:min-w-0 md:flex-col">
           {sections.map((section) => (
             <Button
@@ -244,19 +251,21 @@ export default function AccountSettingsPage() {
             </Button>
           ))}
         </div>
-      </aside>
-      <Frame className="min-w-0 flex-1" spacing="default">
+      </nav>
+      <Frame className="min-w-0 flex-1">
         {activeSection === "profile" ? (
-          <FramePanel>
-            <FrameHeader>
-              <FrameTitle>Profile</FrameTitle>
-              <FrameDescription>Keep your display name up to date.</FrameDescription>
-            </FrameHeader>
+          <FramePanel className="flex flex-col gap-6">
+            <SectionHeader title="Profile" description="Keep your display name and avatar up to date." />
             <div className="flex flex-col gap-5">
               <Field>
                 <FieldLabel htmlFor="display-name">Display name</FieldLabel>
                 <Input id="display-name" value={name} onChange={(event) => setName(event.target.value)} />
               </Field>
+              <FieldSet className="gap-2">
+                <FieldLegend variant="label" className="mb-0">Avatar</FieldLegend>
+                <FieldDescription>Pick a face, or shuffle for new ones. Your name and email are never sent.</FieldDescription>
+                <AvatarPicker initials={avatarInitials(name || session.user.name)} value={avatarSeed} onValueChange={setAvatarSeed} disabled={busy} />
+              </FieldSet>
               <Field>
                 <FieldLabel htmlFor="account-email">Email</FieldLabel>
                 <Input id="account-email" value={session.user.email} readOnly />
@@ -267,22 +276,24 @@ export default function AccountSettingsPage() {
               </Field>
               <Field>
                 <FieldLabel>User State</FieldLabel>
-                <Badge variant={stateVariant(session.user.state)}>{session.user.state}</Badge>
+                <div><Badge variant={stateVariant(session.user.state)}>{session.user.state}</Badge></div>
               </Field>
             </div>
-            <FrameFooter>
+            <SectionFooter>
               <Button type="button" onClick={() => void saveProfile()} disabled={busy}>Save profile</Button>
               {profileMessage ? <FieldDescription role="status">{profileMessage}</FieldDescription> : null}
-            </FrameFooter>
+            </SectionFooter>
           </FramePanel>
         ) : null}
         {activeSection === "preferences" ? (
-          <FramePanel>
-            <FrameHeader>
-              <FrameTitle>Preferences</FrameTitle>
-              <FrameDescription>Choose the IANA timezone used for dates and times.</FrameDescription>
-            </FrameHeader>
+          <FramePanel className="flex flex-col gap-6">
+            <SectionHeader title="Preferences" description="Choose how Tracer looks and the timezone used for dates and times." />
             <div className="flex flex-col gap-5">
+              <FieldSet className="gap-2">
+                <FieldLegend variant="label" className="mb-0">Theme</FieldLegend>
+                <FieldDescription>Applies right away and is remembered on this browser.</FieldDescription>
+                <ThemePicker />
+              </FieldSet>
               <Field data-invalid={Boolean(preferencesMessage && !isValidIanaTimezone(timezone))}>
                 <FieldLabel htmlFor="timezone">Timezone</FieldLabel>
                 <Input id="timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} aria-invalid={Boolean(preferencesMessage && !isValidIanaTimezone(timezone))} />
@@ -290,46 +301,62 @@ export default function AccountSettingsPage() {
                 {preferencesMessage && !isValidIanaTimezone(timezone) ? <FieldError>{preferencesMessage}</FieldError> : null}
               </Field>
             </div>
-            <FrameFooter>
+            <SectionFooter>
               <Button type="button" onClick={() => void savePreferences()} disabled={busy}>Save preferences</Button>
               {preferencesMessage && isValidIanaTimezone(timezone) ? <FieldDescription role="status">{preferencesMessage}</FieldDescription> : null}
-            </FrameFooter>
+            </SectionFooter>
           </FramePanel>
         ) : null}
         {activeSection === "security" ? (
-          <FramePanel>
-            <FrameHeader>
-              <FrameTitle>Security</FrameTitle>
-              <FrameDescription>Email code sign-in is available.</FrameDescription>
-            </FrameHeader>
+          <FramePanel className="flex flex-col gap-6">
+            <SectionHeader title="Security" description="Email code sign-in is available." />
             {securityLoading ? <div className="flex flex-col gap-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div> : null}
-            {!securityLoading && securityError ? <div className="flex flex-col gap-3"><p role="alert">{securityError}</p><Button variant="outline" onClick={() => void loadSecurity()}>Retry</Button></div> : null}
+            {!securityLoading && securityError ? <div className="flex flex-col items-start gap-3"><p role="alert">{securityError}</p><Button variant="outline" onClick={() => void loadSecurity()}>Retry</Button></div> : null}
             {!securityLoading && !securityError ? (
-              <div className="flex flex-col gap-5">
-                {currentSession ? (
-                  <div className="flex items-center justify-between gap-4 border-b border-border py-3">
-                    <div><p className="font-medium">Current session</p><p className="text-sm text-muted-foreground">{currentSession.userAgent || "This browser"}</p></div>
-                    <AlertDialog>
-                      <AlertDialogTrigger render={<Button type="button" variant="outline" />}>Revoke</AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader><AlertDialogTitle>Revoke current session?</AlertDialogTitle><AlertDialogDescription>You will return to Sign in on this browser.</AlertDialogDescription></AlertDialogHeader>
-                        <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => void revokeSession(currentSession.token, true)}>Revoke session</AlertDialogAction></AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                ) : null}
-                {otherSessions.length ? otherSessions.map((value) => (
-                  <div key={value.id} className="flex items-center justify-between gap-4 border-b border-border py-3">
-                    <div><p>{value.userAgent || "Other session"}</p><p className="text-sm text-muted-foreground">Expires {new Date(value.expiresAt).toLocaleString()}</p></div>
-                    <Button type="button" variant="outline" onClick={() => void revokeSession(value.token, false)}>Revoke</Button>
-                  </div>
-                )) : <p className="text-sm text-muted-foreground">No other active sessions.</p>}
-                <Button type="button" variant="outline" onClick={() => void revokeOtherSessions()} disabled={!otherSessions.length}>Revoke other sessions</Button>
-              </div>
+              <>
+                <ul className="flex flex-col divide-y divide-border border-t border-border">
+                  {currentSession ? (
+                    <li className="flex items-center justify-between gap-4 py-3">
+                      <div className="flex min-w-0 flex-col gap-0.5"><p className="text-sm font-medium">Current session</p><p className="truncate text-sm text-muted-foreground">{currentSession.userAgent || "This browser"}</p></div>
+                      <AlertDialog>
+                        <AlertDialogTrigger render={<Button type="button" variant="outline" />}>Revoke</AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader><AlertDialogTitle>Revoke current session?</AlertDialogTitle><AlertDialogDescription>You will return to Sign in on this browser.</AlertDialogDescription></AlertDialogHeader>
+                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => void revokeSession(currentSession.token, true)}>Revoke session</AlertDialogAction></AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </li>
+                  ) : null}
+                  {otherSessions.length ? otherSessions.map((value) => (
+                    <li key={value.id} className="flex items-center justify-between gap-4 py-3">
+                      <div className="flex min-w-0 flex-col gap-0.5"><p className="truncate text-sm">{value.userAgent || "Other session"}</p><p className="font-mono text-xs text-muted-foreground tabular-nums">Expires {new Date(value.expiresAt).toLocaleString()}</p></div>
+                      <Button type="button" variant="outline" onClick={() => void revokeSession(value.token, false)}>Revoke</Button>
+                    </li>
+                  )) : <li className="py-3 text-sm text-muted-foreground">No other active sessions.</li>}
+                </ul>
+                <SectionFooter>
+                  <Button type="button" variant="outline" onClick={() => void revokeOtherSessions()} disabled={!otherSessions.length}>Revoke other sessions</Button>
+                </SectionFooter>
+              </>
             ) : null}
           </FramePanel>
         ) : null}
       </Frame>
-    </main>
+    </div>
   );
+}
+
+/** Panel title and description, aligned to the panel's content edge. */
+function SectionHeader({ title, description }: { title: string; description: string }) {
+  return (
+    <header className="flex flex-col gap-1">
+      <FrameTitle>{title}</FrameTitle>
+      <FrameDescription>{description}</FrameDescription>
+    </header>
+  );
+}
+
+/** Panel actions, separated from the fields by one hairline. */
+function SectionFooter({ children }: { children: ReactNode }) {
+  return <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-4">{children}</footer>;
 }

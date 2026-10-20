@@ -47,6 +47,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, DownloadIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
+import { BreadcrumbLabel } from "@/components/tracer/breadcrumbs";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -183,6 +184,7 @@ export default function CallDetailView({
           </ButtonGroup>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
+          <BreadcrumbLabel segment={call.id} label={call.callerNumber ?? "Unknown caller"} />
           <h1 className="text-2xl font-semibold tracking-tight tabular-nums">{call.callerNumber ?? "Unknown caller"}</h1>
           <div className="flex flex-wrap items-center gap-2">
             {call.mp3RecordingId ? (

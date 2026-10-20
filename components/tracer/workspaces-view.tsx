@@ -42,6 +42,8 @@ import {
   StepperTitle,
   StepperTrigger,
 } from "@/components/reui/stepper";
+import { EmptyState } from "@/components/tracer/empty-state";
+import { NoResultsArt, NoWorkspacesArt } from "@/components/tracer/line-art";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
@@ -386,7 +388,7 @@ export default function WorkspacesView({
         header: "Last Call",
         cell: ({ row }) => {
           const lastCallAt = row.original.stats?.lastCallAt;
-          return <span className="tabular-nums">{lastCallAt ? formatCallTime(lastCallAt, row.original.reportingTimezone) : "-"}</span>;
+          return <span className="font-mono tabular-nums">{lastCallAt ? formatCallTime(lastCallAt, row.original.reportingTimezone) : "-"}</span>;
         },
       },
       {
@@ -495,20 +497,25 @@ export default function WorkspacesView({
             </div>
           ) : null}
           {noResults ? (
-            <div className="flex flex-col gap-3" data-testid="workspace-empty-state">
-              <p>
-                {search || stateFilter !== "All"
-                  ? "No matching Workspaces."
+            <EmptyState
+              data-testid="workspace-empty-state"
+              art={search || stateFilter !== "All" ? <NoResultsArt /> : <NoWorkspacesArt />}
+              title={search || stateFilter !== "All" ? "No matching Workspaces" : readOnly ? "No Workspaces shared" : "No Workspaces yet"}
+              description={
+                search || stateFilter !== "All"
+                  ? "Clear the search or change the Workspace State filter."
                   : readOnly
                     ? "No Workspaces are shared with you."
-                    : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."}
-              </p>
-              {readOnly ? null : (
-                <Button type="button" onClick={openCreate}>
-                  Create Workspace
-                </Button>
-              )}
-            </div>
+                    : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."
+              }
+              action={
+                readOnly ? null : (
+                  <Button type="button" onClick={openCreate}>
+                    Create Workspace
+                  </Button>
+                )
+              }
+            />
           ) : null}
           {!fetchError && (loading || result.workspaces.length > 0) ? (
             <DataGrid table={table} recordCount={result.total} isLoading={loading}>

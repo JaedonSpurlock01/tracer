@@ -4,10 +4,18 @@
  * @brief  Defines global styles for Tracer.
  *
  * @description
- *  Loads Tailwind CSS and maps the dark-only Tracer palette to semantic tokens.
+ *  Loads Tailwind CSS and maps each color theme to semantic tokens. A theme
+ *  is one token block selected by `data-theme` on <html> (or on any element,
+ *  for a preview); Dark is the default. In every theme the root is the
+ *  darkest layer, panels sit one step brighter, and layers are separated by
+ *  1px low-contrast borders rather than shadows. The bg-grain utility adds
+ *  the matte paper texture to content regions.
  *
  * @remarks
- *  ReUI state meaning remains separate from Tracer brand colors.
+ *  zinc-950, zinc-900, and zinc-800 are redefined here so the raw utilities
+ *  and the semantic tokens agree. Add a theme with a token block here and an
+ *  entry in data/theme.ts. ReUI state meaning remains separate from Tracer
+ *  brand colors.
  *
  * @see
  *  DESIGN.md
@@ -49,31 +57,40 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@theme {
+  /* #09090a, #121213, #1a1a1b as HSL. */
+  --color-zinc-950: hsl(240 5.3% 3.7%);
+  --color-zinc-900: hsl(240 2.7% 7.3%);
+  --color-zinc-800: hsl(240 1.9% 10.4%);
+  --color-brand: #f79d71;
+}
+
+/* Dark: the default theme. */
 :root,
-.dark {
+[data-theme="dark"] {
   color-scheme: dark;
-  --radius: 0.5rem;
-  --background: #253237;
-  --foreground: #e0fbfc;
-  --card: color-mix(in srgb, #253237 88%, #5c6b73);
-  --card-foreground: #e0fbfc;
-  --popover: color-mix(in srgb, #253237 88%, #5c6b73);
-  --popover-foreground: #e0fbfc;
-  --primary: #c2dfe3;
-  --primary-foreground: #253237;
-  --secondary: color-mix(in srgb, #253237 72%, #5c6b73);
-  --secondary-foreground: #e0fbfc;
-  --muted: color-mix(in srgb, #253237 80%, #5c6b73);
-  --muted-foreground: #9db4c0;
-  --accent: #9db4c0;
-  --accent-foreground: #253237;
+  --radius: 0.25rem;
+  --background: var(--color-zinc-950);
+  --foreground: var(--color-zinc-50);
+  --card: var(--color-zinc-900);
+  --card-foreground: var(--color-zinc-50);
+  --popover: var(--color-zinc-900);
+  --popover-foreground: var(--color-zinc-50);
+  --primary: var(--color-zinc-50);
+  --primary-foreground: var(--color-zinc-900);
+  --secondary: var(--color-zinc-800);
+  --secondary-foreground: var(--color-zinc-50);
+  --muted: var(--color-zinc-800);
+  --muted-foreground: var(--color-zinc-400);
+  --accent: var(--color-zinc-800);
+  --accent-foreground: var(--color-zinc-50);
   --destructive: var(--color-red-500);
   --destructive-foreground: var(--color-red-600);
-  --border: color-mix(in srgb, #5c6b73 65%, transparent);
-  --input: color-mix(in srgb, #5c6b73 55%, transparent);
-  --ring: #c2dfe3;
-  --focus: #c2dfe3;
-  --focus-foreground: #253237;
+  --border: color-mix(in srgb, var(--color-zinc-50) 10%, transparent);
+  --input: color-mix(in srgb, var(--color-zinc-50) 14%, transparent);
+  --ring: var(--color-zinc-400);
+  --focus: var(--color-zinc-50);
+  --focus-foreground: var(--color-zinc-900);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-600);
   --info: var(--color-violet-500);
@@ -82,23 +99,172 @@
   --warning-foreground: var(--color-yellow-600);
   --invert: var(--color-zinc-700);
   --invert-foreground: var(--color-zinc-50);
-  --chart-1: #e0fbfc;
-  --chart-2: #c2dfe3;
-  --chart-3: #9db4c0;
-  --chart-4: color-mix(in srgb, #c2dfe3 60%, #9db4c0);
-  --chart-5: color-mix(in srgb, #e0fbfc 60%, #9db4c0);
-  --sidebar: color-mix(in srgb, #253237 88%, #5c6b73);
-  --sidebar-foreground: #e0fbfc;
-  --sidebar-primary: #c2dfe3;
-  --sidebar-primary-foreground: #253237;
-  --sidebar-accent: color-mix(in srgb, #253237 72%, #5c6b73);
-  --sidebar-accent-foreground: #e0fbfc;
-  --sidebar-border: color-mix(in srgb, #5c6b73 65%, transparent);
-  --sidebar-ring: #c2dfe3;
+  --chart-1: var(--color-brand);
+  --chart-2: var(--color-zinc-50);
+  --chart-3: var(--color-zinc-400);
+  --chart-4: var(--color-zinc-600);
+  --chart-5: var(--color-zinc-200);
+  --sidebar: var(--color-zinc-950);
+  --sidebar-foreground: var(--color-zinc-50);
+  --sidebar-primary: var(--color-zinc-50);
+  --sidebar-primary-foreground: var(--color-zinc-900);
+  --sidebar-accent: var(--color-zinc-800);
+  --sidebar-accent-foreground: var(--color-zinc-50);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--color-zinc-400);
+}
+
+/* Light: zinc on near-white, root one step darker than its panels. */
+[data-theme="light"] {
+  color-scheme: light;
+  --background: var(--color-zinc-100);
+  --foreground: var(--color-zinc-950);
+  --card: var(--color-white);
+  --card-foreground: var(--color-zinc-950);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-zinc-950);
+  --primary: var(--color-zinc-900);
+  --primary-foreground: var(--color-zinc-50);
+  --secondary: var(--color-zinc-200);
+  --secondary-foreground: var(--color-zinc-900);
+  --muted: var(--color-zinc-100);
+  --muted-foreground: var(--color-zinc-500);
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
+  --border: color-mix(in srgb, var(--color-zinc-950) 10%, transparent);
+  --input: color-mix(in srgb, var(--color-zinc-950) 15%, transparent);
+  --ring: var(--color-zinc-400);
+  --focus: var(--color-zinc-900);
+  --focus-foreground: var(--color-zinc-50);
+  --chart-1: var(--color-brand);
+  --chart-2: var(--color-zinc-900);
+  --chart-3: var(--color-zinc-500);
+  --chart-4: var(--color-zinc-300);
+  --chart-5: var(--color-zinc-700);
+  --sidebar: var(--color-zinc-100);
+  --sidebar-foreground: var(--color-zinc-950);
+  --sidebar-primary: var(--color-zinc-900);
+  --sidebar-primary-foreground: var(--color-zinc-50);
+  --sidebar-accent: var(--color-zinc-200);
+  --sidebar-accent-foreground: var(--color-zinc-900);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--color-zinc-400);
+}
+
+/* Midnight: deep navy layers with a periwinkle primary. */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --background: #0a0f1e;
+  --foreground: #e6ecff;
+  --card: #111830;
+  --card-foreground: #e6ecff;
+  --popover: #111830;
+  --popover-foreground: #e6ecff;
+  --primary: #9db8ff;
+  --primary-foreground: #0a0f1e;
+  --secondary: #1a2442;
+  --secondary-foreground: #e6ecff;
+  --muted: #1a2442;
+  --muted-foreground: #8b97ba;
+  --accent: #1a2442;
+  --accent-foreground: #e6ecff;
+  --border: color-mix(in srgb, #e6ecff 10%, transparent);
+  --input: color-mix(in srgb, #e6ecff 14%, transparent);
+  --ring: #8b97ba;
+  --focus: #9db8ff;
+  --focus-foreground: #0a0f1e;
+  --chart-1: var(--color-brand);
+  --chart-2: #e6ecff;
+  --chart-3: #8b97ba;
+  --chart-4: #3a4a74;
+  --chart-5: #c4d0f2;
+  --sidebar: #0a0f1e;
+  --sidebar-foreground: #e6ecff;
+  --sidebar-primary: #9db8ff;
+  --sidebar-primary-foreground: #0a0f1e;
+  --sidebar-accent: #1a2442;
+  --sidebar-accent-foreground: #e6ecff;
+  --sidebar-border: var(--border);
+  --sidebar-ring: #8b97ba;
+}
+
+/* Blossom: rose-tinted light layers with a raspberry primary. */
+[data-theme="blossom"] {
+  color-scheme: light;
+  --background: #f8e6ed;
+  --foreground: #3a1424;
+  --card: #fff8fb;
+  --card-foreground: #3a1424;
+  --popover: #fff8fb;
+  --popover-foreground: #3a1424;
+  --primary: #c73a6e;
+  --primary-foreground: #fff8fb;
+  --secondary: #efcfdc;
+  --secondary-foreground: #3a1424;
+  --muted: #f6dde7;
+  --muted-foreground: #8a5a6c;
+  --accent: #f6dde7;
+  --accent-foreground: #3a1424;
+  --border: color-mix(in srgb, #3a1424 12%, transparent);
+  --input: color-mix(in srgb, #3a1424 18%, transparent);
+  --ring: #c08aa0;
+  --focus: #c73a6e;
+  --focus-foreground: #fff8fb;
+  --chart-1: #c73a6e;
+  --chart-2: #3a1424;
+  --chart-3: #b07a8e;
+  --chart-4: #e8b7ca;
+  --chart-5: #6b2a44;
+  --sidebar: #f8e6ed;
+  --sidebar-foreground: #3a1424;
+  --sidebar-primary: #c73a6e;
+  --sidebar-primary-foreground: #fff8fb;
+  --sidebar-accent: #efcfdc;
+  --sidebar-accent-foreground: #3a1424;
+  --sidebar-border: var(--border);
+  --sidebar-ring: #c08aa0;
+}
+
+/* Blossom Dark: deep plum layers with a bright rose primary. */
+[data-theme="blossom-dark"] {
+  color-scheme: dark;
+  --background: #160a10;
+  --foreground: #fbe7ef;
+  --card: #21111a;
+  --card-foreground: #fbe7ef;
+  --popover: #21111a;
+  --popover-foreground: #fbe7ef;
+  --primary: #f07aa6;
+  --primary-foreground: #160a10;
+  --secondary: #331a2a;
+  --secondary-foreground: #fbe7ef;
+  --muted: #331a2a;
+  --muted-foreground: #b98a9d;
+  --accent: #331a2a;
+  --accent-foreground: #fbe7ef;
+  --border: color-mix(in srgb, #fbe7ef 10%, transparent);
+  --input: color-mix(in srgb, #fbe7ef 14%, transparent);
+  --ring: #b98a9d;
+  --focus: #f07aa6;
+  --focus-foreground: #160a10;
+  --chart-1: #f07aa6;
+  --chart-2: #fbe7ef;
+  --chart-3: #b98a9d;
+  --chart-4: #5c2c43;
+  --chart-5: #f4bcd1;
+  --sidebar: #160a10;
+  --sidebar-foreground: #fbe7ef;
+  --sidebar-primary: #f07aa6;
+  --sidebar-primary-foreground: #160a10;
+  --sidebar-accent: #331a2a;
+  --sidebar-accent-foreground: #fbe7ef;
+  --sidebar-border: var(--border);
+  --sidebar-ring: #b98a9d;
 }
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -145,6 +311,93 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/*
+ * Matte paper grain for content regions. Monochrome fractal noise whose
+ * alpha never exceeds 7%, so it tints the surface it sits on rather than
+ * replacing it. Fixed tile size keeps the grain the same scale on any
+ * element.
+ */
+@utility bg-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+/*
+ * Empty-state line-art motion. Scoped to `.line-art-motion`, which the Scene
+ * wrapper adds only while components/tracer/line-art.tsx has motion on, and
+ * only for viewers who have not asked for reduced motion. Every rule moves
+ * an element the static drawing already contains.
+ *
+ * Radar: the sweep sits on an isometric orbit (rx 84, ry 34). Squashing the
+ * plane to a circle, rotating, and stretching it back keeps the sweep's tip
+ * on the ellipse for every angle, so no path has to be recomputed.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .line-art-motion .line-art-radar {
+    transform-box: view-box;
+    transform-origin: 100px 70px;
+    animation: line-art-radar 6s linear infinite;
+  }
+
+  .line-art-motion .line-art-ping {
+    transform-box: view-box;
+    transform-origin: 100px 70px;
+    animation: line-art-ping 6s ease-out infinite;
+  }
+
+  .line-art-motion .line-art-float {
+    animation: line-art-float 4s ease-in-out infinite;
+  }
+
+  .line-art-motion .line-art-spin {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: line-art-spin 8s ease-in-out infinite;
+  }
+}
+
+@keyframes line-art-radar {
+  from {
+    transform: scaleY(0.40476) rotate(0deg) scaleY(2.47059);
+  }
+  to {
+    transform: scaleY(0.40476) rotate(-360deg) scaleY(2.47059);
+  }
+}
+
+@keyframes line-art-ping {
+  0% {
+    transform: scale(0.1);
+    opacity: 0.6;
+  }
+  70%,
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes line-art-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes line-art-spin {
+  0%,
+  78% {
+    transform: rotate(0deg);
+  }
+  90%,
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 @layer base {

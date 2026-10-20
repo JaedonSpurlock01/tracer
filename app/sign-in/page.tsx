@@ -22,6 +22,7 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useState } from "react";
 
+import { BrandLockup } from "@/components/tracer/brand";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
@@ -66,7 +67,8 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center gap-6 px-6 py-12">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-grain px-6 py-12">
+      <BrandLockup />
       <Card className="auth-card-reveal w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in</CardTitle>

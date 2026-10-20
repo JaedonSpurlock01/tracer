@@ -45,7 +45,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatCallTime, formatClock } from "@/components/tracer/call-format";
+import { EmptyState } from "@/components/tracer/empty-state";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
+import { NoTranscriptArt } from "@/components/tracer/line-art";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { usePlayback } from "@/components/tracer/playback";
 import type { CallDetail, LeadAssessmentEvidence } from "@/data/call-details";
@@ -280,13 +282,13 @@ function TranscriptBody({ transcript, operator, retry, emphasis }: { transcript:
     case "Failed":
       return operator ? <FailedNotice title="Transcription failed" failureReason={transcript.failureReason} retry={retry} /> : <Notice title="Transcript unavailable" detail="The Transcript is not available for this Call." />;
     case "Skipped":
-      return <Notice title="No Transcript" detail={transcript.skipReason ? skipReasons[transcript.skipReason] : "This Call was not analyzed."} />;
+      return <EmptyState art={<NoTranscriptArt />} title="No Transcript" description={transcript.skipReason ? skipReasons[transcript.skipReason] : "This Call was not analyzed."} />;
     case "Purged":
       return <Notice title="Transcript purged" detail="An Operator purged the Transcript with the Recording media." />;
     case "Expired":
       return <Notice title="Transcript expired" detail="Transcript content is removed 12 months after the Call." />;
     case "Unavailable":
-      return <Notice title="Transcript unavailable" detail="No Transcript exists for this Call." />;
+      return <EmptyState art={<NoTranscriptArt />} title="Transcript unavailable" description="No Transcript exists for this Call." />;
   }
 }
 

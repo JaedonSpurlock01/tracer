@@ -106,9 +106,9 @@ function RecentCalls({ workspace, calls, viewCallsHref, onRetry, pending }: { wo
                   className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 py-2 text-sm transition-colors hover:bg-muted/50 sm:grid-cols-[8rem_1fr_auto_4rem]"
                 >
                   <span><CallOutcomeBadge outcome={call.outcome} /></span>
-                  <span className="font-medium tabular-nums">{call.callerNumber ?? "Unknown caller"}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">{formatCallTime(call.startedAt, workspace.reportingTimezone)}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums sm:text-right">{call.connectedDurationSeconds === null ? "-" : formatClock(call.connectedDurationSeconds)}</span>
+                  <span className="font-mono font-medium tabular-nums">{call.callerNumber ?? "Unknown caller"}</span>
+                  <span className="font-mono text-xs text-muted-foreground tabular-nums">{formatCallTime(call.startedAt, workspace.reportingTimezone)}</span>
+                  <span className="font-mono text-xs text-muted-foreground tabular-nums sm:text-right">{call.connectedDurationSeconds === null ? "-" : formatClock(call.connectedDurationSeconds)}</span>
                 </Link>
               </li>
             ))}
@@ -123,7 +123,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm tabular-nums">{children}</dd>
+      <dd className="font-mono text-sm tabular-nums">{children}</dd>
     </div>
   );
 }
@@ -208,8 +208,8 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
           <h1 className="text-2xl font-semibold tracking-tight">{workspace.name}</h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <Badge variant={stateVariant(workspace.state)}>{workspace.state}</Badge>
-            <span className="tabular-nums">Tracking {workspace.trackingNumber ?? "-"}</span>
-            <span className="tabular-nums">Destination {workspace.destinationNumber ?? "-"}</span>
+            <span className="font-mono tabular-nums">Tracking {workspace.trackingNumber ?? "-"}</span>
+            <span className="font-mono tabular-nums">Destination {workspace.destinationNumber ?? "-"}</span>
             <span>{workspace.reportingTimezone}</span>
           </div>
           {archived ? (

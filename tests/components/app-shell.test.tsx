@@ -28,7 +28,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => pathname.value,
 }));
 
-import AppSidebar, { avatarUrl } from "@/components/tracer/app-sidebar";
+import AppSidebar from "@/components/tracer/app-sidebar";
+import { avatarUrl } from "@/data/avatar";
 import UsersView from "@/components/tracer/users-view";
 import { SidebarProvider } from "@/components/ui/sidebar";
 

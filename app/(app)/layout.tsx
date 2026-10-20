@@ -6,14 +6,17 @@
  * @description
  *  Resolves the current actor, redirects unauthenticated requests, and wraps
  *  authenticated pages in the responsive Sidebar shell with the actor's
- *  account menu and current Organization. The header holds the report and
- *  export notification popover, and one jobs provider spans the header and
- *  page so a job a page requests appears in the popover at once.
+ *  account menu and current Organization. The header holds the Sidebar
+ *  trigger, route breadcrumbs, and the report and export notification
+ *  popover. One jobs provider spans the header and page so a job a page
+ *  requests appears in the popover at once, and one breadcrumb provider
+ *  lets a nested route name its own dynamic segment.
  *
  * @remarks
  *  Route authorization remains server-side before shell content renders. The
  *  inset may shrink below its content width so wide Data Grids scroll inside
- *  their Frame instead of widening the page beside the Sidebar.
+ *  their Frame instead of widening the page beside the Sidebar. The inset
+ *  alone carries the paper grain; the Sidebar stays flat.
  *
  * @see
  *  components/tracer/app-sidebar.tsx
@@ -25,11 +28,14 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import AppSidebar from "@/components/tracer/app-sidebar";
+import { BreadcrumbProvider, Breadcrumbs } from "@/components/tracer/breadcrumbs";
 import { ReportJobsProvider } from "@/components/tracer/report-jobs";
 import ReportNotifications from "@/components/tracer/report-notifications";
+import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { resolveRequestActor } from "@/app/(app)/actor";
 import { createOrganizationRepository } from "@/data/organization-repository";
+import { findUserAvatarSeed } from "@/data/user-avatar";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
 interface AppLayoutProps {
@@ -41,21 +47,32 @@ export default async function AppLayout({ children }: AppLayoutProps) {
   if (!actor) {
     redirect("/sign-in");
   }
-  const organization = await withTracerRuntime(({ pool }) => createOrganizationRepository(pool).findById(actor.organizationId));
+  const [organization, avatarSeed] = await withTracerRuntime(({ pool }) =>
+    Promise.all([
+      createOrganizationRepository(pool).findById(actor.organizationId),
+      findUserAvatarSeed(pool, actor.userId).catch(() => undefined),
+    ]),
+  );
 
   return (
     <SidebarProvider>
       <AppSidebar
-        actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role }}
+        actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role, avatarSeed }}
         organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
       />
-      <SidebarInset className="min-w-0">
+      <SidebarInset className="min-w-0 bg-grain">
         <ReportJobsProvider>
-          <header className="flex h-12 items-center justify-between gap-2 border-b border-border px-4">
-            <SidebarTrigger />
-            <ReportNotifications />
-          </header>
-          <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
+          <BreadcrumbProvider>
+            <header className="flex h-12 items-center gap-2 border-b border-border px-4">
+              <SidebarTrigger />
+              <Separator orientation="vertical" className="h-4 w-px" />
+              <Breadcrumbs className="min-w-0" />
+              <div className="ml-auto">
+                <ReportNotifications />
+              </div>
+            </header>
+            <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
+          </BreadcrumbProvider>
         </ReportJobsProvider>
       </SidebarInset>
     </SidebarProvider>
