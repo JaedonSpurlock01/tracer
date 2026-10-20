@@ -9,8 +9,9 @@
  *  number, Workspace, current or final Call Outcome, effective Lead
  *  classification, and connected duration; its header opens Call Detail
  *  with this Activity URL as the `back` param, and expanding it lists the
- *  steps that occurred with one status Badge each and a neutral pending
- *  step while processing is unfinished. The header counts the Calls in
+ *  steps that occurred, including an Operator's Media purge, with one
+ *  status Badge each and a neutral pending step while processing is
+ *  unfinished. The header counts the Calls in
  *  view and shows how long ago the last successful refresh was. The first
  *  page arrives from the server; caller search and the Activity filters
  *  keep their state in the URL and reload the first page under timeline
@@ -82,6 +83,7 @@ const stepCopy = {
   lead_assessment_failed: ["Lead Assessment failed", ["Failed", "destructive-light"]],
   lead_assessment_pending: ["Lead Assessment pending", ["Pending", "outline"]],
   lead_review_added: ["Lead Review added", ["Added", "success-light"]],
+  media_purged: ["Media purged", ["Purged", "warning-light"]],
 } as const satisfies Record<ActivityStepKind, readonly [string, StepBadge]>;
 
 const outcomeCopy = {

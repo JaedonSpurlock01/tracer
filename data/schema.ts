@@ -632,6 +632,7 @@ export const callEventKinds = [
   "lead_assessment_completed",
   "lead_assessment_failed",
   "lead_review_added",
+  "media_purged",
 ] as const;
 
 export const callEvents = pgTable(

@@ -27,7 +27,9 @@
  *  Client Viewer's payload. Object keys, Recording SIDs, provider payloads,
  *  and transfer and waveform failure reasons are never read into the
  *  result. Transcript turns and Transcript-derived evidence are read only
- *  before media expiry, while the non-content Lead Assessment fields stay.
+ *  before media expiry and purge, while the non-content Lead Assessment
+ *  fields stay, and a purged Recording's rationale is withheld as well, so
+ *  content a late writer stores after the purge never reaches the payload.
  *  A Recording stored before analysis existed has no Transcript state and
  *  reads as Unavailable. A failure's time is the Recording's last update,
  *  as for the transfer and waveform stages.
@@ -169,6 +171,7 @@ type RecordingRow = {
   lead_assessment_failure_reason: string | null;
   expires_at: Date;
   expired: boolean;
+  purged: boolean;
 };
 
 type AssessmentRow = {
@@ -326,6 +329,7 @@ function callLeadAssessment(recording: RecordingRow | undefined, assessment: Ass
       rationale: assessment.rationale ?? undefined,
       processedAt: assessment.processed_at.toISOString(),
     };
+    if (recording?.purged) return { ...completed, rationale: undefined };
     return recording?.expired ? completed : { ...completed, evidence };
   }
   if (!state || state === "Completed") return { state: "Unavailable" };
@@ -383,7 +387,8 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
                 r.transcript_state, r.transcript_skip_reason, r.transcript_failure_reason, r.transcript_completed_at,
                 r.lead_assessment_state, r.lead_assessment_failure_reason,
                 ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
-                ${recordingMediaExpiredSql("c.started_at", "now()")} as expired
+                ${recordingMediaExpiredSql("c.started_at", "now()")} as expired,
+                r.media_purged_at is not null as purged
            from recording r
            join call c on c.id = r.call_id
           where r.call_id = $1 and r.organization_id = $2
@@ -411,7 +416,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
             )
           ).rows[0]
         : undefined;
-      const contentAvailable = recording !== undefined && !recording.expired;
+      const contentAvailable = recording !== undefined && !recording.expired && !recording.purged;
       const turns =
         contentAvailable && recording.transcript_state === "Completed"
           ? (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [recording.id, actor.organizationId])).rows[0]?.turns

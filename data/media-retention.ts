@@ -13,7 +13,9 @@
  *  expired 12 months after the Call started or was purged by an Operator
  *  and whose cleanup has not finished, then for each deletes the database
  *  content in one transaction, deletes its R2 objects, and only when every
- *  delete succeeded records `media_deleted_at`.
+ *  delete succeeded records `media_deleted_at`. The content step runs
+ *  inside a caller's transaction and the R2 step runs on its own, so the
+ *  Operator Purge Media service removes exactly the same content.
  *
  * @remarks
  *  Database content goes first, so a later R2 failure never leaves readable
@@ -30,6 +32,7 @@
  *
  * @see
  *  data/recording-media.ts
+ *  data/media-purge.ts
  *  data/r2-objects.ts
  *  data/runtime-role.ts
  *  trigger/media-retention.ts
@@ -37,7 +40,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { recordingMediaExpiredSql } from "@/data/recording-media";
@@ -49,20 +52,31 @@ export interface MediaRemovalDeps {
   objects: Pick<ArtifactObjects, "delete">;
 }
 
-interface MediaRecording {
+export interface MediaRecording {
   id: string;
   r2_object_key: string | null;
   waveform_object_key: string | null;
   mp3_object_key: string | null;
 }
 
-async function deleteRecordingContent(pool: Pool, recordingId: string): Promise<void> {
-  const client = await pool.connect();
+export async function deleteRecordingContent(client: Pick<PoolClient, "query">, recordingId: string): Promise<void> {
+  await client.query("delete from transcript where recording_id = $1", [recordingId]);
+  await client.query("delete from lead_assessment_evidence where lead_assessment_id in (select id from lead_assessment where recording_id = $1)", [recordingId]);
+  await client.query("update lead_assessment set rationale = null where recording_id = $1 and rationale is not null", [recordingId]);
+}
+
+export async function deleteRecordingObjects(deps: MediaRemovalDeps, recording: MediaRecording, now: Date): Promise<void> {
+  for (const key of [recording.r2_object_key, recording.waveform_object_key, recording.mp3_object_key]) {
+    if (key) await deps.objects.delete(key);
+  }
+  await deps.pool.query("update recording set media_deleted_at = $2 where id = $1 and media_deleted_at is null", [recording.id, now]);
+}
+
+export async function removeRecordingMedia(deps: MediaRemovalDeps, recording: MediaRecording, now: Date): Promise<void> {
+  const client = await deps.pool.connect();
   try {
     await client.query("begin");
-    await client.query("delete from transcript where recording_id = $1", [recordingId]);
-    await client.query("delete from lead_assessment_evidence where lead_assessment_id in (select id from lead_assessment where recording_id = $1)", [recordingId]);
-    await client.query("update lead_assessment set rationale = null where recording_id = $1 and rationale is not null", [recordingId]);
+    await deleteRecordingContent(client, recording.id);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -70,14 +84,7 @@ async function deleteRecordingContent(pool: Pool, recordingId: string): Promise<
   } finally {
     client.release();
   }
-}
-
-export async function removeRecordingMedia(deps: MediaRemovalDeps, recording: MediaRecording, now: Date): Promise<void> {
-  await deleteRecordingContent(deps.pool, recording.id);
-  for (const key of [recording.r2_object_key, recording.waveform_object_key, recording.mp3_object_key]) {
-    if (key) await deps.objects.delete(key);
-  }
-  await deps.pool.query("update recording set media_deleted_at = $2 where id = $1 and media_deleted_at is null", [recording.id, now]);
+  await deleteRecordingObjects(deps, recording, now);
 }
 
 export async function sweepRecordingMedia(deps: MediaRemovalDeps, now: Date): Promise<{ selected: number; completed: number; failed: number }> {

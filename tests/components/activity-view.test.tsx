@@ -176,6 +176,17 @@ describe("ActivityView", () => {
     expect(pendingStep).toHaveTextContent("Transcript pending");
     expect(within(pendingStep).getByText("Pending")).toHaveClass("border-border");
   });
+
+  it("labels a Media purged step with its Purged Badge", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const purged: ActivityEntry = { ...today, steps: [...today.steps, { id: "10", kind: "media_purged", occurredAt: "2026-10-18T14:45:00.000Z" }] };
+    render(<ActivityView initialResult={{ ...result, entries: [purged] }} initialFilters={emptyCallFilters} workspaceOptions={workspaceOptions} />);
+    const first = entry("+13125550142");
+    fireEvent.click(within(first).getByRole("button", { name: /Acme Plumbing/ }));
+    const purgedStep = (await within(first).findAllByRole("listitem")).at(-1)!;
+    expect(purgedStep.querySelector("[data-step-label]")).toHaveTextContent("Media purged");
+    expect(within(purgedStep).getByText("Purged")).toBeVisible();
+  });
   it("refreshes the loaded window every 30 seconds only while the document is visible, and promptly when it returns stale", async () => {
     const fetch = vi.fn(async () => respond(result));
     vi.stubGlobal("fetch", fetch);

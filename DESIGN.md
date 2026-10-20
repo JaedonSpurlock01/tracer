@@ -275,6 +275,7 @@ Expanding an entry reveals only lifecycle events that occurred:
 6. Transcript completed, skipped, expired, or failed
 7. Lead Assessment completed or failed
 8. Lead Review added
+9. Media purged
 
 Outcome and processing states use one semantic Badge per row. Infrastructure details remain behind concise user-facing status copy. Selecting the entry header opens Call Detail.
 

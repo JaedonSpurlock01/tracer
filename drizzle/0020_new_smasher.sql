@@ -1,0 +1,2 @@
+ALTER TABLE "call_event" DROP CONSTRAINT "call_event_kind_check";--> statement-breakpoint
+ALTER TABLE "call_event" ADD CONSTRAINT "call_event_kind_check" CHECK ("call_event"."kind" in ('call_received', 'spam_gate_passed', 'spam_gate_failed', 'forwarding_attempted', 'call_completed', 'recording_transferred', 'recording_transfer_failed', 'transcript_completed', 'transcript_skipped', 'transcript_failed', 'lead_assessment_completed', 'lead_assessment_failed', 'lead_review_added', 'media_purged'));
