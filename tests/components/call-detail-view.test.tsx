@@ -229,7 +229,7 @@ describe("CallDetailView", () => {
       render(<CallDetailView call={analyzed} operator />);
       const dialog = openConfirmation();
       expect(dialog).toHaveTextContent("This cannot be undone.");
-      for (const deleted of ["Recording audio", "waveform", "MP3", "Transcript", "Transcript-derived evidence", "rationale", "unexpired export ZIPs that include this Recording"]) expect(dialog).toHaveTextContent(deleted);
+      for (const deleted of ["Recording audio", "waveform", "MP3", "Transcript", "Transcript-derived evidence", "rationale", "any copy of the audio still at Twilio", "unexpired export ZIPs that include this Recording"]) expect(dialog).toHaveTextContent(deleted);
       for (const kept of ["Call facts", "Call Outcome", "Lead Assessment summary, classification, and score", "Lead Review", "analytics"]) expect(dialog).toHaveTextContent(kept);
       fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
       expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/media/purge"), expect.anything());

@@ -703,7 +703,7 @@ describe("Recording transfer", () => {
     });
     const transfer = transferRecording(dependencies(twilio, r2), recording.id);
     await expect.poll(() => twilio.downloads.length).toBe(1);
-    const purge = purgeCallMedia({ pool: pool!, objects: r2 }, operator!, "transfer-workspace", recording.callId, now);
+    const purge = purgeCallMedia({ pool: pool!, objects: r2, twilio, masterKey }, operator!, "transfer-workspace", recording.callId, now);
     await expect.poll(async () => (await pool!.query("select 1 from pg_stat_activity where wait_event_type = 'Lock'")).rowCount).toBe(1);
 
     release();
@@ -712,7 +712,8 @@ describe("Recording transfer", () => {
     await expect(purge).resolves.toMatchObject({ purgedAt: now.toISOString() });
     expect(r2.puts).toHaveLength(1);
     expect(r2.objects.size).toBe(0);
-    await expect(pool!.query("select media_deleted_at from recording where id = $1", [recording.id])).resolves.toMatchObject({ rows: [{ media_deleted_at: now }] });
+    expect(twilio.media.has(recording.sid)).toBe(false);
+    await expect(pool!.query("select twilio_cleanup_state, media_deleted_at from recording where id = $1", [recording.id])).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Deleted", media_deleted_at: now }] });
   });
 });
 

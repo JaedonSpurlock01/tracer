@@ -25,7 +25,12 @@
  *  ids, timezone, kind, period or selection, and files, returns the existing job while it is Queued, Generating, or
  *  Completed with unexpired artifacts; a Failed or expired job does not
  *  block a new one. Completion stores the artifacts, which expire 7 days
- *  later. Requesting a job creates it and triggers its Trigger.dev
+ *  later, with the Recording ids a ZIP included, and refuses a ZIP holding
+ *  a Recording whose media was purged or expired after it was read; it
+ *  first takes a share lock on those Recordings, so a purge committing at
+ *  the same time either finds the completed ZIP and expires it or makes
+ *  the generation run retry. A purge expires a ZIP early by moving its
+ *  job's artifact expiry to the purge time. Requesting a job creates it and triggers its Trigger.dev
  *  generation run only when it is new, so a duplicate submission never
  *  starts a second run; a run that cannot be started records the job
  *  Failed so a resubmission queues a fresh one. Generation moves only a
@@ -77,6 +82,7 @@ import type { Pool } from "pg";
 import { calendarDateInTimeZone, type AnalyticsWindow } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import type { CallFilters } from "@/data/call-list-query";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { triggerTaskRun, type TriggerTaskRequestOptions } from "@/data/recording-processing";
 import { resolveReportPeriod, type ReportPeriod } from "@/data/report-period";
 import { ReportRequestError, resolveReportScope, type ReportScopeRequest } from "@/data/report-request";
@@ -312,6 +318,14 @@ export interface ReportArtifact {
   r2Key: string;
   byteSize: number;
   contentType: string;
+  includedRecordingIds?: string[];
+}
+
+export class ReportMediaRemovedError extends Error {
+  constructor() {
+    super("Recording media was removed while the export ran");
+    this.name = "ReportMediaRemovedError";
+  }
 }
 
 export async function startReportJob(pool: Pool, jobId: string): Promise<{ job: ReportJob; organizationId: string } | null> {
@@ -323,17 +337,37 @@ export async function startReportJob(pool: Pool, jobId: string): Promise<{ job: 
 }
 
 export async function completeReportJob(pool: Pool, jobId: string, artifacts: readonly ReportArtifact[], now: Date): Promise<void> {
-  await pool.query(
-    `with completed as (
-       update report_job set status = 'Completed', completed_at = $2, artifacts_expire_at = $3
-        where id = $1 and status in ('Queued', 'Generating')
-       returning id
-     )
-     insert into report_artifact (job_id, file_kind, r2_key, byte_size, content_type)
-     select completed.id, a.file_kind, a.r2_key, a.byte_size, a.content_type
-       from completed, unnest($4::text[], $5::text[], $6::bigint[], $7::text[]) as a(file_kind, r2_key, byte_size, content_type)`,
-    [jobId, now, new Date(now.getTime() + artifactRetentionMs), artifacts.map(({ file }) => file), artifacts.map(({ r2Key }) => r2Key), artifacts.map(({ byteSize }) => byteSize), artifacts.map(({ contentType }) => contentType)],
-  );
+  const includedRecordingIds = artifacts.find(({ file }) => file === "zip")?.includedRecordingIds ?? null;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    if (includedRecordingIds?.length) {
+      const removed = await client.query(
+        `select r.id from recording r join call c on c.id = r.call_id
+          where r.id = any($1::text[]) and not ${recordingMediaRetainedSql("r", "c.started_at", "$2::timestamptz")}
+            for share of r`,
+        [includedRecordingIds, now],
+      );
+      if (removed.rowCount) throw new ReportMediaRemovedError();
+    }
+    await client.query(
+      `with completed as (
+         update report_job set status = 'Completed', completed_at = $2, artifacts_expire_at = $3
+          where id = $1 and status in ('Queued', 'Generating')
+         returning id
+       )
+       insert into report_artifact (job_id, file_kind, r2_key, byte_size, content_type, included_recording_ids)
+       select completed.id, a.file_kind, a.r2_key, a.byte_size, a.content_type, case when a.file_kind = 'zip' then $8::text[] end
+         from completed, unnest($4::text[], $5::text[], $6::bigint[], $7::text[]) as a(file_kind, r2_key, byte_size, content_type)`,
+      [jobId, now, new Date(now.getTime() + artifactRetentionMs), artifacts.map(({ file }) => file), artifacts.map(({ r2Key }) => r2Key), artifacts.map(({ byteSize }) => byteSize), artifacts.map(({ contentType }) => contentType), includedRecordingIds],
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function failReportJob(pool: Pool, jobId: string, reason: string): Promise<void> {

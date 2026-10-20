@@ -40,6 +40,7 @@ import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
+import { encryptSecret } from "@/data/credential-encryption";
 import { createIntegrations } from "@/data/integrations";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
@@ -47,7 +48,7 @@ import { createOperatorAdministrationHandler } from "@/data/operator-administrat
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
-import type { TwilioClient } from "@/data/twilio-client";
+import { createTwilioRecordingMedia, type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
 
 let container: StartedPostgreSqlContainer | undefined;
@@ -94,6 +95,21 @@ const r2 = {
   },
 };
 
+const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
+const twilio = {
+  deletes: [] as string[],
+  statuses: new Map<string, number>(),
+  async fetch(input: RequestInfo | URL, init?: RequestInit) {
+    const sid = String(input).match(/Recordings\/(RE\w+)\.json$/)![1];
+    expect(init?.method).toBe("DELETE");
+    twilio.deletes.push(sid);
+    return new Response(null, { status: twilio.statuses.get(sid) ?? 204 });
+  },
+};
+
+const twilioMedia = createTwilioRecordingMedia({ fetch: (input, init) => twilio.fetch(input, init) });
+
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
   database: database(),
@@ -102,6 +118,8 @@ const workspacesHandler = () => createWorkspacesHandler({
   integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", activeWorkspaceCount: async () => 0 }),
   baseURL: "http://localhost:3000",
   recordingBucket: r2,
+  masterKey,
+  twilioMedia,
 });
 
 const usersHandler = () => createOperatorAdministrationHandler({
@@ -222,6 +240,11 @@ beforeAll(async () => {
   runtimeUrl.password = password;
   runtime = new Pool({ connectionString: runtimeUrl.toString() });
   ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(owner, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
+  await owner.query(
+    `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
+     values ('purge-connection', $1, 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $2, $3, now(), now(), now())`,
+    [organizationId, await encryptSecret(masterKey, "purge-api-key-secret"), operatorId],
+  );
   await owner.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
   await owner.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, analysis_enabled, created_at, updated_at)
@@ -364,7 +387,7 @@ describe.sequential("Operator Purge Media", () => {
     }
 
     const swept = new Date();
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, swept)).resolves.toMatchObject({ failed: 0 });
+    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept)).resolves.toMatchObject({ failed: 0 });
     expect(objectKeys("failing-call").filter((key) => r2.objects.has(key))).toEqual([]);
     expect(await mediaState("failing-call")).toMatchObject({ recording: { media_deleted_at: swept } });
   });
@@ -399,19 +422,44 @@ describe.sequential("Operator Purge Media", () => {
     }
   });
 
-  it("purges a Recording whose transfer is Pending or Failed without deleting objects or finishing its cleanup", async () => {
+  it("deletes the Twilio copy of a Recording whose transfer is Pending or Failed and finishes its cleanup", async () => {
     await seedCall("pending-transfer-call", { transferState: "Pending" });
     await seedCall("failed-transfer-call", { transferState: "Failed" });
     r2.deletes.length = 0;
+    twilio.deletes.length = 0;
 
     for (const callId of ["pending-transfer-call", "failed-transfer-call"]) {
       const { response, body } = await purge("granted", callId);
       expect(response.status).toBe(200);
       const purgedAt = new Date((body.purge as { purgedAt: string }).purgedAt);
-      expect(await mediaState(callId)).toMatchObject({ recording: { media_purged_at: purgedAt, media_purged_by_user_id: operatorId, media_deleted_at: null } });
+      expect(await mediaState(callId)).toMatchObject({ recording: { media_purged_at: purgedAt, media_purged_by_user_id: operatorId, media_deleted_at: purgedAt } });
+      await expect(owner!.query("select twilio_cleanup_state, twilio_deleted_at from recording where call_id = $1", [callId])).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Deleted", twilio_deleted_at: purgedAt }] });
       await expect(owner!.query("select kind from call_event where call_id = $1 and kind = 'media_purged'", [callId])).resolves.toMatchObject({ rowCount: 1 });
     }
+    const sids = await owner!.query<{ twilio_recording_sid: string }>("select twilio_recording_sid from recording where call_id in ('pending-transfer-call', 'failed-transfer-call') order by call_id desc");
+    expect(twilio.deletes).toEqual(sids.rows.map((row) => row.twilio_recording_sid));
     expect(r2.deletes).toEqual([]);
+  });
+
+  it("purges when the Twilio delete fails and leaves the Twilio copy to the media retention sweep", async () => {
+    await seedCall("twilio-failing-call", { transferState: "Pending" });
+    const sid = (await owner!.query<{ twilio_recording_sid: string }>("select twilio_recording_sid from recording where call_id = 'twilio-failing-call'")).rows[0].twilio_recording_sid;
+    twilio.statuses.set(sid, 503);
+
+    const { response, body } = await purge("granted", "twilio-failing-call");
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ purge: { purgedAt: expect.any(String) } });
+    await expect(owner!.query("select twilio_cleanup_state, media_purged_at is not null as purged, media_deleted_at from recording where call_id = 'twilio-failing-call'")).resolves.toMatchObject({
+      rows: [{ twilio_cleanup_state: "Pending", purged: true, media_deleted_at: null }],
+    });
+
+    twilio.statuses.clear();
+    const swept = new Date();
+    await sweepRecordingMedia({ pool: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept);
+    await expect(owner!.query("select twilio_cleanup_state, twilio_deleted_at, media_deleted_at from recording where call_id = 'twilio-failing-call'")).resolves.toMatchObject({
+      rows: [{ twilio_cleanup_state: "Deleted", twilio_deleted_at: swept, media_deleted_at: swept }],
+    });
   });
 
   it("keeps analytics identical after a purge", async () => {

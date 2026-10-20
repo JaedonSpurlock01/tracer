@@ -148,6 +148,13 @@
       "when": 1792460987021,
       "tag": "0020_new_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792464974596,
+      "tag": "0021_modern_blonde_phantom",
+      "breakpoints": true
     }
   ]
 }

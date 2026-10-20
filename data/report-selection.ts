@@ -59,7 +59,6 @@ export interface ReportSelectionCall extends ReportCsvCall {
   recordingExport: RecordingExportState;
   recordingId: string | null;
   mp3ObjectKey: string | null;
-  mediaExpiresAt: Date | null;
 }
 
 export interface ReportSelectionPreview {
@@ -121,7 +120,6 @@ function reportSelectionCall(row: ReportCallRow): ReportSelectionCall {
     recordingExport,
     recordingId: row.recording_id,
     mp3ObjectKey: recordingExport === "Retained" ? row.mp3_object_key : null,
-    mediaExpiresAt: row.recording_id ? row.expires_at : null,
   };
 }
 

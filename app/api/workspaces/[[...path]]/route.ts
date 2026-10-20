@@ -16,6 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { createTwilioRecordingMedia } from "@/data/twilio-client";
 import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
 import { createWorkspaceRoutingRuntimeParts } from "@/data/workspace-routing-runtime";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
@@ -26,6 +27,7 @@ async function handle(request: Request): Promise<Response> {
     createWorkspacesHandler({
       ...runtime,
       twilio: createRuntimeTwilioClient(),
+      twilioMedia: createTwilioRecordingMedia(),
       integrations: (organizationId) => createWorkspaceRoutingRuntimeParts(runtime, organizationId).integrations,
       baseURL: runtime.baseURL,
     })(request),

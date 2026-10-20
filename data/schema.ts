@@ -483,7 +483,7 @@ export const recordings = pgTable(
     check("recording_transfer_state_check", sql`${table.transferState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_twilio_cleanup_state_check", sql`${table.twilioCleanupState} in ('Pending', 'Deleted', 'Failed')`),
     check("recording_stored_metadata_check", sql`${table.transferState} <> 'Stored' or (${table.r2ObjectKey} is not null and ${table.sizeBytes} is not null and ${table.sha256} is not null and ${table.storedAt} is not null)`),
-    check("recording_cleanup_requires_stored_check", sql`${table.twilioCleanupState} <> 'Deleted' or ${table.transferState} = 'Stored'`),
+    check("recording_twilio_deleted_check", sql`${table.twilioCleanupState} <> 'Deleted' or ${table.transferState} = 'Stored' or ${table.twilioDeletedAt} is not null`),
     check("recording_waveform_state_check", sql`${table.waveformState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_waveform_stored_metadata_check", sql`${table.waveformState} <> 'Stored' or (${table.waveformObjectKey} is not null and ${table.waveformGeneratedAt} is not null)`),
     check("recording_waveform_requires_stored_check", sql`${table.waveformState} = 'Pending' or ${table.transferState} = 'Stored'`),
@@ -719,6 +719,7 @@ export const reportArtifacts = pgTable(
     r2Key: text("r2_key").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     contentType: text("content_type").notNull(),
+    includedRecordingIds: text("included_recording_ids").array(),
   },
   (table) => [
     primaryKey({ columns: [table.jobId, table.fileKind] }),

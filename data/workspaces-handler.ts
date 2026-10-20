@@ -42,7 +42,7 @@ import { recordingAudioResponse } from "@/data/recording-audio";
 import { findAvailableRecordingMedia, recordingMp3Response, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
-import type { TwilioClient } from "@/data/twilio-client";
+import type { TwilioClient, TwilioRecordingMedia } from "@/data/twilio-client";
 import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
@@ -56,6 +56,8 @@ export interface WorkspacesHandlerOptions {
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
   recordingBucket?: RecordingMediaBucket;
+  masterKey?: string;
+  twilioMedia?: TwilioRecordingMedia;
   recordingTranscription?: RecordingProcessing;
   recordingLeadAssessment?: RecordingProcessing;
 }
@@ -202,7 +204,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       }
       const purgeMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/media\/purge$/);
       if (request.method === "POST" && purgeMatch) {
-        const purged = await purgeCallMedia({ pool: options.pool, objects: options.recordingBucket }, actor, purgeMatch[1], purgeMatch[2], new Date());
+        const purged = await purgeCallMedia({ pool: options.pool, objects: options.recordingBucket, twilio: options.twilioMedia, masterKey: options.masterKey }, actor, purgeMatch[1], purgeMatch[2], new Date());
         if (purged === "not_found") throw new WorkspacesError("not_found");
         if (typeof purged === "string") return response({ error: purged }, 409);
         return response({ purge: purged });

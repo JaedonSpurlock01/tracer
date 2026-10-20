@@ -136,8 +136,8 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
           <AlertDialogHeader>
             <AlertDialogTitle>Purge this Call&apos;s media?</AlertDialogTitle>
             <AlertDialogDescription>
-              This cannot be undone. Purging permanently deletes the Recording audio, waveform, and MP3, the Transcript, the Transcript-derived evidence and rationale, and any
-              unexpired export ZIPs that include this Recording.
+              This cannot be undone. Purging permanently deletes the Recording audio, waveform, and MP3, the Transcript, the Transcript-derived evidence and rationale, any copy
+              of the audio still at Twilio, and any unexpired export ZIPs that include this Recording.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <p className="text-sm text-muted-foreground">Tracer keeps the Call facts, Call Outcome, Lead Assessment summary, classification, and score, Lead Review, and analytics.</p>

@@ -35,10 +35,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
-import { sweepRecordingMedia } from "@/data/media-retention";
+import { encryptSecret } from "@/data/credential-encryption";
+import { sweepRecordingMedia, type MediaRemovalDeps } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
+import { createTwilioRecordingMedia } from "@/data/twilio-client";
 
 const now = new Date("2026-10-18T09:41:23.417Z");
 const expiredStart = "2025-10-18T09:41:22.903Z";
@@ -67,6 +69,31 @@ function fakeR2(): FakeR2 {
   };
   return r2;
 }
+
+const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const accountSid = "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+interface FakeTwilio {
+  deletes: Array<{ sid: string; authorization: string | null }>;
+  statuses: Map<string, number>;
+  fetch: typeof fetch;
+}
+
+function fakeTwilio(): FakeTwilio {
+  const twilio: FakeTwilio = {
+    deletes: [],
+    statuses: new Map(),
+    fetch: async (input, init) => {
+      const sid = String(input).match(/Recordings\/(RE\w+)\.json$/)![1];
+      expect(init?.method).toBe("DELETE");
+      twilio.deletes.push({ sid, authorization: new Headers(init?.headers).get("authorization") });
+      return new Response(null, { status: twilio.statuses.get(sid) ?? 204 });
+    },
+  };
+  return twilio;
+}
+
+const sweepDeps = (r2: FakeR2, twilio = fakeTwilio()): MediaRemovalDeps => ({ pool: runtime!, objects: r2, twilio: createTwilioRecordingMedia({ fetch: twilio.fetch }), masterKey });
 
 const objectKeys = (callId: string) => [`recordings/${callId}.wav`, `recordings/${callId}.peaks.json`, `recordings/${callId}.mp3`];
 
@@ -120,6 +147,33 @@ async function seedCall(r2: FakeR2, input: { id: string; startedAt: string; purg
   for (const key of objectKeys(input.id)) r2.objects.add(key);
 }
 
+async function unfinishTwilioCleanup(r2: FakeR2, callId: string, transfer: string, cleanup: string): Promise<void> {
+  if (transfer !== "Stored") {
+    await owner!.query("delete from transcript where call_id = $1", [callId]);
+    await owner!.query("delete from lead_assessment where call_id = $1", [callId]);
+    await owner!.query(
+      `update recording set transfer_state = $2, failure_stage = case when $2 = 'Failed' then 'download' end, failure_reason = case when $2 = 'Failed' then 'Twilio is unavailable' end,
+              r2_object_key = null, size_bytes = null, sha256 = null, stored_at = null, waveform_state = 'Pending', waveform_object_key = null, waveform_generated_at = null,
+              mp3_state = 'Pending', mp3_object_key = null, mp3_size_bytes = null, mp3_generated_at = null, transcript_state = null, transcript_audio_ms = null,
+              transcript_cost_usd = null, transcript_completed_at = null, lead_assessment_state = null
+        where call_id = $1`,
+      [callId, transfer],
+    );
+    for (const key of objectKeys(callId)) r2.objects.delete(key);
+  }
+  await owner!.query(
+    `update recording set twilio_cleanup_state = $2, twilio_deleted_at = null,
+            failure_stage = case when $2 = 'Failed' then 'cleanup' else failure_stage end, failure_reason = case when $2 = 'Failed' then 'Twilio request failed (HTTP 503)' else failure_reason end
+      where call_id = $1`,
+    [callId, cleanup],
+  );
+}
+
+async function twilioSids(): Promise<Record<string, string>> {
+  const rows = (await owner!.query<{ call_id: string; twilio_recording_sid: string }>("select call_id, twilio_recording_sid from recording")).rows;
+  return Object.fromEntries(rows.map((row) => [row.call_id, row.twilio_recording_sid]));
+}
+
 interface MediaState {
   transcript: number;
   evidence: number;
@@ -158,6 +212,11 @@ beforeAll(async () => {
      values ('north', 'fleet', 'North Plumbing', 'America/Chicago', 'Active', true, true, now(), now())`,
   );
   await owner.query(
+    `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
+     values ('fleet-connection', 'fleet', $1, 'SK11111111111111111111111111111111', $2, 'fleet-operator', now(), now(), now())`,
+    [accountSid, await encryptSecret(masterKey, "retention-api-key-secret")],
+  );
+  await owner.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('north-number', 'fleet', 'PN${"1".repeat(32)}', '+14155550101', 'Tracking Number', true, now(), now(), now(), now())`,
   );
@@ -188,7 +247,7 @@ describe("Recording media expiry sweep", () => {
     const call = await owner!.query("select state, outcome, started_at, ended_at from call where id = 'expired-call'");
     const review = await owner!.query("select * from lead_review where call_id = 'expired-call'");
 
-    const result = await sweepRecordingMedia({ pool: runtime!, objects: r2 }, now);
+    const result = await sweepRecordingMedia(sweepDeps(r2), now);
 
     expect(result).toEqual({ selected: 1, completed: 1, failed: 0 });
     expect([...r2.objects]).toEqual([]);
@@ -210,7 +269,7 @@ describe("Recording media expiry sweep", () => {
     const current = await mediaState("current-call");
     const purged = await mediaState("purged-call");
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), now)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
 
     expect(await mediaState("current-call")).toEqual(current);
     expect([...r2.objects].sort()).toEqual(objectKeys("current-call").sort());
@@ -223,11 +282,11 @@ describe("Recording media expiry sweep", () => {
   it("makes a repeated sweep a no-op once a Recording's cleanup finished", async () => {
     const r2 = fakeR2();
     await seedCall(r2, { id: "expired-call", startedAt: expiredStart });
-    await sweepRecordingMedia({ pool: runtime!, objects: r2 }, now);
+    await sweepRecordingMedia(sweepDeps(r2), now);
     const finished = await mediaState("expired-call");
     r2.deletes.length = 0;
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, new Date(now.getTime() + 86_400_000))).resolves.toEqual({ selected: 0, completed: 0, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), new Date(now.getTime() + 86_400_000))).resolves.toEqual({ selected: 0, completed: 0, failed: 0 });
 
     expect(r2.deletes).toEqual([]);
     expect(await mediaState("expired-call")).toEqual(finished);
@@ -240,7 +299,7 @@ describe("Recording media expiry sweep", () => {
     const [, failingPeaks] = objectKeys("failing-call");
     r2.failingKeys.add(failingPeaks);
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ selected: 2, completed: 1, failed: 1 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), now)).resolves.toEqual({ selected: 2, completed: 1, failed: 1 });
 
     const partial = await mediaState("failing-call");
     expect(partial).toMatchObject({ transcript: 0, evidence: 0, assessment: { rationale: null }, recording: { media_deleted_at: null } });
@@ -249,28 +308,94 @@ describe("Recording media expiry sweep", () => {
 
     r2.failingKeys.clear();
     const later = new Date(now.getTime() + 86_400_000);
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, later)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), later)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
 
     expect(await mediaState("failing-call")).toEqual({ ...partial, recording: { ...partial.recording, media_deleted_at: later } });
     expect([...r2.objects]).toEqual([]);
   });
 
-  it("leaves an expired Recording whose transfer is Pending or Failed for the Twilio cleanup", async () => {
+  it("deletes the Twilio copy of purged and expired Recordings whose transfer is Pending or Failed or whose Twilio cleanup is unfinished, then finishes their cleanup", async () => {
     const r2 = fakeR2();
-    await seedCall(r2, { id: "pending-call", startedAt: expiredStart });
-    await seedCall(r2, { id: "failed-call", startedAt: expiredStart });
-    await owner!.query("delete from transcript");
-    await owner!.query("delete from lead_assessment");
-    await owner!.query(
-      `update recording set transfer_state = case when call_id = 'pending-call' then 'Pending' else 'Failed' end, twilio_cleanup_state = 'Pending', twilio_deleted_at = null,
-              waveform_state = 'Pending', mp3_state = 'Pending', transcript_state = null, transcript_audio_ms = null, transcript_cost_usd = null,
-              transcript_completed_at = null, lead_assessment_state = null`,
-    );
+    const twilio = fakeTwilio();
+    const fixtures = [
+      { id: "expired-pending", transfer: "Pending", cleanup: "Pending", purgedAt: undefined },
+      { id: "purged-failed", transfer: "Failed", cleanup: "Pending", purgedAt: "2026-10-17T22:13:41.077Z" },
+      { id: "expired-cleanup-pending", transfer: "Stored", cleanup: "Pending", purgedAt: undefined },
+      { id: "purged-cleanup-failed", transfer: "Stored", cleanup: "Failed", purgedAt: "2026-10-16T05:52:09.331Z" },
+    ];
+    for (const fixture of fixtures) {
+      await seedCall(r2, { id: fixture.id, startedAt: fixture.purgedAt ? unexpiredStart : expiredStart, purgedAt: fixture.purgedAt });
+      await unfinishTwilioCleanup(r2, fixture.id, fixture.transfer, fixture.cleanup);
+    }
+    const sids = await twilioSids();
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ selected: 0, completed: 0, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2, twilio), now)).resolves.toEqual({ selected: 4, completed: 4, failed: 0 });
 
-    expect(r2.deletes).toEqual([]);
-    await expect(owner!.query("select media_deleted_at from recording")).resolves.toMatchObject({ rows: [{ media_deleted_at: null }, { media_deleted_at: null }] });
+    expect(twilio.deletes.map(({ sid }) => sid).sort()).toEqual(fixtures.map(({ id }) => sids[id]).sort());
+    expect(new Set(twilio.deletes.map(({ authorization }) => authorization))).toEqual(new Set([`Basic ${btoa("SK11111111111111111111111111111111:retention-api-key-secret")}`]));
+    await expect(owner!.query("select call_id, transfer_state, twilio_cleanup_state, twilio_deleted_at, failure_stage, media_deleted_at from recording order by call_id")).resolves.toMatchObject({
+      rows: [
+        { call_id: "expired-cleanup-pending", transfer_state: "Stored", twilio_cleanup_state: "Deleted", twilio_deleted_at: now, failure_stage: null, media_deleted_at: now },
+        { call_id: "expired-pending", transfer_state: "Pending", twilio_cleanup_state: "Deleted", twilio_deleted_at: now, failure_stage: null, media_deleted_at: now },
+        { call_id: "purged-cleanup-failed", transfer_state: "Stored", twilio_cleanup_state: "Deleted", twilio_deleted_at: now, failure_stage: null, media_deleted_at: now },
+        { call_id: "purged-failed", transfer_state: "Failed", twilio_cleanup_state: "Deleted", twilio_deleted_at: now, failure_stage: "download", media_deleted_at: now },
+      ],
+    });
+    expect([...r2.objects]).toEqual([]);
+  });
+
+  it("counts a Twilio Recording that is already gone as deleted", async () => {
+    const r2 = fakeR2();
+    const twilio = fakeTwilio();
+    await seedCall(r2, { id: "gone-call", startedAt: expiredStart });
+    await unfinishTwilioCleanup(r2, "gone-call", "Failed", "Pending");
+    twilio.statuses.set((await twilioSids())["gone-call"], 404);
+
+    await expect(sweepRecordingMedia(sweepDeps(r2, twilio), now)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
+
+    await expect(owner!.query("select twilio_cleanup_state, twilio_deleted_at, media_deleted_at from recording")).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Deleted", twilio_deleted_at: now, media_deleted_at: now }] });
+  });
+
+  it("leaves cleanup unfinished when the Twilio delete fails, keeps sweeping the batch, and retries the delete on the next sweep", async () => {
+    const r2 = fakeR2();
+    const twilio = fakeTwilio();
+    await seedCall(r2, { id: "failing-twilio-call", startedAt: "2025-08-03T14:07:51.233Z" });
+    await unfinishTwilioCleanup(r2, "failing-twilio-call", "Pending", "Pending");
+    await seedCall(r2, { id: "expired-call", startedAt: expiredStart });
+    const sid = (await twilioSids())["failing-twilio-call"];
+    twilio.statuses.set(sid, 503);
+
+    await expect(sweepRecordingMedia(sweepDeps(r2, twilio), now)).resolves.toEqual({ selected: 2, completed: 1, failed: 1 });
+
+    await expect(owner!.query("select call_id, twilio_cleanup_state, twilio_deleted_at, media_deleted_at from recording order by call_id")).resolves.toMatchObject({
+      rows: [
+        { call_id: "expired-call", media_deleted_at: now },
+        { call_id: "failing-twilio-call", twilio_cleanup_state: "Pending", twilio_deleted_at: null, media_deleted_at: null },
+      ],
+    });
+
+    twilio.statuses.clear();
+    const later = new Date(now.getTime() + 86_400_000);
+    await expect(sweepRecordingMedia(sweepDeps(r2, twilio), later)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
+
+    expect(twilio.deletes.map((request) => request.sid)).toEqual([sid, sid]);
+    await expect(owner!.query("select twilio_cleanup_state, twilio_deleted_at, media_deleted_at from recording where call_id = 'failing-twilio-call'")).resolves.toMatchObject({
+      rows: [{ twilio_cleanup_state: "Deleted", twilio_deleted_at: later, media_deleted_at: later }],
+    });
+  });
+
+  it("never deletes the Twilio copy of a retained Recording", async () => {
+    const r2 = fakeR2();
+    const twilio = fakeTwilio();
+    await seedCall(r2, { id: "retained-pending", startedAt: unexpiredStart });
+    await unfinishTwilioCleanup(r2, "retained-pending", "Pending", "Pending");
+    await seedCall(r2, { id: "retained-cleanup-failed", startedAt: unexpiredStart });
+    await unfinishTwilioCleanup(r2, "retained-cleanup-failed", "Stored", "Failed");
+
+    await expect(sweepRecordingMedia(sweepDeps(r2, twilio), now)).resolves.toEqual({ selected: 0, completed: 0, failed: 0 });
+
+    expect(twilio.deletes).toEqual([]);
+    await expect(owner!.query("select twilio_cleanup_state from recording order by call_id")).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Failed" }, { twilio_cleanup_state: "Pending" }] });
   });
 
   it("cleans up at most 100 Recordings a sweep, oldest first, and the rest on the next sweep", async () => {
@@ -279,9 +404,9 @@ describe("Recording media expiry sweep", () => {
       await seedCall(r2, { id: `batch-call-${String(day).padStart(3, "0")}`, startedAt: new Date(Date.parse("2025-06-02T11:23:17.519Z") + day * 3_600_000).toISOString() });
     }
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ selected: 100, completed: 100, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), now)).resolves.toEqual({ selected: 100, completed: 100, failed: 0 });
     await expect(owner!.query("select call_id from recording where media_deleted_at is null")).resolves.toMatchObject({ rows: [{ call_id: "batch-call-100" }] });
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), now)).resolves.toEqual({ selected: 1, completed: 1, failed: 0 });
   }, 60_000);
 
   it("keeps analytics identical after an expired Call's content is removed", async () => {
@@ -295,7 +420,7 @@ describe("Recording media expiry sweep", () => {
     const stats = await analytics.workspaceListStats(["north"]);
     expect(workspace?.kpis.totalCalls.value).toBe(2);
 
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2 }, now)).resolves.toMatchObject({ completed: 1 });
+    await expect(sweepRecordingMedia(sweepDeps(r2), now)).resolves.toMatchObject({ completed: 1 });
 
     expect(await analytics.summary({ workspaceId: "north", range: { kind: "all" } })).toEqual(workspace);
     expect(await analytics.summary({ range: { kind: "all" } })).toEqual(global);

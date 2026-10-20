@@ -210,4 +210,25 @@ describe("Report job lifecycle sweep", () => {
     await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toMatchObject({ purged: 3 });
     await expect(owner!.query("select id from report_job")).resolves.toMatchObject({ rows: [] });
   });
+
+  it("deletes the R2 objects of artifacts a purge expired early on every sweep until the lifecycle rule would have removed them", async () => {
+    const purgedZip = await seedJob({ kind: "call_export", files: ["zip"], status: "Completed", requestedAt: before(2 * dayMs + 7_219) });
+    const failingZip = await seedJob({ kind: "call_export", files: ["zip"], status: "Completed", requestedAt: before(3 * dayMs + 1_481) });
+    const oldPurgedZip = await seedJob({ kind: "call_export", files: ["zip"], status: "Completed", requestedAt: before(8 * dayMs + 3_907) });
+    const naturallyExpired = await seedJob({ kind: "call_export", files: ["zip"], status: "Completed", requestedAt: before(7 * dayMs + 4 * 60 * 1000 + 17_311 + 1_000) });
+    const unexpired = await seedJob({ kind: "call_export", files: ["zip"], status: "Completed", requestedAt: before(dayMs + 5_113) });
+    await owner!.query("update report_job set artifacts_expire_at = $2 where id = any($1::text[])", [[purgedZip, failingZip], before(3_600_000 + 2_017)]);
+    await owner!.query("update report_job set artifacts_expire_at = completed_at + interval '1 day' where id = $1", [oldPurgedZip]);
+    const r2 = fakeR2();
+    r2.failingKeys.add(`reports/${failingZip}/recordings.zip`);
+
+    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 1 });
+
+    expect(r2.deletes.sort()).toEqual([`reports/${purgedZip}/recordings.zip`, `reports/${failingZip}/recordings.zip`].sort());
+    r2.failingKeys.clear();
+    r2.deletes.length = 0;
+    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 0 });
+    expect(r2.deletes.sort()).toEqual([`reports/${purgedZip}/recordings.zip`, `reports/${failingZip}/recordings.zip`].sort());
+    for (const id of [purgedZip, failingZip, oldPurgedZip, naturallyExpired, unexpired]) await expect(job(id)).resolves.toEqual({ status: "Completed", failure_reason: null });
+  });
 });
