@@ -471,6 +471,9 @@ export const recordings = pgTable(
     transcriptCompletedAt: timestamp("transcript_completed_at", { withTimezone: true }),
     leadAssessmentState: text("lead_assessment_state"),
     leadAssessmentFailureReason: text("lead_assessment_failure_reason"),
+    mediaPurgedAt: timestamp("media_purged_at", { withTimezone: true }),
+    mediaPurgedByUserId: text("media_purged_by_user_id"),
+    mediaDeletedAt: timestamp("media_deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -508,6 +511,12 @@ export const recordings = pgTable(
     index("recording_mp3_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.mp3State} <> 'Stored'`),
     index("recording_transcript_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.transcriptState} in ('Pending', 'Failed')`),
     index("recording_lead_assessment_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.leadAssessmentState} in ('Pending', 'Failed')`),
+    index("recording_media_undeleted_created_at_idx").on(table.createdAt).where(sql`${table.mediaDeletedAt} is null`),
+    foreignKey({
+      columns: [table.mediaPurgedByUserId],
+      foreignColumns: [users.id],
+      name: "recording_media_purged_by_user_id_fk",
+    }).onDelete("set null"),
   ],
 );
 
@@ -550,7 +559,7 @@ export const leadAssessments = pgTable(
     classification: text().notNull(),
     score: integer().notNull(),
     summary: text().notNull(),
-    rationale: text().notNull(),
+    rationale: text(),
     model: text().notNull(),
     inputTokens: integer("input_tokens").notNull(),
     outputTokens: integer("output_tokens").notNull(),

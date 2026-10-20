@@ -15,8 +15,8 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M17 is next
-- **Next milestone:** M17 - Retention, Purge, and Lifecycle Automation
+- **Current milestone:** M17 - Retention, Purge, and Lifecycle Automation
+- **Next milestone:** M18 - Production Hardening and Acceptance
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-19
@@ -184,7 +184,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M14 | Calls and Activity Operations | Complete | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Complete | Preview and Staging | M14 |
 | M16 | Reports and Recording Exports | Complete | Staging | M15 |
-| M17 | Retention, Purge, and Lifecycle Automation | Not Started | Staging | M16 |
+| M17 | Retention, Purge, and Lifecycle Automation | In Progress | Staging | M16 |
 | M18 | Production Hardening and Acceptance | Not Started | Staging | M17 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
 
@@ -990,10 +990,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M17 - Retention, Purge, and Lifecycle Automation
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Media, Transcript content, generated artifacts, and metadata expire or purge according to documented policy without corrupting analytics.
 - **Depends on:** M16
 - **Target environment:** Staging
+- **Execution note:** Before M17, media expiry was only derived at read time, and no content was deleted. M17 deletes it for real. Expiry 12 months after Call start and Operator Purge Media remove the same content: the Recording WAV, waveform peaks, and MP3 in R2; the Transcript turns; the Lead Assessment evidence quotes; and the Lead Assessment rationale. The Lead Assessment summary, classification, score, and usage are kept, as are the Call, its facts and outcome, Recording metadata, Transcript and assessment usage and cost, the Lead Review, the Call event log, and analytics. When a Recording's audio may still be at Twilio because its transfer is Pending or Failed, purge and expiry stop the transfer and delete the Twilio copy, and the sweep retries that deletion until it succeeds. Purge Media also deletes unexpired Recording ZIP and Export Call artifacts that include the purged Recording and marks those jobs expired, so no downloadable copy remains. Staging demonstrates expiry with a script that seeds backdated fixture Calls rather than with a shortened retention setting.
 
 #### Vertical slices
 

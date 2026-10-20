@@ -15,9 +15,10 @@
  *  Failed, Unavailable, or Expired state that Call Detail derives.
  *
  * @remarks
- *  Expiry is derived from the Call's start rather than stored, so no row is
- *  written or deleted when media expires; the Call, its facts, and the
- *  Recording metadata remain. Object keys never leave the server, and the
+ *  Expiry is derived from the Call's start rather than stored, so reads hide
+ *  expired media at once, before the daily media retention sweep deletes
+ *  its content; the Call, its facts, and the Recording metadata remain.
+ *  Object keys never leave the server, and the
  *  download filename uses the Call's id rather than the caller's number so
  *  no personal data lands in a browser's download history. The SQL
  *  availability state follows the same precedence as `recordingAvailability`
@@ -30,6 +31,7 @@
  *  data/recording-mp3.ts
  *  data/workspaces-handler.ts
  *  data/call-details.ts
+ *  data/media-retention.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------

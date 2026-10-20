@@ -200,7 +200,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(19);
+  expect(Number(result.rows[0].count)).toBe(20);
 }, 30_000);
 
 it("enforces Transcript, immutable Lead Assessment, and one current Lead Review per Call invariants", async () => {
@@ -317,6 +317,33 @@ it("enforces Transcript, immutable Lead Assessment, and one current Lead Review 
   expect(unchanged.rows).toEqual([{ classification: "Good Lead", score: 82 }]);
 }, 30_000);
 
+it("records Recording media removal and lets only the Lead Assessment rationale be cleared", async () => {
+  const mediaColumns = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+    `select column_name, data_type, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = 'recording' and column_name like 'media_%'
+      order by column_name`,
+  );
+  expect(mediaColumns.rows).toEqual([
+    { column_name: "media_deleted_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+    { column_name: "media_purged_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+    { column_name: "media_purged_by_user_id", data_type: "text", is_nullable: "YES" },
+  ]);
+  const purgedBy = await pool.query<{ delete_rule: string }>(
+    "select delete_rule from information_schema.referential_constraints where constraint_name = 'recording_media_purged_by_user_id_fk'",
+  );
+  expect(purgedBy.rows).toEqual([{ delete_rule: "SET NULL" }]);
+  const retentionIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_media_undeleted_created_at_idx'");
+  expect(retentionIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(media_deleted_at IS NULL\)$/) }]);
+
+  await expect(pool.query("update lead_assessment set rationale = 'Rewritten.' where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+  await expect(pool.query("update lead_assessment set rationale = null, score = 10 where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+  await pool.query("update lead_assessment set rationale = null where id = 'assessment-1'");
+  const cleared = await pool.query("select classification, score, summary, rationale from lead_assessment where id = 'assessment-1'");
+  expect(cleared.rows).toEqual([{ classification: "Good Lead", score: 82, summary: "Caller asked for a quote.", rationale: null }]);
+  await expect(pool.query("update lead_assessment set rationale = 'Restored.' where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+});
+
 it("creates and reads an Organization by its generated ID", async () => {
   const repository = createOrganizationRepository(pool);
 
@@ -391,6 +418,11 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment", privilege_type: "INSERT" });
   expect(grants.rows).not.toContainEqual({ table_name: "lead_assessment", privilege_type: "UPDATE" });
   expect(grants.rows).not.toContainEqual({ table_name: "lead_assessment", privilege_type: "DELETE" });
+  const assessmentUpdates = await pool.query<{ column_name: string }>(
+    "select column_name from information_schema.column_privileges where grantee = $1 and table_name = 'lead_assessment' and privilege_type = 'UPDATE'",
+    [runtimeRole],
+  );
+  expect(assessmentUpdates.rows).toEqual([{ column_name: "rationale" }]);
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "INSERT" });
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "DELETE" });

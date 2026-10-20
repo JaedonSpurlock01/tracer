@@ -176,7 +176,7 @@ type AssessmentRow = {
   classification: LeadClassification;
   score: number;
   summary: string;
-  rationale: string;
+  rationale: string | null;
   processed_at: Date;
 };
 
@@ -323,7 +323,7 @@ function callLeadAssessment(recording: RecordingRow | undefined, assessment: Ass
       classification: assessment.classification,
       score: assessment.score,
       summary: assessment.summary,
-      rationale: assessment.rationale,
+      rationale: assessment.rationale ?? undefined,
       processedAt: assessment.processed_at.toISOString(),
     };
     return recording?.expired ? completed : { ...completed, evidence };

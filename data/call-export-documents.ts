@@ -54,7 +54,7 @@ export async function callExportDocuments(pool: Pool, organizationId: string, ca
   const turns = (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [call.recordingId, organizationId])).rows[0]?.turns;
   if (turns !== undefined) documents.push({ name: "transcript.txt", bytes: encoder.encode(transcriptText(parseTranscriptTurns(turns))) });
   const assessment = (
-    await pool.query<{ id: string; classification: LeadClassification; score: number; summary: string; rationale: string; processed_at: Date }>(
+    await pool.query<{ id: string; classification: LeadClassification; score: number; summary: string; rationale: string | null; processed_at: Date }>(
       "select id, classification, score, summary, rationale, processed_at from lead_assessment where recording_id = $1 and organization_id = $2",
       [call.recordingId, organizationId],
     )
