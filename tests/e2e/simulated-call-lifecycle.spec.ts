@@ -134,7 +134,9 @@ async function expectGridScrollsInsideFrame(page: Page): Promise<void> {
 }
 
 async function expectSidebarLayout(page: Page, viewport: { width: number }): Promise<void> {
-  const sidebarLink = page.getByRole("link", { name: "Activity", exact: true });
+  // Scope to the desktop Sidebar: the header breadcrumbs also name the
+  // current page, and on phones the Sidebar lives only in the Sheet.
+  const sidebarLink = page.locator('[data-slot="sidebar-container"]').getByRole("link", { name: "Activity", exact: true });
   if (viewport.width < 768) {
     await expect(sidebarLink).toBeHidden();
     const sheet = page.getByRole("dialog", { name: "Sidebar" });
