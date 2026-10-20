@@ -10,7 +10,8 @@
  *  including Expired media, the processing timeline with its Transcript,
  *  Lead Assessment, and Lead Review entries, Export Call in the header, the
  *  purged media state, and the Operator-only Purge Media confirmation that
- *  calls the purge route and shows the purged state.
+ *  needs an explicit acknowledgement, calls the purge route, and shows the
+ *  purged state.
  *
  * @remarks
  *  The player is covered by recording-player.test.tsx and the Transcript,
@@ -215,6 +216,11 @@ describe("CallDetailView", () => {
       return screen.getByRole("alertdialog", { name: "Purge this Call's media?" });
     }
 
+    function confirmPurge(dialog: HTMLElement) {
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "I understand this permanently deletes this Call's media" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+    }
+
     beforeEach(() => vi.mocked(refreshClientCache).mockClear());
 
     it("states exactly what an irreversible purge deletes and keeps, and purges nothing until confirmed", () => {
@@ -229,13 +235,28 @@ describe("CallDetailView", () => {
       expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/media/purge"), expect.anything());
     });
 
+    it("keeps Purge Media disabled until the Operator acknowledges the irreversible deletion, and asks again each time it opens", () => {
+      vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+      render(<CallDetailView call={analyzed} operator />);
+      let dialog = openConfirmation();
+      const acknowledgement = within(dialog).getByRole("checkbox", { name: "I understand this permanently deletes this Call's media" });
+      expect(acknowledgement).not.toBeChecked();
+      expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeDisabled();
+      fireEvent.click(acknowledgement);
+      expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      dialog = openConfirmation();
+      expect(within(dialog).getByRole("checkbox", { name: "I understand this permanently deletes this Call's media" })).not.toBeChecked();
+      expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeDisabled();
+    });
+
     it("purges after confirmation, shows the pending state, and then shows the purged media state", async () => {
       let resolve: (response: Response) => void = () => undefined;
       const fetch = vi.fn((url: string) => new Promise<Response>((done) => (url.endsWith("/media/purge") ? (resolve = done) : undefined)));
       vi.stubGlobal("fetch", fetch);
       render(<CallDetailView call={analyzed} operator />);
       const dialog = openConfirmation();
-      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+      confirmPurge(dialog);
       expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/calls/call-1/media/purge", { method: "POST" });
       expect(within(dialog).getByRole("button", { name: /Purging\.\.\./ })).toBeDisabled();
       resolve(respond({ purge: { purgedAt: "2026-10-17T14:30:00.000Z" } }, 200));
@@ -263,7 +284,7 @@ describe("CallDetailView", () => {
         vi.stubGlobal("fetch", vi.fn(async () => respond({ error }, 409)));
         render(<CallDetailView call={analyzed} operator />);
         const dialog = openConfirmation();
-        fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+        confirmPurge(dialog);
         expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
         await waitFor(() => expect(refreshClientCache).toHaveBeenCalledTimes(1));
         expect(screen.queryByText("Transcript purged")).not.toBeInTheDocument();
@@ -278,7 +299,7 @@ describe("CallDetailView", () => {
       vi.stubGlobal("fetch", fetch);
       render(<CallDetailView call={analyzed} operator />);
       const dialog = openConfirmation();
-      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+      confirmPurge(dialog);
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Media could not be purged. Try again.");
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
       expect(refreshClientCache).not.toHaveBeenCalled();

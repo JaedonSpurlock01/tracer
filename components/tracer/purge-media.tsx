@@ -9,7 +9,9 @@
  *  Offers Purge Media on Call Detail while the Recording's media can still
  *  be purged: a Recording exists and its media has neither expired nor been
  *  purged. An AlertDialog states that the purge cannot be undone, exactly
- *  what it deletes, and what Tracer keeps. Confirming posts to the
+ *  what it deletes, and what Tracer keeps, and Purge Media stays disabled
+ *  until the Operator ticks an acknowledgement that the deletion is
+ *  permanent, which is cleared each time the dialog opens. Confirming posts to the
  *  Workspace-authorized purge route and shows a pending state; success
  *  closes the dialog and hands the purge time back so Call Detail shows the
  *  purged media state at once. Also derives that purged state from the
@@ -47,6 +49,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { CallDetail } from "@/data/call-details";
@@ -85,6 +89,7 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [acknowledged, setAcknowledged] = useState(false);
 
   async function purge() {
     setPending(true);
@@ -119,6 +124,7 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
         size="sm"
         onClick={() => {
           setError("");
+          setAcknowledged(false);
           setOpen(true);
         }}
       >
@@ -135,6 +141,10 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
             </AlertDialogDescription>
           </AlertDialogHeader>
           <p className="text-sm text-muted-foreground">Tracer keeps the Call facts, Call Outcome, Lead Assessment summary, classification, and score, Lead Review, and analytics.</p>
+          <Field orientation="horizontal">
+            <Checkbox id="purge-media-acknowledgement" checked={acknowledged} disabled={pending} onCheckedChange={(checked) => setAcknowledged(checked === true)} />
+            <FieldLabel htmlFor="purge-media-acknowledgement">I understand this permanently deletes this Call&apos;s media</FieldLabel>
+          </Field>
           {error ? (
             <p role="alert" className="text-sm">
               {error}
@@ -142,7 +152,7 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={pending} onClick={() => void purge()}>
+            <AlertDialogAction variant="destructive" disabled={pending || !acknowledged} onClick={() => void purge()}>
               {pending ? (
                 <>
                   <Spinner /> Purging...

@@ -471,7 +471,7 @@ Use a compact ReUI Timeline for webhook receipt, routing, Recording transfer, wa
 
 ### Purge Media
 
-Purge Media is Operator only and uses an AlertDialog with explicit irreversible confirmation. It deletes Recording audio, waveform peaks, the MP3, Transcript content, the evidence snippets and rationale that reproduce Transcript text, and any unexpired export ZIPs that include the Recording. It preserves Call metadata, Call Outcome, the Lead Assessment summary, classification, and score, Lead Review, and aggregate analytics. Client Viewers cannot purge content and never see the action.
+Purge Media is Operator only and uses an AlertDialog with explicit irreversible confirmation: the destructive Purge Media button stays disabled until the Operator ticks the acknowledgement checkbox "I understand this permanently deletes this Call's media", which is cleared each time the dialog opens. It deletes Recording audio, waveform peaks, the MP3, Transcript content, the evidence snippets and rationale that reproduce Transcript text, and any unexpired export ZIPs that include the Recording. It preserves Call metadata, Call Outcome, the Lead Assessment summary, classification, and score, Lead Review, and aggregate analytics. Client Viewers cannot purge content and never see the action.
 
 - Placement: a destructive Button in the Call Detail header actions, shown only while a Recording exists whose media has neither expired nor been purged
 - Confirmation: the AlertDialog states that the purge cannot be undone, lists what is deleted and what is kept, and purges nothing until the destructive action is confirmed
