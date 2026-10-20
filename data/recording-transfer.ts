@@ -12,11 +12,15 @@
  *  waveform generation, MP3 derivation, and, for a Pending Transcript,
  *  transcription, and
  *  then delete the Twilio copy and record the cleanup. A rerun skips finished stages, reuses a matching object at
- *  the same key, and replaces a mismatched one.
+ *  the same key, and replaces a mismatched one. A Recording whose media
+ *  expired or was purged is never downloaded or uploaded and gets no
+ *  processing requests.
  *
  * @remarks
  *  Each phase holds a row lock taken with NOWAIT, so a concurrent duplicate
- *  run fails fast and is retried instead of acting twice. Storage and
+ *  run fails fast and is retried instead of acting twice. The retained
+ *  media check is read under that lock, so a purge waits until the Stored
+ *  commit and then deletes the stored WAV itself. Storage and
  *  cleanup commit in separate transactions so the Twilio delete can never
  *  run before the verified copy is durable. A failed stage is rolled back
  *  to a savepoint and recorded under the same lock with a secret-free
@@ -51,6 +55,7 @@ import { parseCallFlowGraph, type OutcomeKind } from "@/data/call-flow";
 import { decryptSecret } from "@/data/credential-encryption";
 import { R2ObjectError, sha256Hex, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import type { RecordingProcessing, RecordingSource } from "@/data/recording";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
 
 export interface RecordingTransferDependencies {
@@ -77,6 +82,7 @@ type RecordingRow = {
   transfer_state: string;
   twilio_cleanup_state: string;
   transcript_state: string | null;
+  media_retained: boolean;
   account_sid: string | null;
   api_key_sid: string | null;
   api_key_secret_ciphertext: string | null;
@@ -97,15 +103,17 @@ function matches(stored: StoredObject | null, object: StoredObject): boolean {
   return stored?.sizeBytes === object.sizeBytes && stored.sha256 === object.sha256;
 }
 
-async function lockRecording(client: PoolClient, recordingId: string): Promise<RecordingRow | undefined> {
+async function lockRecording(client: PoolClient, recordingId: string, now: Date): Promise<RecordingRow | undefined> {
   const result = await client.query<RecordingRow>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state, r.transcript_state,
+            ${recordingMediaRetainedSql("r", "k.started_at", "$2")} as media_retained,
             c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext
        from recording r
+       join call k on k.id = r.call_id
        left join twilio_connection c on c.organization_id = r.organization_id
       where r.id = $1
         for update of r nowait`,
-    [recordingId],
+    [recordingId, now],
   );
   return result.rows[0];
 }
@@ -208,7 +216,7 @@ async function withLockedRecording(
   const progress: Progress = { stage: null };
   try {
     await client.query("begin");
-    const row = await lockRecording(client, recordingId);
+    const row = await lockRecording(client, recordingId, deps.now());
     if (row) {
       await client.query("savepoint stage");
       try {
@@ -234,6 +242,7 @@ export async function transferRecording(deps: RecordingTransferDependencies, rec
   let storedOrganizationId: string | null = null;
   let transcriptState = null as string | null;
   await withLockedRecording(deps, recordingId, async (client, row, progress) => {
+    if (!row.media_retained) return;
     transcriptState = row.transfer_state === "Stored" ? row.transcript_state : await store(deps, client, row, progress);
     storedOrganizationId = row.organization_id;
   });

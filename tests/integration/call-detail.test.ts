@@ -684,6 +684,20 @@ describe.sequential("Call analysis Retry", () => {
     expect(leadAssessmentRequests.requests).toEqual([]);
   });
 
+  it("answers Conflict for a failed stage whose media an Operator purged", async () => {
+    clearRequests();
+    const transcript = await seedCall("retry-purged-transcript-call", { analysis: { transcript: "Failed" } });
+    const assessment = await seedCall("retry-purged-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Failed" } });
+    await pool!.query("update recording set media_purged_at = now() where id = any($1)", [[transcript.recordingId, assessment.recordingId]]);
+    for (const callId of ["retry-purged-transcript-call", "retry-purged-assessment-call"]) {
+      const { response, body } = await retry("granted-active", callId, operatorCookie);
+      expect(response.status).toBe(409);
+      expect(body).toEqual({ error: "nothing_to_retry" });
+    }
+    expect(transcriptionRequests.requests).toEqual([]);
+    expect(leadAssessmentRequests.requests).toEqual([]);
+  });
+
   it("refuses a Client Viewer's Retry with the Operator-only refusal and requests nothing", async () => {
     clearRequests();
     const { response, body } = await retry("granted-active", "retry-transcript-call", clientCookie);

@@ -10,8 +10,9 @@
  *  linked to valid Transcript turns, that invalid model output and provider
  *  failures become Failed with a secret-free reason while the Transcript
  *  and playback stay, that a retry from Failed completes, and that
- *  Recordings without a Completed Transcript, already assessed, or expired
- *  never call OpenAI.
+ *  Recordings without a Completed Transcript, already assessed, expired, or
+ *  purged never call OpenAI, and that a purge committing while OpenAI
+ *  works leaves no assessment or evidence.
  *
  * @see
  *  data/recording-lead-assessment.ts
@@ -60,6 +61,7 @@ interface FakeResponder extends StructuredResponder {
   requests: StructuredRequest[];
   output: string;
   failure: Error | null;
+  during: (() => Promise<void>) | null;
 }
 
 function fakeResponder(output: unknown = goodLead): FakeResponder {
@@ -67,8 +69,10 @@ function fakeResponder(output: unknown = goodLead): FakeResponder {
     requests: [],
     output: JSON.stringify(output),
     failure: null,
+    during: null,
     async respond(request) {
       responder.requests.push(request);
+      await responder.during?.();
       if (responder.failure) throw responder.failure;
       return { text: responder.output, inputTokens: 812, outputTokens: 436 };
     },
@@ -83,7 +87,7 @@ function dependencies(responder: FakeResponder): RecordingLeadAssessmentDependen
 let sequence = 0;
 
 async function transcribedRecording(
-  options: { transcript?: "Pending" | "Completed" | "Skipped"; assessment?: string | null; storedTurns?: unknown; callStartedAt?: Date } = {},
+  options: { transcript?: "Pending" | "Completed" | "Skipped"; assessment?: string | null; storedTurns?: unknown; callStartedAt?: Date; purgedAt?: Date } = {},
 ): Promise<{ id: string; callId: string }> {
   sequence += 1;
   const transcript = options.transcript ?? "Completed";
@@ -122,6 +126,7 @@ async function transcribedRecording(
       [id, organizationId, callId, JSON.stringify(options.storedTurns ?? turns), days(1)],
     );
   }
+  if (options.purgedAt) await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, options.purgedAt]);
   return { id, callId };
 }
 
@@ -306,6 +311,47 @@ describe("Recording Lead Assessment", () => {
 
     expect(responder.requests).toEqual([]);
     expect(await Promise.all(records.map((recording) => recordingRow(recording.id)))).toEqual(before);
+  });
+
+  it("never calls OpenAI for a Recording whose media an Operator purged", async () => {
+    const responder = fakeResponder();
+    const purged = await transcribedRecording({ purgedAt: days(0) });
+    const before = await recordingRow(purged.id);
+
+    await expect(assessRecordingLead(dependencies(responder), purged.id)).resolves.toBeUndefined();
+
+    expect(responder.requests).toEqual([]);
+    expect(await assessmentRows(purged.id)).toEqual({ assessment: undefined, evidence: [] });
+    expect(await recordingRow(purged.id)).toEqual(before);
+  });
+
+  it("stores no assessment or evidence when a purge commits while OpenAI assesses the Transcript", async () => {
+    const responder = fakeResponder();
+    const recording = await transcribedRecording();
+    responder.during = async () => {
+      await pool!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
+      await pool!.query("delete from transcript where recording_id = $1", [recording.id]);
+    };
+
+    await expect(assessRecordingLead(dependencies(responder), recording.id)).resolves.toBeUndefined();
+
+    expect(await assessmentRows(recording.id)).toEqual({ assessment: undefined, evidence: [] });
+    expect(await recordingRow(recording.id)).toMatchObject({ lead_assessment_state: "Pending", lead_assessment_failure_reason: null });
+  });
+
+  it("ends cleanly without recording Failed when OpenAI fails after a purge committed", async () => {
+    const responder = fakeResponder();
+    const recording = await transcribedRecording();
+    responder.failure = new OpenAIError("OpenAI request failed (HTTP 500)");
+    responder.during = async () => {
+      await pool!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
+      await pool!.query("delete from transcript where recording_id = $1", [recording.id]);
+    };
+
+    await expect(assessRecordingLead(dependencies(responder), recording.id)).resolves.toBeUndefined();
+
+    expect(await recordingRow(recording.id)).toMatchObject({ lead_assessment_state: "Pending", lead_assessment_failure_reason: null });
+    await expect(pool!.query("select 1 from call_event where call_id = $1 and kind = 'lead_assessment_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
   });
 });
 

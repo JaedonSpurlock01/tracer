@@ -11,7 +11,9 @@
  *  that waveform generation is requested once the Recording is Stored
  *  without its failure affecting the transfer or cleanup, and that analysis
  *  eligibility is decided when the Recording is Stored so only an eligible
- *  Recording requests transcription.
+ *  Recording requests transcription, and that a purged or expired
+ *  Recording is never transferred while a purge waiting on a running
+ *  transfer deletes the WAV it stored.
  *
  * @remarks
  *  The fakes implement the provider interfaces only. The R2 fake computes
@@ -32,11 +34,13 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
+import { purgeCallMedia } from "@/data/media-purge";
 import { migrateDatabase } from "@/data/migrate";
-import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import { R2ObjectError, type ArtifactObjects, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import type { RecordingProcessing, RecordingProcessingRequest } from "@/data/recording";
 import { transferRecording, type RecordingTransferDependencies } from "@/data/recording-transfer";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
@@ -49,6 +53,7 @@ const now = new Date("2026-10-16T12:00:00.000Z");
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
 let organizationId = "";
+let operator: Actor | undefined;
 
 interface FakeTwilio extends TwilioRecordingMedia {
   media: Map<string, Uint8Array>;
@@ -60,7 +65,7 @@ interface FakeTwilio extends TwilioRecordingMedia {
   downloadGate: Promise<void> | null;
 }
 
-interface FakeR2 extends RecordingObjects {
+interface FakeR2 extends RecordingObjects, Pick<ArtifactObjects, "delete"> {
   objects: Map<string, { bytes: Uint8Array; stored: StoredObject }>;
   puts: string[];
   putFailure: Error | null;
@@ -113,6 +118,9 @@ function fakeR2(): FakeR2 {
     },
     async get(key) {
       return r2.objects.get(key)?.bytes ?? null;
+    },
+    async delete(key) {
+      r2.objects.delete(key);
     },
   };
   return r2;
@@ -211,12 +219,13 @@ beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
   await migrateDatabase(container.getConnectionUri());
-  const operator = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
-  organizationId = operator.organizationId;
+  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
+  organizationId = bootstrapped.organizationId;
+  operator = { organizationId, userId: bootstrapped.userId, role: "Operator", timezone: "UTC", name: "Transfer Operator", email: "operator@example.com", state: "Active" };
   await pool.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
      values ('transfer-connection', $1, $2, 'SK11111111111111111111111111111111', $3, $4, now(), now(), now())`,
-    [organizationId, accountSid, await encryptSecret(masterKey, apiKeySecret), operator.userId],
+    [organizationId, accountSid, await encryptSecret(masterKey, apiKeySecret), bootstrapped.userId],
   );
   await pool.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
@@ -237,7 +246,7 @@ beforeAll(async () => {
   await pool.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('transfer-flow-version', $1, 'transfer-workspace', 1, $2, $3, now())`,
-    [organizationId, JSON.stringify(graph), operator.userId],
+    [organizationId, JSON.stringify(graph), bootstrapped.userId],
   );
   await pool.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, recording_enabled, analysis_enabled, created_at, updated_at)
@@ -249,7 +258,7 @@ beforeAll(async () => {
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('analysis-flow-version', $1, 'analysis-workspace', 1, $2, $4, now()),
             ('analysis-gated-flow-version', $1, 'analysis-workspace', 2, $3, $4, now())`,
-    [organizationId, JSON.stringify(flow(false)), JSON.stringify(flow(true)), operator.userId],
+    [organizationId, JSON.stringify(flow(false)), JSON.stringify(flow(true)), bootstrapped.userId],
   );
 }, 120_000);
 
@@ -656,6 +665,54 @@ describe("Recording transfer", () => {
     expect(r2.puts).toHaveLength(1);
     expect(twilio.deletes).toEqual([{ sid: recording.sid, transferState: "Stored" }]);
     expect(await recordingRow(recording.id)).toMatchObject({ transfer_state: "Stored", twilio_cleanup_state: "Deleted", failure_stage: null });
+  });
+
+  it("never downloads or uploads a Pending or Failed transfer whose media an Operator purged or that expired", async () => {
+    const twilio = fakeTwilio();
+    const r2 = fakeR2();
+    const waveform = fakeWaveform();
+    const transcription = fakeTranscription();
+    const mp3 = fakeWaveform();
+    const purgedPending = await pendingRecording();
+    const purgedFailed = await pendingRecording();
+    const expiredPending = await pendingRecording();
+    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[purgedPending.id, purgedFailed.id], now]);
+    await pool!.query("update recording set transfer_state = 'Failed', failure_stage = 'download', failure_reason = 'Twilio is unavailable' where id = $1", [purgedFailed.id]);
+    await pool!.query("update call set started_at = $2::timestamptz - interval '13 months' where id = $1", [expiredPending.callId, now]);
+    const records = [purgedPending, purgedFailed, expiredPending];
+    for (const recording of records) twilio.media.set(recording.sid, recording.bytes);
+    const before = await Promise.all(records.map((recording) => recordingRow(recording.id)));
+
+    for (const recording of records) await expect(transferRecording(dependencies(twilio, r2, waveform, transcription, mp3), recording.id)).resolves.toBeUndefined();
+
+    expect(twilio.downloads).toEqual([]);
+    expect(twilio.deletes).toEqual([]);
+    expect(r2.puts).toEqual([]);
+    expect([waveform.requests, transcription.requests, mp3.requests]).toEqual([[], [], []]);
+    expect(await Promise.all(records.map((recording) => recordingRow(recording.id)))).toEqual(before);
+  });
+
+  it("leaves no stored WAV behind when an Operator purges while the transfer is storing it", async () => {
+    const recording = await pendingRecording();
+    const twilio = fakeTwilio();
+    const r2 = fakeR2();
+    twilio.media.set(recording.sid, recording.bytes);
+    let release!: () => void;
+    twilio.downloadGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const transfer = transferRecording(dependencies(twilio, r2), recording.id);
+    await expect.poll(() => twilio.downloads.length).toBe(1);
+    const purge = purgeCallMedia({ pool: pool!, objects: r2 }, operator!, "transfer-workspace", recording.callId, now);
+    await expect.poll(async () => (await pool!.query("select 1 from pg_stat_activity where wait_event_type = 'Lock'")).rowCount).toBe(1);
+
+    release();
+    await Promise.allSettled([transfer]);
+
+    await expect(purge).resolves.toMatchObject({ purgedAt: now.toISOString() });
+    expect(r2.puts).toHaveLength(1);
+    expect(r2.objects.size).toBe(0);
+    await expect(pool!.query("select media_deleted_at from recording where id = $1", [recording.id])).resolves.toMatchObject({ rows: [{ media_deleted_at: now }] });
   });
 });
 

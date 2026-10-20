@@ -8,7 +8,8 @@
  *  with fake R2 object and peak generator boundaries, and checks the stored
  *  peaks object and its lanes, the persisted waveform state, idempotent
  *  reruns, failure recovery at the same key, and that Recordings that are
- *  not Stored, missing, or past media retention are left untouched.
+ *  not Stored, missing, past media retention, or purged are left untouched,
+ *  and that a purge committing during generation leaves no peaks behind.
  *
  * @remarks
  *  The peak generator fake returns audiowaveform fixture output, because
@@ -30,7 +31,7 @@ import { AudiowaveformError, type AudiowaveformData, type WaveformPeakGenerator 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
-import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import { R2ObjectError, type ArtifactObjects, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import { generateRecordingWaveform, normalizeWaveformPeaks, type RecordingWaveformDependencies } from "@/data/recording-waveform";
 
 import mixed from "../contracts/fixtures/audiowaveform/mixed.json";
@@ -43,16 +44,19 @@ let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
 let organizationId = "";
 
-interface FakeR2 extends RecordingObjects {
+interface FakeR2 extends RecordingObjects, Pick<ArtifactObjects, "delete"> {
   objects: Map<string, { bytes: Uint8Array; contentType: string }>;
   gets: string[];
   puts: string[];
+  deletes: string[];
   putFailure: Error | null;
+  beforeGet: (() => Promise<void>) | null;
 }
 
 interface FakePeaks extends WaveformPeakGenerator {
   calls: { wav: Uint8Array; splitChannels: boolean }[];
   failure: Error | null;
+  during: (() => Promise<void>) | null;
 }
 
 function fakeR2(): FakeR2 {
@@ -60,7 +64,9 @@ function fakeR2(): FakeR2 {
     objects: new Map(),
     gets: [],
     puts: [],
+    deletes: [],
     putFailure: null,
+    beforeGet: null,
     async head(key): Promise<StoredObject | null> {
       const object = r2.objects.get(key);
       return object ? { sizeBytes: object.bytes.byteLength, sha256: createHash("sha256").update(object.bytes).digest("hex") } : null;
@@ -72,7 +78,12 @@ function fakeR2(): FakeR2 {
     },
     async get(key) {
       r2.gets.push(key);
+      await r2.beforeGet?.();
       return r2.objects.get(key)?.bytes ?? null;
+    },
+    async delete(key) {
+      r2.deletes.push(key);
+      r2.objects.delete(key);
     },
   };
   return r2;
@@ -82,8 +93,10 @@ function fakePeaks(): FakePeaks {
   const peaks: FakePeaks = {
     calls: [],
     failure: null,
+    during: null,
     async generate(wav, options) {
       peaks.calls.push({ wav, splitChannels: options.splitChannels });
+      await peaks.during?.();
       if (peaks.failure) throw peaks.failure;
       return (options.splitChannels ? splitChannels : mixed) as AudiowaveformData;
     },
@@ -99,7 +112,7 @@ let sequence = 0;
 
 async function storedRecording(
   r2: FakeR2,
-  options: { channels?: 1 | 2; transfer?: string; callStartedAt?: Date } = {},
+  options: { channels?: 1 | 2; transfer?: string; callStartedAt?: Date; purgedAt?: Date } = {},
 ): Promise<{ id: string; callId: string; wavKey: string; peaksKey: string; wav: Uint8Array }> {
   sequence += 1;
   const channels = options.channels ?? 2;
@@ -133,8 +146,13 @@ async function storedRecording(
       days(1),
     ],
   );
+  if (options.purgedAt) await purge(id, options.purgedAt);
   if (stored) r2.objects.set(`${base}.wav`, { bytes: wav, contentType: "audio/wav" });
   return { id, callId, wavKey: `${base}.wav`, peaksKey: `${base}.peaks.json`, wav };
+}
+
+async function purge(id: string, at: Date): Promise<void> {
+  await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
 }
 
 async function waveformRow(id: string): Promise<Record<string, unknown>> {
@@ -325,5 +343,48 @@ describe("Recording waveform", () => {
     expect(before).toMatchObject({ channels: 2, duration_seconds: 12, waveform_state: "Pending" });
     await expect(pool!.query("select id from call where id = $1", [expired.callId])).resolves.toMatchObject({ rowCount: 1 });
     expect(await waveformRow(retained.id)).toMatchObject({ waveform_state: "Stored" });
+  });
+
+  it("skips a Recording whose media an Operator purged without reading or uploading anything", async () => {
+    const r2 = fakeR2();
+    const peaks = fakePeaks();
+    const purged = await storedRecording(r2, { purgedAt: days(0) });
+    const before = await waveformRow(purged.id);
+
+    await expect(generateRecordingWaveform(dependencies(r2, peaks), purged.id)).resolves.toBeUndefined();
+
+    expect(r2.gets).toEqual([]);
+    expect(r2.puts).toEqual([]);
+    expect(peaks.calls).toEqual([]);
+    expect(await waveformRow(purged.id)).toEqual(before);
+  });
+
+  it("deletes the peaks it uploaded and leaves the waveform unstored when a purge commits while peaks are generated", async () => {
+    const r2 = fakeR2();
+    const peaks = fakePeaks();
+    const recording = await storedRecording(r2);
+    peaks.during = () => purge(recording.id, now);
+
+    await expect(generateRecordingWaveform(dependencies(r2, peaks), recording.id)).resolves.toBeUndefined();
+
+    expect(r2.puts).toEqual([recording.peaksKey]);
+    expect(r2.objects.has(recording.peaksKey)).toBe(false);
+    expect(await waveformRow(recording.id)).toMatchObject({ waveform_state: "Pending", waveform_object_key: null, waveform_generated_at: null });
+  });
+
+  it("ends cleanly without recording Failed when a purge deletes the WAV before the run reads it", async () => {
+    const r2 = fakeR2();
+    const peaks = fakePeaks();
+    const recording = await storedRecording(r2);
+    r2.beforeGet = async () => {
+      await purge(recording.id, now);
+      r2.objects.delete(recording.wavKey);
+    };
+
+    await expect(generateRecordingWaveform(dependencies(r2, peaks), recording.id)).resolves.toBeUndefined();
+
+    expect(peaks.calls).toEqual([]);
+    expect(r2.puts).toEqual([]);
+    expect(await waveformRow(recording.id)).toMatchObject({ waveform_state: "Pending", waveform_failure_reason: null });
   });
 });

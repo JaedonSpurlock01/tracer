@@ -8,8 +8,8 @@
  *  selects the same Recording Call Detail shows. A Failed Transcript gets a
  *  transcription request, otherwise a Failed Lead Assessment gets a Lead
  *  Assessment request, each with its Recording-derived idempotency key.
- *  Anything else, including a Recording whose media expired, has nothing
- *  to retry.
+ *  Anything else, including a Recording whose media expired or an Operator
+ *  purged, has nothing to retry.
  *
  * @remarks
  *  The state stays Failed when the request is made, because both tasks run
@@ -23,6 +23,7 @@
  *  data/call-details.ts
  *  data/recording-processing.ts
  *  data/recording-recovery.ts
+ *  data/recording-media.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -31,7 +32,7 @@ import type { Pool } from "pg";
 
 import type { Actor } from "@/data/authorization";
 import type { RecordingProcessing } from "@/data/recording";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 export type AnalysisRetryStage = "transcription" | "lead_assessment";
@@ -53,11 +54,11 @@ export interface AnalysisRetryRequests {
 export async function retryCallAnalysis(pool: Pool, actor: Actor, workspaceId: string, callId: string, requests: AnalysisRetryRequests): Promise<AnalysisRetryResult> {
   const workspace = await createReadableWorkspaces(pool, actor).find(workspaceId);
   if (!workspace) return "not_found";
-  const result = await pool.query<{ recording_id: string | null; transcript_state: string | null; lead_assessment_state: string | null; expired: boolean | null }>(
-    `select r.id as recording_id, r.transcript_state, r.lead_assessment_state, ${recordingMediaExpiredSql("c.started_at", "now()")} as expired
+  const result = await pool.query<{ recording_id: string | null; transcript_state: string | null; lead_assessment_state: string | null; media_retained: boolean }>(
+    `select r.id as recording_id, r.transcript_state, r.lead_assessment_state, ${recordingMediaRetainedSql("r", "c.started_at", "now()")} as media_retained
        from call c
        left join lateral (
-         select id, transcript_state, lead_assessment_state from recording
+         select id, transcript_state, lead_assessment_state, media_purged_at from recording
           where call_id = c.id and organization_id = c.organization_id
           order by source = 'connected' desc, created_at
           limit 1
@@ -67,7 +68,7 @@ export async function retryCallAnalysis(pool: Pool, actor: Actor, workspaceId: s
   );
   const row = result.rows[0];
   if (!row) return "not_found";
-  if (!row.recording_id || row.expired) return "nothing_to_retry";
+  if (!row.recording_id || !row.media_retained) return "nothing_to_retry";
   const stage: AnalysisRetryStage | null = row.transcript_state === "Failed" ? "transcription" : row.lead_assessment_state === "Failed" ? "lead_assessment" : null;
   if (!stage) return "nothing_to_retry";
   const processing = stage === "transcription" ? requests.transcription : requests.leadAssessment;

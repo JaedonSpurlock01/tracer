@@ -11,7 +11,8 @@
  *  Recordings whose Transcript is Pending or Failed, and the Lead Assessment
  *  for Completed Transcripts whose Lead Assessment is Pending or Failed,
  *  only when idle for over an hour and created within the last 7 days, and
- *  that one failed request does not stop the rest.
+ *  that one failed request does not stop the rest, and that a purged or
+ *  expired Recording is never selected for any stage.
  *
  * @remarks
  *  Recording processing, waveform, transcription, and Lead Assessment
@@ -51,6 +52,7 @@ async function recording(state: {
   leadAssessment?: string;
   mp3?: string;
   callId?: string;
+  purgedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }): Promise<string> {
@@ -104,6 +106,7 @@ async function recording(state: {
       ],
     );
   }
+  if (state.purgedAt) await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, state.purgedAt]);
   return id;
 }
 
@@ -344,5 +347,24 @@ describe("Recording recovery sweep", () => {
 
     expect(mp3.requests.map((request) => request.id)).toEqual([id]);
     expect([...processing.requests, ...waveform.requests, ...transcription.requests]).toEqual([]);
+  });
+
+  it("requests no stage for a stalled Recording whose media an Operator purged or that expired", async () => {
+    const stalled = [
+      { transfer: "Pending", cleanup: "Pending", mp3: "Pending" },
+      { transfer: "Failed", cleanup: "Pending", mp3: "Pending" },
+      { transfer: "Stored", cleanup: "Failed", waveform: "Failed", transcript: "Failed", mp3: "Pending" },
+      { transfer: "Stored", cleanup: "Deleted", waveform: "Pending", transcript: "Pending", mp3: "Failed" },
+      { transfer: "Stored", cleanup: "Deleted", waveform: "Stored", transcript: "Completed", leadAssessment: "Failed", mp3: "Pending" },
+    ];
+    for (const state of stalled) {
+      await recording({ ...state, purgedAt: hours(3), createdAt: hours(30), updatedAt: hours(2) });
+      await recording({ ...state, callId: "recovery-expired-call", createdAt: hours(30), updatedAt: hours(2) });
+    }
+    const requests = [recordingProcessing(), recordingProcessing(), recordingProcessing(), recordingProcessing(), recordingProcessing()] as const;
+
+    await expect(sweep(...requests)).resolves.toEqual({ requested: 0, failed: 0 });
+
+    expect(requests.flatMap((processing) => processing.requests)).toEqual([]);
   });
 });

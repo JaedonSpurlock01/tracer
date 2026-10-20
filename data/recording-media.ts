@@ -5,7 +5,10 @@
  *
  * @description
  *  Owns the media expiry rule: Recording media counts as Expired 12 months
- *  after its Call started. Loads a Recording scoped to its Organization and
+ *  after its Call started. States in one SQL predicate whether a
+ *  Recording's media is still retained, neither purged nor expired, which
+ *  every processing writer and the recovery sweep check before writing
+ *  content. Loads a Recording scoped to its Organization and
  *  Workspace only while its WAV is Stored, its media has not expired, and
  *  an Operator has not purged it,
  *  returning the WAV and, once each is Stored, its peaks and MP3 objects.
@@ -36,6 +39,7 @@
  *  data/call-details.ts
  *  data/media-retention.ts
  *  data/media-purge.ts
+ *  data/recording-recovery.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -59,6 +63,10 @@ export function recordingMediaExpiresAtSql(callStartedAt: string): string {
 
 export function recordingMediaExpiredSql(callStartedAt: string, now: string): string {
   return `(${recordingMediaExpiresAtSql(callStartedAt)} <= ${now})`;
+}
+
+export function recordingMediaRetainedSql(recording: string, callStartedAt: string, now: string): string {
+  return `(${recording}.media_purged_at is null and not ${recordingMediaExpiredSql(callStartedAt, now)})`;
 }
 
 export function recordingAvailabilitySql(recording: string, callStartedAt: string): string {

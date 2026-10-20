@@ -10,14 +10,16 @@
  *  its token usage and cost, and the Completed state together. A Recording
  *  whose Lead Assessment is not Pending or Failed, whose Transcript is not
  *  Completed or no longer exists, whose media expired 12 months after its
- *  Call started, or that no longer exists is left untouched without calling
- *  OpenAI.
+ *  Call started or was purged, or that no longer exists is left untouched
+ *  without calling OpenAI.
  *
  * @remarks
  *  The Recording row is locked only to commit, never during the OpenAI
  *  call, for the same reason as transcription; the commit re-checks the
- *  state under the lock so a concurrent duplicate run cannot insert a
- *  second assessment. Evidence is stored apart from the assessment so a
+ *  state and that the media is still retained under the lock, so neither a
+ *  concurrent duplicate run nor a purge that committed meanwhile lets an
+ *  assessment or its evidence land, and a failure after a purge or expiry
+ *  ends cleanly without a Failed state, event, or retry. Evidence is stored apart from the assessment so a
  *  purge can delete Transcript-derived text while the assessment remains.
  *  A failure is recorded as Failed with a secret-free reason, never model
  *  output or an unexpected error's message, and rethrown for Trigger.dev
@@ -41,7 +43,7 @@ import type { Pool } from "pg";
 import { appendCallEvent } from "@/data/call-events";
 import { LeadAssessmentError, leadAssessmentCostUsd, leadAssessmentModel, leadAssessmentRequest, parseLeadAssessment, type LeadAssessmentResult } from "@/data/lead-assessment";
 import { OpenAIError, type StructuredResponder } from "@/data/openai-client";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { parseTranscriptTurns, TranscriptError } from "@/data/transcript";
 
 export interface RecordingLeadAssessmentDependencies {
@@ -57,7 +59,7 @@ type AssessmentRow = {
   lead_assessment_state: string | null;
   workspace_name: string;
   turns: unknown;
-  media_expired: boolean;
+  media_retained: boolean;
 };
 
 const runnableStates = ["Pending", "Failed"];
@@ -75,13 +77,21 @@ async function complete(
   const client = await deps.pool.connect();
   try {
     await client.query("begin");
-    const locked = await client.query<{ lead_assessment_state: string | null }>("select lead_assessment_state from recording where id = $1 for update", [row.id]);
-    if (!runnableStates.includes(locked.rows[0]?.lead_assessment_state ?? "")) {
+    const now = deps.now();
+    const locked = await client.query<{ lead_assessment_state: string | null; media_retained: boolean }>(
+      `select r.lead_assessment_state, ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
+         from recording r
+         join call c on c.id = r.call_id
+        where r.id = $1
+          for update of r`,
+      [row.id, now],
+    );
+    const current = locked.rows[0];
+    if (!current?.media_retained || !runnableStates.includes(current.lead_assessment_state ?? "")) {
       await client.query("rollback");
       return;
     }
     const id = randomUUID();
-    const now = deps.now();
     await client.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
@@ -127,7 +137,7 @@ async function complete(
 export async function assessRecordingLead(deps: RecordingLeadAssessmentDependencies, recordingId: string): Promise<void> {
   const result = await deps.pool.query<AssessmentRow>(
     `select r.id, r.organization_id, r.call_id, r.lead_assessment_state, w.name as workspace_name, t.turns,
-            ${recordingMediaExpiredSql("c.started_at", "$2")} as media_expired
+            ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
        join call c on c.id = r.call_id
        join workspace w on w.id = r.workspace_id
@@ -136,23 +146,30 @@ export async function assessRecordingLead(deps: RecordingLeadAssessmentDependenc
     [recordingId, deps.now()],
   );
   const row = result.rows[0];
-  if (!row || row.media_expired || !runnableStates.includes(row.lead_assessment_state ?? "")) return;
+  if (!row?.media_retained || !runnableStates.includes(row.lead_assessment_state ?? "")) return;
   try {
     const turns = parseTranscriptTurns(row.turns);
     const response = await deps.responder.respond(leadAssessmentRequest(row.workspace_name, turns));
     await complete(deps, row, parseLeadAssessment(response.text, turns), response);
   } catch (error) {
-    await deps.pool.query(
+    const failed = await deps.pool.query<{ media_retained: boolean }>(
       `with failed as (
-         update recording set lead_assessment_state = 'Failed', lead_assessment_failure_reason = $2, updated_at = $3
-          where id = $1 and lead_assessment_state in ('Pending', 'Failed')
-          returning organization_id, workspace_id, call_id
+         update recording r set lead_assessment_state = 'Failed', lead_assessment_failure_reason = $2, updated_at = $3
+           from call c
+          where r.id = $1 and c.id = r.call_id and r.lead_assessment_state in ('Pending', 'Failed') and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}
+          returning r.organization_id, r.workspace_id, r.call_id
+       ), event as (
+         insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
+         select organization_id, workspace_id, call_id, 'lead_assessment_failed', $3, 'lead_assessment_failed:' || $1 from failed
+         on conflict (organization_id, idempotency_key) do nothing
        )
-       insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
-       select organization_id, workspace_id, call_id, 'lead_assessment_failed', $3, 'lead_assessment_failed:' || $1 from failed
-       on conflict (organization_id, idempotency_key) do nothing`,
+       select ${recordingMediaRetainedSql("r", "c.started_at", "$3")} as media_retained
+         from recording r
+         join call c on c.id = r.call_id
+        where r.id = $1`,
       [row.id, failureReason(error), deps.now()],
     );
+    if (!failed.rows[0]?.media_retained) return;
     throw error;
   }
 }
