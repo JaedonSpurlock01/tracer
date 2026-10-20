@@ -217,7 +217,7 @@ describe.sequential("Reports API", () => {
     expect(preview.status).toBe(200);
     expect(preview.headers.get("cache-control")).toBe("private, no-store");
     expect(await json(preview)).toEqual({
-      preview: { matchedCalls: 3, retainedRecordings: 3, expiredMedia: 0, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 },
+      preview: { matchedCalls: 3, retainedRecordings: 3, purgedMedia: 0, expiredMedia: 0, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 },
       recordingExportLimit: 500,
     });
     for (const scope of [{ kind: "global", workspaceIds: ["north", "west"] }, { kind: "workspace", workspaceId: "west" }, { kind: "workspace", workspaceId: "missing" }]) {

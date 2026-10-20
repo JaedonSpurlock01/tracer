@@ -8,8 +8,9 @@
  *  context and the Call Outcome Badge, the Call facts definition list with
  *  the Operator-only Twilio call SID, Recording and retention status
  *  including Expired media, the processing timeline with its Transcript,
- *  Lead Assessment, and Lead Review entries, Export Call in the header, and
- *  the absence of Purge Media, which waits for a later milestone.
+ *  Lead Assessment, and Lead Review entries, Export Call in the header, the
+ *  purged media state, and the Operator-only Purge Media confirmation that
+ *  calls the purge route and shows the purged state.
  *
  * @remarks
  *  The player is covered by recording-player.test.tsx and the Transcript,
@@ -23,11 +24,12 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CallDetailView from "@/components/tracer/call-detail-view";
 import type { CallDetail } from "@/data/call-details";
+import { refreshClientCache } from "@/data/client-cache";
 
 vi.mock("wavesurfer.js", () => ({ default: { create: () => ({ zoom: vi.fn(), destroy: vi.fn() }) } }));
 vi.mock("wavesurfer.js/plugins/timeline", () => ({ default: { create: () => ({}) } }));
@@ -119,6 +121,15 @@ describe("CallDetailView", () => {
     expect(document.querySelector("audio")).toBeNull();
   });
 
+  it("keeps the Call facts and labels purged Recording media with its purge time, without audio or Download MP3", () => {
+    render(<CallDetailView call={{ ...call, recording: { state: "Purged", purgedAt: "2026-10-17T14:30:00.000Z" }, mp3RecordingId: null }} operator />);
+    expect(fact("Recording")).toHaveTextContent("Purged on Oct 17, 2026, 9:30:00 AM");
+    expect(fact("Total duration")).toHaveTextContent("1:35");
+    expect(within(screen.getByRole("region", { name: "Recording" })).getByText("Recording purged")).toBeVisible();
+    expect(document.querySelector("audio")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Download MP3" })).not.toBeInTheDocument();
+  });
+
   it("describes Processing, Failed, and Unavailable Recordings in the Recording fact", () => {
     const cases: [CallDetail["recording"], string][] = [
       [{ state: "Processing", stage: "transfer" }, "Processing"],
@@ -164,11 +175,117 @@ describe("CallDetailView", () => {
     }
   });
 
-  it("offers Export Call and no Purge Media, which waits for a later milestone", () => {
+  it("offers Export Call in the header", () => {
     render(<CallDetailView call={call} operator />);
     expect(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Export Call" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Purge Media" })).not.toBeInTheDocument();
+  });
+
+  it("offers Operators Purge Media only while the Recording's media can be purged, and never to Client Viewers", () => {
+    const purgeable: CallDetail["recording"][] = [call.recording, { state: "Processing", stage: "transfer" }, { state: "Failed" }];
+    const kept: CallDetail["recording"][] = [{ state: "Unavailable", reason: "not_captured" }, { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" }, { state: "Purged", purgedAt: "2026-10-17T14:30:00.000Z" }];
+    for (const recording of purgeable) {
+      render(<CallDetailView call={{ ...call, recording }} operator />);
+      expect(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Purge Media" })).toBeEnabled();
+      cleanup();
+      render(<CallDetailView call={{ ...call, recording, twilioCallSid: undefined }} operator={false} />);
+      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      cleanup();
+    }
+    for (const recording of kept) {
+      render(<CallDetailView call={{ ...call, recording }} operator />);
+      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  describe("Purge Media", () => {
+    const analyzed: CallDetail = {
+      ...call,
+      mp3RecordingId: "recording-1",
+      transcript: { state: "Completed", turns: [{ speaker: "Caller", startMs: 0, endMs: 4000, text: "My water heater is leaking." }] },
+      leadAssessment: { state: "Completed", classification: "Good Lead", score: 86, summary: "Caller needs a repair today.", rationale: "Urgent, in-scope request.", processedAt: "2026-10-16T20:08:00.000Z", evidence: [{ turnIndex: 0, startMs: 0, quote: "water heater is leaking" }] },
+    };
+
+    function respond(body: unknown, status: number) {
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }
+
+    function openConfirmation(): HTMLElement {
+      fireEvent.click(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Purge Media" }));
+      return screen.getByRole("alertdialog", { name: "Purge this Call's media?" });
+    }
+
+    beforeEach(() => vi.mocked(refreshClientCache).mockClear());
+
+    it("states exactly what an irreversible purge deletes and keeps, and purges nothing until confirmed", () => {
+      const fetch = vi.fn(() => new Promise<Response>(() => undefined));
+      vi.stubGlobal("fetch", fetch);
+      render(<CallDetailView call={analyzed} operator />);
+      const dialog = openConfirmation();
+      expect(dialog).toHaveTextContent("This cannot be undone.");
+      for (const deleted of ["Recording audio", "waveform", "MP3", "Transcript", "Transcript-derived evidence", "rationale", "unexpired export ZIPs that include this Recording"]) expect(dialog).toHaveTextContent(deleted);
+      for (const kept of ["Call facts", "Call Outcome", "Lead Assessment summary, classification, and score", "Lead Review", "analytics"]) expect(dialog).toHaveTextContent(kept);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/media/purge"), expect.anything());
+    });
+
+    it("purges after confirmation, shows the pending state, and then shows the purged media state", async () => {
+      let resolve: (response: Response) => void = () => undefined;
+      const fetch = vi.fn((url: string) => new Promise<Response>((done) => (url.endsWith("/media/purge") ? (resolve = done) : undefined)));
+      vi.stubGlobal("fetch", fetch);
+      render(<CallDetailView call={analyzed} operator />);
+      const dialog = openConfirmation();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+      expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/calls/call-1/media/purge", { method: "POST" });
+      expect(within(dialog).getByRole("button", { name: /Purging\.\.\./ })).toBeDisabled();
+      resolve(respond({ purge: { purgedAt: "2026-10-17T14:30:00.000Z" } }, 200));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+      expect(fact("Recording")).toHaveTextContent("Purged on Oct 17, 2026, 9:30:00 AM");
+      expect(within(screen.getByRole("region", { name: "Recording" })).getByText("Recording purged")).toBeVisible();
+      expect(screen.getByRole("region", { name: "Transcript" })).toHaveTextContent("Transcript purged");
+      const assessment = screen.getByRole("region", { name: "Lead Assessment" });
+      expect(assessment).toHaveTextContent("Caller needs a repair today.");
+      expect(assessment).not.toHaveTextContent("Urgent, in-scope request.");
+      expect(assessment).not.toHaveTextContent("water heater is leaking");
+      expect(document.querySelector("audio")).toBeNull();
+      expect(screen.queryByRole("link", { name: "Download MP3" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      expect(refreshClientCache).toHaveBeenCalledTimes(1);
+    });
+
+    it("explains a purge the server refused as a conflict and refreshes Call Detail", async () => {
+      const cases: [string, string][] = [
+        ["already_purged", "This Recording's media was already purged."],
+        ["media_expired", "This Recording's media has already expired."],
+        ["no_recording", "This Call has no Recording to purge."],
+      ];
+      for (const [error, message] of cases) {
+        vi.stubGlobal("fetch", vi.fn(async () => respond({ error }, 409)));
+        render(<CallDetailView call={analyzed} operator />);
+        const dialog = openConfirmation();
+        fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+        await waitFor(() => expect(refreshClientCache).toHaveBeenCalledTimes(1));
+        expect(screen.queryByText("Transcript purged")).not.toBeInTheDocument();
+        expect(screen.getByText("My water heater is leaking.")).toBeInTheDocument();
+        vi.mocked(refreshClientCache).mockClear();
+        cleanup();
+      }
+    });
+
+    it("reports a failed purge and lets the Operator try again", async () => {
+      const fetch = vi.fn(async () => respond({ error: "internal" }, 500));
+      vi.stubGlobal("fetch", fetch);
+      render(<CallDetailView call={analyzed} operator />);
+      const dialog = openConfirmation();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Media could not be purged. Try again.");
+      expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
+      expect(refreshClientCache).not.toHaveBeenCalled();
+      vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("offline"))));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Purge Media" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Media could not be purged. Try again.");
+    });
   });
 
   it("renders Transcript, Lead Assessment, and Lead Review entries in the processing timeline", () => {

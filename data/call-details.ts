@@ -9,8 +9,10 @@
  *  Call facts, the Destination Number from the pinned Flow Version's
  *  Forward Call step, the connected duration from the forwarded leg, the
  *  spam-gate result from the pinned Keypad Gate and the keypad input,
- *  Recording availability from the transfer and waveform states and the
- *  shared media expiry, the Transcript and Lead Assessment of the selected
+ *  Recording availability from the transfer and waveform states, an
+ *  Operator purge with its time, and the shared media expiry, with a purge
+ *  shown before expiry as the more specific fact, the Transcript and Lead
+ *  Assessment of the selected
  *  Recording, a processing timeline from accepted provider events,
  *  Recording, Transcript, and Lead Assessment states, and the Lead Review,
  *  the current Lead Review, and the effective Lead classification from the
@@ -18,18 +20,21 @@
  *  Calls of a Workspace for Recent Calls. Shares the connected duration and
  *  Recording availability rules with the Calls list. Both expose the
  *  Recording id for Download MP3 whenever its MP3 is Stored and its media
- *  has not expired, independent of the waveform state that Play Recording
- *  waits for.
+ *  has neither expired nor been purged, independent of the waveform state
+ *  that Play Recording waits for.
  *
  * @remarks
  *  The Twilio call SID and the secret-free Transcript and Lead Assessment
  *  failure reasons are added only for Operators, so they never reach a
  *  Client Viewer's payload. Object keys, Recording SIDs, provider payloads,
  *  and transfer and waveform failure reasons are never read into the
- *  result. Transcript turns and Transcript-derived evidence are read only
- *  before media expiry and purge, while the non-content Lead Assessment
- *  fields stay, and a purged Recording's rationale is withheld as well, so
+ *  result. Transcript turns, Transcript-derived evidence, and the
+ *  rationale are read only before media expiry and purge, while the Lead
+ *  Assessment summary, classification, score, and the Lead Review stay, so
  *  content a late writer stores after the purge never reaches the payload.
+ *  A purged Recording's timeline ends with Media purged at the purge time
+ *  and drops pending stages that will never run, and its unfinished Lead
+ *  Assessment reads as Unavailable.
  *  A Recording stored before analysis existed has no Transcript state and
  *  reads as Unavailable. A failure's time is the Recording's last update,
  *  as for the transfer and waveform stages.
@@ -60,10 +65,11 @@ export type RecordingAvailability =
   | { state: "Processing"; stage: "transfer" | "waveform" }
   | { state: "Failed" }
   | { state: "Unavailable"; reason: "disabled" | "not_captured" }
+  | { state: "Purged"; purgedAt: string }
   | { state: "Expired"; expiredAt: string };
 
 export interface CallTranscript {
-  state: "Pending" | "Completed" | "Failed" | "Skipped" | "Expired" | "Unavailable";
+  state: "Pending" | "Completed" | "Failed" | "Skipped" | "Purged" | "Expired" | "Unavailable";
   skipReason?: AnalysisSkipReason;
   turns?: TranscriptTurn[];
   failureReason?: string;
@@ -171,7 +177,7 @@ type RecordingRow = {
   lead_assessment_failure_reason: string | null;
   expires_at: Date;
   expired: boolean;
-  purged: boolean;
+  purged_at: Date | null;
 };
 
 type AssessmentRow = {
@@ -258,12 +264,17 @@ function eventEntry(graph: CallFlowGraph | null, event: EventRow): [string, Call
 function recordingEntries(recording: RecordingRow | undefined): CallTimelineEntry[] {
   if (!recording) return [];
   const entry = timelineEntry;
-  if (recording.transfer_state === "Pending") return [entry("recording-transfer", "Recording transfer", "Pending", recording.created_at)];
+  const purged = recording.purged_at !== null;
+  if (recording.transfer_state === "Pending") return purged ? [] : [entry("recording-transfer", "Recording transfer", "Pending", recording.created_at)];
   if (recording.transfer_state === "Failed" || !recording.stored_at) return [entry("recording-transfer", "Recording transfer failed", "Failed", recording.updated_at)];
   const stored = entry("recording-transfer", "Recording stored", "Completed", recording.stored_at);
   if (recording.waveform_state === "Stored" && recording.waveform_generated_at) return [stored, entry("recording-waveform", "Waveform generated", "Completed", recording.waveform_generated_at)];
   if (recording.waveform_state === "Failed") return [stored, entry("recording-waveform", "Waveform generation failed", "Failed", recording.updated_at)];
-  return [stored, entry("recording-waveform", "Waveform generation", "Pending", recording.stored_at)];
+  return purged ? [stored] : [stored, entry("recording-waveform", "Waveform generation", "Pending", recording.stored_at)];
+}
+
+function mediaPurgeEntries(recording: RecordingRow | undefined): CallTimelineEntry[] {
+  return recording?.purged_at ? [timelineEntry("media-purge", "Media purged", "Completed", recording.purged_at)] : [];
 }
 
 function timelineEntry(id: string, label: string, status: CallTimelineEntry["status"], at: Date): CallTimelineEntry {
@@ -273,21 +284,22 @@ function timelineEntry(id: string, label: string, status: CallTimelineEntry["sta
 function transcriptEntries(recording: RecordingRow | undefined): CallTimelineEntry[] {
   if (!recording?.transcript_state || !recording.stored_at) return [];
   if (recording.transcript_state === "Skipped") return [timelineEntry("transcript", "Transcript skipped", "Completed", recording.stored_at)];
+  const purged = recording.purged_at !== null;
   const entries =
     recording.transcript_state === "Completed" && recording.transcript_completed_at
       ? [timelineEntry("transcript", "Transcript completed", "Completed", recording.transcript_completed_at)]
-      : recording.expired
+      : recording.expired || purged
         ? []
         : recording.transcript_state === "Failed"
           ? [timelineEntry("transcript", "Transcription failed", "Failed", recording.updated_at)]
           : [timelineEntry("transcript", "Transcription", "Pending", recording.stored_at)];
-  return recording.expired ? [...entries, timelineEntry("transcript-expiry", "Transcript expired", "Completed", recording.expires_at)] : entries;
+  return recording.expired && !purged ? [...entries, timelineEntry("transcript-expiry", "Transcript expired", "Completed", recording.expires_at)] : entries;
 }
 
 function leadAssessmentEntries(recording: RecordingRow | undefined, assessment: AssessmentRow | undefined): CallTimelineEntry[] {
   if (!recording?.transcript_completed_at) return [];
   if (assessment) return [timelineEntry("lead-assessment", "Lead Assessment completed", "Completed", assessment.processed_at)];
-  if (recording.expired) return [];
+  if (recording.expired || recording.purged_at) return [];
   if (recording.lead_assessment_state === "Failed") return [timelineEntry("lead-assessment", "Lead Assessment failed", "Failed", recording.updated_at)];
   if (recording.lead_assessment_state === "Pending") return [timelineEntry("lead-assessment", "Lead Assessment", "Pending", recording.transcript_completed_at)];
   return [];
@@ -304,6 +316,7 @@ function processingTimeline(graph: CallFlowGraph | null, events: EventRow[], ana
     ...recordingEntries(analysis.recording),
     ...transcriptEntries(analysis.recording),
     ...leadAssessmentEntries(analysis.recording, analysis.assessment),
+    ...mediaPurgeEntries(analysis.recording),
     ...reviewEntries,
   ].sort((left, right) => left.at.localeCompare(right.at));
 }
@@ -312,6 +325,7 @@ function callTranscript(recording: RecordingRow | undefined, turns: unknown, ope
   const state = recording?.transcript_state;
   if (!recording || !state) return { state: "Unavailable" };
   if (state === "Skipped") return { state, skipReason: recording.transcript_skip_reason ?? undefined };
+  if (recording.purged_at) return { state: "Purged" };
   if (recording.expired) return { state: "Expired" };
   if (state === "Completed") return turns === undefined ? { state: "Unavailable" } : { state, turns: parseTranscriptTurns(turns) };
   if (state === "Failed") return operator && recording.transcript_failure_reason ? { state, failureReason: recording.transcript_failure_reason } : { state };
@@ -326,24 +340,24 @@ function callLeadAssessment(recording: RecordingRow | undefined, assessment: Ass
       classification: assessment.classification,
       score: assessment.score,
       summary: assessment.summary,
-      rationale: assessment.rationale ?? undefined,
       processedAt: assessment.processed_at.toISOString(),
     };
-    if (recording?.purged) return { ...completed, rationale: undefined };
-    return recording?.expired ? completed : { ...completed, evidence };
+    if (recording?.expired || recording?.purged_at) return completed;
+    return { ...completed, rationale: assessment.rationale ?? undefined, evidence };
   }
-  if (!state || state === "Completed") return { state: "Unavailable" };
+  if (!state || state === "Completed" || recording.purged_at) return { state: "Unavailable" };
   if (state === "Failed") return operator && recording.lead_assessment_failure_reason ? { state, failureReason: recording.lead_assessment_failure_reason } : { state };
   return { state };
 }
 
-export type RecordingAvailabilityRow = Pick<RecordingRow, "id" | "channels" | "duration_seconds" | "transfer_state" | "waveform_state" | "mp3_state" | "expires_at" | "expired">;
+export type RecordingAvailabilityRow = Pick<RecordingRow, "id" | "channels" | "duration_seconds" | "transfer_state" | "waveform_state" | "mp3_state" | "expires_at" | "expired" | "purged_at">;
 
 export function recordingAvailability(recording: RecordingAvailabilityRow | undefined, graph: CallFlowGraph | null): RecordingAvailability {
   if (!recording) {
     const recorded = graph?.nodes.some((node) => node.type === "recording_disclosure") ?? false;
     return { state: "Unavailable", reason: recorded ? "not_captured" : "disabled" };
   }
+  if (recording.purged_at) return { state: "Purged", purgedAt: recording.purged_at.toISOString() };
   if (recording.expired) return { state: "Expired", expiredAt: recording.expires_at.toISOString() };
   if (recording.transfer_state === "Failed") return { state: "Failed" };
   if (recording.transfer_state === "Pending") return { state: "Processing", stage: "transfer" };
@@ -359,8 +373,8 @@ export function recordingAvailability(recording: RecordingAvailabilityRow | unde
   };
 }
 
-export function downloadableMp3RecordingId(recording: Pick<RecordingAvailabilityRow, "id" | "expired" | "transfer_state" | "mp3_state"> | undefined): string | null {
-  return recording && !recording.expired && recording.transfer_state === "Stored" && recording.mp3_state === "Stored" ? recording.id : null;
+export function downloadableMp3RecordingId(recording: Pick<RecordingAvailabilityRow, "id" | "expired" | "purged_at" | "transfer_state" | "mp3_state"> | undefined): string | null {
+  return recording && !recording.expired && !recording.purged_at && recording.transfer_state === "Stored" && recording.mp3_state === "Stored" ? recording.id : null;
 }
 
 export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
@@ -388,7 +402,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
                 r.lead_assessment_state, r.lead_assessment_failure_reason,
                 ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
                 ${recordingMediaExpiredSql("c.started_at", "now()")} as expired,
-                r.media_purged_at is not null as purged
+                r.media_purged_at as purged_at
            from recording r
            join call c on c.id = r.call_id
           where r.call_id = $1 and r.organization_id = $2
@@ -416,7 +430,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
             )
           ).rows[0]
         : undefined;
-      const contentAvailable = recording !== undefined && !recording.expired && !recording.purged;
+      const contentAvailable = recording !== undefined && !recording.expired && !recording.purged_at;
       const turns =
         contentAvailable && recording.transcript_state === "Completed"
           ? (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [recording.id, actor.organizationId])).rows[0]?.turns

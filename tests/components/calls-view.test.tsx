@@ -173,6 +173,33 @@ describe("CallsView", () => {
     expect(within(screen.getByRole("row", { name: /Unknown caller/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
   });
 
+  it("labels purged Recording media Purged without Play Recording or Download MP3", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const purged: CallListItem = { ...answered, id: "call-5", callerNumber: "+13125550177", recording: "Purged", mp3RecordingId: null };
+    render(<CallsView initialResult={{ ...result, calls: [purged], total: 1 }} initialQuery={defaultQuery} />);
+    const row = screen.getByRole("row", { name: /\+13125550177/ });
+    expect(within(row).getByText("Purged")).toBeVisible();
+    expect(within(row).queryByRole("link", { name: "Play Recording" })).toBeNull();
+    expect(within(row).queryByRole("link", { name: "Download MP3" })).toBeNull();
+    expect(within(row).getByRole("link", { name: "Open Call" })).toBeVisible();
+  });
+
+  it("filters by Purged Recording availability in the advanced popover", async () => {
+    const fetch = vi.fn(async () => respond(result));
+    vi.stubGlobal("fetch", fetch);
+    render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
+    fireEvent.click(screen.getByRole("button", { name: /Advanced Filters/ }));
+    const advanced = await screen.findByRole("dialog");
+    fireEvent.click(within(advanced).getByRole("button", { name: "Add group" }));
+    fireEvent.click(await within(advanced).findByRole("button", { name: "Add filter to this group" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Recording Availability/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "is any of" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Purged/ }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(lastRequest(fetch).has("adv")).toBe(true));
+    expect(JSON.parse(lastRequest(fetch).get("adv") ?? "")).toEqual({ combinator: "and", rules: [{ combinator: "or", rules: [{ field: "recording", values: ["Purged"] }] }] });
+  });
+
   it("opens Call Detail carrying the list's page, sort, and filters from rows and row actions", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     const query: CallListQuery = { page: 2, sort: { column: "leadScore", direction: "asc" }, filters: { ...emptyCallFilters, search: "312", outcomes: ["Answered"] } };

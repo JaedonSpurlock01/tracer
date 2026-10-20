@@ -71,6 +71,7 @@ const recordingBadges = {
   Processing: ["Processing", "info-light"],
   Failed: ["Failed", "destructive-light"],
   Unavailable: ["Not available", "outline"],
+  Purged: ["Purged", "warning-light"],
   Expired: ["Expired", "warning-light"],
 } as const satisfies Record<CallListItem["recording"], readonly [string, string]>;
 

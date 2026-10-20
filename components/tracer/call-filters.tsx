@@ -81,6 +81,7 @@ const recordingOptions = [
   { value: "Processing", label: "Processing" },
   { value: "Failed", label: "Failed" },
   { value: "Unavailable", label: "Not available" },
+  { value: "Purged", label: "Purged" },
   { value: "Expired", label: "Expired" },
 ];
 

@@ -95,6 +95,7 @@ function recordingFileName(call: ReportSelectionCall, timeZone: string): string 
 }
 
 const omittedOutcomes: Readonly<Record<Exclude<ReportSelectionCall["recordingExport"], "Retained">, RecordingExportOutcome>> = {
+  Purged: "Purged",
   Expired: "Expired",
   "No Recording": "No Recording",
   Processing: "Processing",

@@ -8,8 +8,8 @@
  *  secondary one, export the current Calls scope and the filters in the
  *  page URL; Export Call on Call Detail exports one Call as a Recording
  *  ZIP. Each opens a confirmation Dialog that previews the selection and
- *  shows matched Calls, retained Recordings, expired media, and Calls
- *  without recordings. A Recording export above the 500 retained
+ *  shows matched Calls, retained Recordings, expired media, media an
+ *  Operator purged, and Calls without recordings. A Recording export above the 500 retained
  *  Recording limit, or with none retained, is blocked with guidance to
  *  change the filters, and a selection matching no Calls is blocked too;
  *  a Calls CSV is not capped. Confirming creates the job, adds it to the
@@ -51,6 +51,7 @@ interface ExportPreview {
   matchedCalls: number;
   retainedRecordings: number;
   expiredMedia: number;
+  purgedMedia: number;
   callsWithoutRecording: number;
 }
 
@@ -129,6 +130,7 @@ function ExportConfirmation({ title, request, onDone }: { title: string; request
     ["Matched Calls", "matchedCalls"],
     ["Retained Recordings", "retainedRecordings"],
     ["Expired media", "expiredMedia"],
+    ["Purged media", "purgedMedia"],
     ["Calls without recordings", "callsWithoutRecording"],
   ];
 

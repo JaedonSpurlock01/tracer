@@ -257,6 +257,7 @@ describe("Recording export preview", () => {
     await expect(preview({ kind: "call_export", scope: { kind: "workspace", workspaceId: "north" }, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" })).resolves.toEqual({
       matchedCalls: 9,
       retainedRecordings: 3,
+      purgedMedia: 0,
       expiredMedia: 1,
       callsWithoutRecording: 1,
       processingRecordings: 2,
@@ -466,5 +467,34 @@ describe("Recording ZIP generation", () => {
     expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260928-111641_south-answered.mp3"]);
     expect(decode(files["manifest.csv"]).split("\r\n").slice(1, -1).map((row) => row.split(",")[0])).toEqual(["south-answered"]);
     expect(decode(r2.objects.get(`reports/${csvJob.id}/calls.csv`)?.bytes).split("\r\n").slice(1, -1).map((row) => row.split(",")[0])).toEqual(["south-answered"]);
+  });
+});
+
+describe("Purged media in Recording exports", () => {
+  it("omits Recording media an Operator purged, counts it apart from expired media, and names it Purged in the manifest", async () => {
+    await seedWorkspace("east", "East Pools", "UTC", "+14155550163");
+    await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-east', 'fleet', 'east', 'export-viewer', now())");
+    await seedCall({ id: "east-purged", workspaceId: "east", startedAt: "2026-09-02T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-purged-expired", workspaceId: "east", startedAt: "2025-08-02T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-expired", workspaceId: "east", startedAt: "2025-08-03T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-retained", workspaceId: "east", startedAt: "2026-09-04T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await pool!.query("update recording set transcript_state = 'Completed', transcript_completed_at = now(), media_purged_at = now() where id in ('east-purged-recording', 'east-purged-expired-recording')");
+    const request: ReportJobRequest = { kind: "call_export", scope: { kind: "workspace", workspaceId: "east" }, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" };
+    await expect(preview(request)).resolves.toEqual({ matchedCalls: 4, retainedRecordings: 1, purgedMedia: 2, expiredMedia: 1, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 });
+
+    const job = await create(request);
+    const r2 = fakeR2();
+    for (const callId of ["east-purged", "east-purged-expired", "east-expired", "east-retained"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
+    await generate(r2, job.id);
+
+    const files = archive(r2, job.id);
+    expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260904-100000_east-retained.mp3"]);
+    expect(decode(files["manifest.csv"])).toBe(
+      manifestHeader +
+        "east-purged-expired,East Pools,+14155550163,+12125551014,2025-08-02T10:00:00+00:00,Answered,143,137,None,,No,Purged,Purged,,Purged\r\n" +
+        "east-expired,East Pools,+14155550163,+12125551015,2025-08-03T10:00:00+00:00,Answered,143,137,None,,No,Expired,Unavailable,,Expired\r\n" +
+        "east-purged,East Pools,+14155550163,+12125551013,2026-09-02T10:00:00+00:00,Answered,143,137,None,,No,Purged,Purged,,Purged\r\n" +
+        "east-retained,East Pools,+14155550163,+12125551016,2026-09-04T10:00:00+00:00,Answered,143,137,None,,No,Ready,Unavailable,recordings/20260904-100000_east-retained.mp3,Included\r\n",
+    );
   });
 });

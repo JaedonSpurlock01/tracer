@@ -16,7 +16,7 @@
  *  response, and the MP3 as a private, uncached attachment named
  *  `tracer-call-{callId}.mp3`. Callers authorize the Workspace first. Also states Recording
  *  availability in SQL so lists can filter on the same Ready, Processing,
- *  Failed, Unavailable, or Expired state that Call Detail derives.
+ *  Failed, Unavailable, Purged, or Expired state that Call Detail derives.
  *
  * @remarks
  *  Expiry is derived from the Call's start rather than stored, so reads hide
@@ -28,8 +28,8 @@
  *  download filename uses the Call's id rather than the caller's number so
  *  no personal data lands in a browser's download history. The SQL
  *  availability state follows the same precedence as `recordingAvailability`
- *  in data/call-details.ts: no Recording, then Expired, then a failed or
- *  pending transfer, then a pending waveform.
+ *  in data/call-details.ts: no Recording, then Purged, then Expired, then a
+ *  failed or pending transfer, then a pending waveform.
  *
  * @see
  *  data/recording-audio.ts
@@ -72,6 +72,7 @@ export function recordingMediaRetainedSql(recording: string, callStartedAt: stri
 export function recordingAvailabilitySql(recording: string, callStartedAt: string): string {
   return `case
     when ${recording}.id is null then 'Unavailable'
+    when ${recording}.media_purged_at is not null then 'Purged'
     when ${recordingMediaExpiredSql(callStartedAt, "now()")} then 'Expired'
     when ${recording}.transfer_state = 'Failed' then 'Failed'
     when ${recording}.transfer_state = 'Pending' or ${recording}.waveform_state = 'Pending' then 'Processing'

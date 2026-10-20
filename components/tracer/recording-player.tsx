@@ -11,8 +11,8 @@
  *  aligned Caller and Business lanes, or one Mixed audio lane. Offers play
  *  and pause, click and keyboard seek, an accessible seek slider, elapsed
  *  and total time, zoom, playback speed, volume, and mute. Shows the
- *  processing, failed, unavailable, and expired Recording states instead
- *  of the player.
+ *  processing, failed, unavailable, purged, and expired Recording states
+ *  instead of the player.
  *
  * @remarks
  *  One wavesurfer instance renders both channels with splitChannels, so the
@@ -382,6 +382,8 @@ export default function RecordingPlayer({ workspaceId, recording, autoPlay = fal
       return <RecordingNotice title="Recording unavailable" detail="The Recording could not be stored." />;
     case "Unavailable":
       return <RecordingNotice title="Recording unavailable" detail={recording.reason === "disabled" ? "Recording was disabled for this Call." : "No Recording was captured for this Call."} />;
+    case "Purged":
+      return <RecordingNotice title="Recording purged" detail="An Operator purged this Recording's audio and waveform." />;
     case "Expired":
       return <RecordingNotice title="Recording expired" detail="Recording media is removed 12 months after the Call." />;
   }
