@@ -1128,7 +1128,6 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Small fixes found during the M17 full verification, none blocking:
   - `components/tracer/workspaces-view.tsx:436` assigns `canActivate` but never uses it.
   - The Workspaces DataGrid renders a Base UI `Button` with `nativeButton` on a non-button element. This logs 34 accessibility warnings during the Playwright run.
-  - `tests/integration/report-jobs.test.ts` can fail CI in teardown with an unhandled PostgreSQL `57P01` (administrator shutdown) after all of its tests pass. A pool connection is still open when the Testcontainers container stops. It happened once on the M17 pull request and passed on rerun.
 
 ## Post-launch roadmap intake
 

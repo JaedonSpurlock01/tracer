@@ -19,7 +19,11 @@
  *  is deterministic. Every request matches at least one seeded Call with a
  *  retained Recording, because a report or export matching no Calls, and a
  *  Recording ZIP with no retained Recording, are rejected before a job is
- *  recorded.
+ *  recorded. `pool.end()` resolves before its clients' sockets close, so
+ *  stopping the container right after it can send a pooled client
+ *  PostgreSQL's administrator shutdown (57P01) after the pool has dropped
+ *  its error listener; each client therefore ignores that one shutdown
+ *  error, and any other client error is still thrown.
  *
  * @see
  *  data/report-jobs.ts
@@ -124,6 +128,11 @@ async function grant(userId: string, workspaceId: string): Promise<void> {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool.on("connect", (client) =>
+    client.on("error", (error: Error & { code?: string }) => {
+      if (error.code !== "57P01") throw error;
+    }),
+  );
   await migrateDatabase(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York");
