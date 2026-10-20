@@ -7,8 +7,10 @@
  *  Renders server-provided provider health, manages Twilio credentials and
  *  numbers, exposes safe Hyperdrive and Email Service test actions,
  *  lists recent Recording transfer failures for R2 and Trigger.dev,
- *  and shows the OpenAI configured models, last successful Transcript and Lead
- *  Assessment, and recent processing failures.
+ *  shows the OpenAI configured models, last successful Transcript and Lead
+ *  Assessment, and recent processing failures, and lists on the Trigger.dev
+ *  card the oldest purged or expired Recordings whose media cleanup is
+ *  unfinished, each linking to its Call Detail.
  *
  * @remarks
  *  Provider actions remain behind the authenticated HTTP boundary. The first
@@ -24,6 +26,7 @@
  */
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { Badge } from "@/components/reui/badge";
@@ -35,8 +38,9 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { callDetailHref } from "@/data/call-source";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
-import type { OpenAIAnalysisHealth, ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
+import type { MediaLifecycleHealth, OpenAIAnalysisHealth, ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
 
 type IntegrationResponse = {
   providers: ProviderHealth[];
@@ -139,6 +143,7 @@ function ProviderDetails({ provider }: { provider: ProviderHealth }) {
         {provider.lastFailureDetail ? <div><dt className="text-muted-foreground">Failure detail</dt><dd>{provider.lastFailureDetail}</dd></div> : null}
       </dl>
       {provider.recentFailures ? <RecordingTransferFailures failures={provider.recentFailures} /> : null}
+      {provider.mediaLifecycle ? <MediaLifecycle health={provider.mediaLifecycle} /> : null}
       {provider.note ? <p className="text-sm text-muted-foreground">{provider.note}</p> : null}
     </>
   );
@@ -153,6 +158,28 @@ function RecordingTransferFailures({ failures }: { failures: RecordingTransferFa
         <thead><tr className="border-b text-left"><th className="px-2 py-2">Stage</th><th className="px-2 py-2">Reason</th><th className="px-2 py-2">Failed at</th></tr></thead>
         <tbody>{failures.map((failure, index) => <tr key={index} className="border-b"><td className="px-2 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-2 py-2">{failure.reason}</td><td className="px-2 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
       </table>
+    </div>
+  );
+}
+
+function MediaLifecycle({ health }: { health: MediaLifecycleHealth }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <dl className="grid gap-2 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-muted-foreground">Unfinished media cleanup</dt>
+          <dd className="tabular-nums">{health.stuckCount}</dd>
+        </div>
+      </dl>
+      {health.oldestStuck.length ? (
+        <div className="overflow-x-auto">
+          <table aria-label="Unfinished media cleanup" className="w-full text-sm">
+            <caption className="sr-only">Unfinished media cleanup</caption>
+            <thead><tr className="border-b text-left"><th className="px-2 py-2">Call</th><th className="px-2 py-2">Workspace</th><th className="px-2 py-2">Media</th><th className="px-2 py-2">Since</th><th className="px-2 py-2">Detail</th></tr></thead>
+            <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b"><td className="px-2 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-2 py-2">{entry.workspaceName}</td><td className="px-2 py-2">{entry.media}</td><td className="px-2 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-2 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
+          </table>
+        </div>
+      ) : <p className="text-sm text-muted-foreground">No unfinished media cleanup.</p>}
     </div>
   );
 }

@@ -15,8 +15,8 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M17 is next
-- **Next milestone:** M17 - Retention, Purge, and Lifecycle Automation
+- **Current milestone:** M17 - Retention, Purge, and Lifecycle Automation
+- **Next milestone:** M18 - Production Hardening and Acceptance
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-19
@@ -184,7 +184,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M14 | Calls and Activity Operations | Complete | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Complete | Preview and Staging | M14 |
 | M16 | Reports and Recording Exports | Complete | Staging | M15 |
-| M17 | Retention, Purge, and Lifecycle Automation | Not Started | Staging | M16 |
+| M17 | Retention, Purge, and Lifecycle Automation | In Progress | Staging | M16 |
 | M18 | Production Hardening and Acceptance | Not Started | Staging | M17 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
 
@@ -990,10 +990,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M17 - Retention, Purge, and Lifecycle Automation
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Media, Transcript content, generated artifacts, and metadata expire or purge according to documented policy without corrupting analytics.
 - **Depends on:** M16
 - **Target environment:** Staging
+- **Execution note:** Before M17, media expiry was only derived at read time, and no content was deleted. M17 deletes it for real. Expiry 12 months after Call start and Operator Purge Media remove the same content: the Recording WAV, waveform peaks, and MP3 in R2; the Transcript turns; the Lead Assessment evidence quotes; and the Lead Assessment rationale. The Lead Assessment summary, classification, score, and usage are kept, as are the Call, its facts and outcome, Recording metadata, Transcript and assessment usage and cost, the Lead Review, the Call event log, and analytics. When a Recording's audio may still be at Twilio because its transfer is Pending or Failed, purge and expiry stop the transfer and delete the Twilio copy, and the sweep retries that deletion until it succeeds. Purge Media also deletes unexpired Recording ZIP and Export Call artifacts that include the purged Recording and marks those jobs expired, so no downloadable copy remains. Staging demonstrates expiry with a script that seeds backdated fixture Calls rather than with a shortened retention setting.
 
 #### Vertical slices
 
@@ -1027,6 +1028,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Staging uses shortened test fixtures to demonstrate each lifecycle safely.
 - R2 and PostgreSQL state agree after cleanup.
 - Staging report artifacts generated during M16 verification are confirmed expired by the `report-artifacts` R2 lifecycle rule.
+
+- On 2026-10-19 the Product Owner had M17 merged to `main` while it was still In Progress. By then every slice was implemented, `verify:full` had passed locally, and the Verification workflow had passed. M17 stays In Progress until two things are done: the Product Owner's Staging demonstration with `pnpm fixtures:retention`, which covers purge, expiry, and R2 and PostgreSQL agreement; and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule, which is due around 2026-10-25.
 
 #### Exit criteria
 
@@ -1122,6 +1125,10 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 - Google sign-in for provisioned identities, deferred until email-code usage demonstrates a need for another authentication method.
 - Projected monthly cost per Workspace, estimating Twilio number rental, inbound and forwarded call minutes, recording, R2 storage, transcription, and a share of hosting from persisted Call and Recording data, with a pricing guide that explains each rate and an example such as a two-hour Call. Unscheduled because it needs a price-source decision (maintained rate table or provider billing APIs) and accurate usage data that M13 transcription and M16 exports will add.
+- Small fixes found during the M17 full verification, none blocking:
+  - `components/tracer/workspaces-view.tsx:436` assigns `canActivate` but never uses it.
+  - The Workspaces DataGrid renders a Base UI `Button` with `nativeButton` on a non-button element. This logs 34 accessibility warnings during the Playwright run.
+  - `tests/integration/report-jobs.test.ts` can fail CI in teardown with an unhandled PostgreSQL `57P01` (administrator shutdown) after all of its tests pass. A pool connection is still open when the Testcontainers container stops. It happened once on the M17 pull request and passed on rerun.
 
 ## Post-launch roadmap intake
 

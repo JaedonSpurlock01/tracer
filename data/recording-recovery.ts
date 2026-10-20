@@ -12,7 +12,8 @@
  *  stalled stage for the rest, each with its Recording-derived idempotency
  *  key. It also backfills the MP3 for any idle Stored Recording of any age
  *  whose media has not expired and whose MP3 is Pending, and retries a
- *  Failed MP3 within the same 7 days.
+ *  Failed MP3 within the same 7 days. A Recording whose media expired or
+ *  was purged is never selected for any stage.
  *
  * @remarks
  *  One bounded select over five partial indexes keeps the sweep to a single
@@ -33,6 +34,7 @@
  *
  * @see
  *  data/recording-processing.ts
+ *  data/recording-media.ts
  *  trigger/recording-recovery.ts
  *  https://trigger.dev/docs/idempotency#failed-runs-and-idempotency
  *
@@ -42,13 +44,12 @@
 import type { Pool } from "pg";
 
 import type { RecordingProcessing } from "@/data/recording";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 
 const recentSql = "(r.created_at > $1::timestamptz - interval '7 days')";
 
 const mp3UnfinishedSql = `(r.transfer_state = 'Stored'
-             and (r.mp3_state = 'Pending' or (r.mp3_state = 'Failed' and ${recentSql}))
-             and not ${recordingMediaExpiredSql("c.started_at", "$1::timestamptz")})`;
+             and (r.mp3_state = 'Pending' or (r.mp3_state = 'Failed' and ${recentSql})))`;
 
 type StalledRecording = {
   id: string;
@@ -86,6 +87,7 @@ export async function sweepStuckRecordings(
                    or r.transcript_state in ('Pending', 'Failed')
                    or r.lead_assessment_state in ('Pending', 'Failed')))
              or ${mp3UnfinishedSql})
+        and ${recordingMediaRetainedSql("r", "c.started_at", "$1::timestamptz")}
         and r.updated_at < $1::timestamptz - interval '1 hour'
       order by r.created_at
       limit 100`,

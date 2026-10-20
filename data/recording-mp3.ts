@@ -8,8 +8,8 @@
  *  its channels, stores the MP3 beside the WAV and its peaks, verifies the
  *  stored size and SHA-256 checksum, and records the MP3 as Stored with its
  *  size. A Recording that is not Stored, no longer exists, or whose media
- *  expired 12 months after its Call started is skipped without producing a
- *  file, and its Call and Recording metadata are left as they are. A rerun
+ *  expired 12 months after its Call started or was purged is skipped
+ *  without producing a file, and its Call and Recording metadata are left as they are. A rerun
  *  skips a Stored MP3 whose object exists at its recorded size and
  *  otherwise overwrites the same key.
  *
@@ -22,7 +22,12 @@
  *  waveform, while ffmpeg works on temporary files. A failure is recorded
  *  as Failed with a secret-free reason and rethrown for Trigger.dev to
  *  retry. The MP3 key is derived from the Recording's own key, so a later
- *  purge can delete it without a lookup.
+ *  purge can delete it without a lookup. Because a purge can commit while
+ *  the MP3 is encoded, the Stored update re-checks that the media is
+ *  retained, and when it matches nothing the run deletes the MP3 it just
+ *  uploaded and ends cleanly. A failure is recorded only while the media is
+ *  still retained; otherwise the run ends cleanly without a Failed state
+ *  or a retry.
  *
  * @see
  *  data/ffmpeg.ts
@@ -36,13 +41,13 @@
 import type { Pool } from "pg";
 
 import { FfmpegError, type Mp3Encoder } from "@/data/ffmpeg";
-import { R2ObjectError, sha256Hex, type RecordingObjects } from "@/data/r2-objects";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { R2ObjectError, sha256Hex, type ArtifactObjects, type RecordingObjects } from "@/data/r2-objects";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { recordingObjectKey } from "@/data/recording-transfer";
 
 export interface RecordingMp3Dependencies {
   pool: Pool;
-  objects: RecordingObjects;
+  objects: RecordingObjects & Pick<ArtifactObjects, "delete">;
   encoder: Mp3Encoder;
   now: () => Date;
 }
@@ -66,7 +71,7 @@ type Mp3Row = {
   r2_object_key: string;
   mp3_state: string;
   mp3_size_bytes: string | null;
-  media_expired: boolean;
+  media_retained: boolean;
 };
 
 function failureReason(error: unknown): string {
@@ -87,28 +92,36 @@ async function storeMp3(deps: RecordingMp3Dependencies, row: Mp3Row, key: string
 export async function generateRecordingMp3(deps: RecordingMp3Dependencies, recordingId: string): Promise<void> {
   const result = await deps.pool.query<Mp3Row>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.r2_object_key, r.mp3_state, r.mp3_size_bytes,
-            ${recordingMediaExpiredSql("c.started_at", "$2")} as media_expired
+            ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
        join call c on c.id = r.call_id
       where r.id = $1 and r.transfer_state = 'Stored'`,
     [recordingId, deps.now()],
   );
   const row = result.rows[0];
-  if (!row || row.media_expired) return;
+  if (!row?.media_retained) return;
   const key = mp3ObjectKey({ id: row.id, organizationId: row.organization_id, workspaceId: row.workspace_id, callId: row.call_id });
   if (row.mp3_state === "Stored" && (await deps.objects.head(key))?.sizeBytes === Number(row.mp3_size_bytes)) return;
   let sizeBytes: number;
   try {
     sizeBytes = await storeMp3(deps, row, key);
   } catch (error) {
-    await deps.pool.query("update recording set mp3_state = 'Failed', mp3_failure_reason = $2, updated_at = $3 where id = $1", [row.id, failureReason(error), deps.now()]);
+    const failed = await deps.pool.query(
+      `update recording r set mp3_state = 'Failed', mp3_failure_reason = $2, updated_at = $3
+         from call c
+        where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}`,
+      [row.id, failureReason(error), deps.now()],
+    );
+    if (failed.rowCount === 0) return;
     throw error;
   }
   const now = deps.now();
-  await deps.pool.query(
-    `update recording
+  const stored = await deps.pool.query(
+    `update recording r
         set mp3_state = 'Stored', mp3_object_key = $2, mp3_size_bytes = $3, mp3_generated_at = $4, mp3_failure_reason = null, updated_at = $4
-      where id = $1`,
+       from call c
+      where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$4")}`,
     [row.id, key, sizeBytes, now],
   );
+  if (stored.rowCount === 0) await deps.objects.delete(key);
 }

@@ -11,14 +11,17 @@
  *  and cost, and a Pending Lead Assessment are committed together, and only
  *  then is the Lead Assessment task requested. A Recording whose Transcript
  *  is not Pending or Failed, whose transfer is not Stored, whose media
- *  expired 12 months after its Call started, or that no longer exists is
- *  left untouched without calling OpenAI.
+ *  expired 12 months after its Call started or was purged, or that no
+ *  longer exists is left untouched without calling OpenAI.
  *
  * @remarks
  *  The Recording row is locked only to commit the result, never while R2 or
  *  OpenAI is working, because the transfer task takes the same row lock
- *  with NOWAIT for Twilio cleanup; the commit re-checks the state under the
- *  lock so a concurrent duplicate run cannot write a second Transcript. Only
+ *  with NOWAIT for Twilio cleanup; the commit re-checks the state and that
+ *  the media is still retained under the lock, so neither a concurrent
+ *  duplicate run nor a purge that committed meanwhile lets a Transcript
+ *  land, and a failure after a purge or expiry ends cleanly without a
+ *  Failed state, event, or retry. Only
  *  Transcript and Lead Assessment columns are written, so playback and the
  *  waveform are never affected. Usage is stored on the Recording rather
  *  than the Transcript because purge deletes the Transcript row while cost
@@ -46,7 +49,7 @@ import { appendCallEvent } from "@/data/call-events";
 import { OpenAIError, transcriptionModel, type AudioTranscriber } from "@/data/openai-client";
 import { R2ObjectError, type RecordingObjects } from "@/data/r2-objects";
 import type { RecordingProcessing } from "@/data/recording";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { readRecordingAudio, RecordingAudioError } from "@/data/recording-wav";
 import { normalizeTranscript, parseTranscriptTurns, TranscriptError, transcriptionCostUsd, type TranscribedChunk, type TranscriptTurn } from "@/data/transcript";
 
@@ -72,7 +75,7 @@ type TranscriptionRow = {
   channels: 1 | 2;
   r2_object_key: string;
   transcript_state: string | null;
-  media_expired: boolean;
+  media_retained: boolean;
 };
 
 const runnableStates = ["Pending", "Failed"];
@@ -100,12 +103,20 @@ async function complete(deps: RecordingTranscriptionDependencies, row: Transcrip
   const client = await deps.pool.connect();
   try {
     await client.query("begin");
-    const locked = await client.query<{ transcript_state: string | null }>("select transcript_state from recording where id = $1 for update", [row.id]);
-    if (!runnableStates.includes(locked.rows[0]?.transcript_state ?? "")) {
+    const now = deps.now();
+    const locked = await client.query<{ transcript_state: string | null; media_retained: boolean }>(
+      `select r.transcript_state, ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
+         from recording r
+         join call c on c.id = r.call_id
+        where r.id = $1
+          for update of r`,
+      [row.id, now],
+    );
+    const current = locked.rows[0];
+    if (!current?.media_retained || !runnableStates.includes(current.transcript_state ?? "")) {
       await client.query("rollback");
       return false;
     }
-    const now = deps.now();
     await client.query(
       "insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, $5, $6)",
       [row.id, row.organization_id, row.call_id, JSON.stringify(result.turns), transcriptionModel, now],
@@ -131,29 +142,36 @@ async function complete(deps: RecordingTranscriptionDependencies, row: Transcrip
 export async function transcribeRecording(deps: RecordingTranscriptionDependencies, recordingId: string): Promise<void> {
   const result = await deps.pool.query<TranscriptionRow>(
     `select r.id, r.organization_id, r.call_id, r.channels, r.r2_object_key, r.transcript_state,
-            ${recordingMediaExpiredSql("c.started_at", "$2")} as media_expired
+            ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
        join call c on c.id = r.call_id
       where r.id = $1 and r.transfer_state = 'Stored'`,
     [recordingId, deps.now()],
   );
   const row = result.rows[0];
-  if (!row || row.media_expired || !runnableStates.includes(row.transcript_state ?? "")) return;
+  if (!row?.media_retained || !runnableStates.includes(row.transcript_state ?? "")) return;
   let completed: boolean;
   try {
     completed = await complete(deps, row, await transcribe(deps, row));
   } catch (error) {
-    await deps.pool.query(
+    const failed = await deps.pool.query<{ media_retained: boolean }>(
       `with failed as (
-         update recording set transcript_state = 'Failed', transcript_failure_reason = $2, updated_at = $3
-          where id = $1 and transcript_state in ('Pending', 'Failed')
-          returning organization_id, workspace_id, call_id
+         update recording r set transcript_state = 'Failed', transcript_failure_reason = $2, updated_at = $3
+           from call c
+          where r.id = $1 and c.id = r.call_id and r.transcript_state in ('Pending', 'Failed') and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}
+          returning r.organization_id, r.workspace_id, r.call_id
+       ), event as (
+         insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
+         select organization_id, workspace_id, call_id, 'transcript_failed', $3, 'transcript_failed:' || $1 from failed
+         on conflict (organization_id, idempotency_key) do nothing
        )
-       insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, idempotency_key)
-       select organization_id, workspace_id, call_id, 'transcript_failed', $3, 'transcript_failed:' || $1 from failed
-       on conflict (organization_id, idempotency_key) do nothing`,
+       select ${recordingMediaRetainedSql("r", "c.started_at", "$3")} as media_retained
+         from recording r
+         join call c on c.id = r.call_id
+        where r.id = $1`,
       [row.id, failureReason(error), deps.now()],
     );
+    if (!failed.rows[0]?.media_retained) return;
     throw error;
   }
   if (completed) {

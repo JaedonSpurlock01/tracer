@@ -1,0 +1,3 @@
+ALTER TABLE "recording" DROP CONSTRAINT "recording_cleanup_requires_stored_check";--> statement-breakpoint
+ALTER TABLE "report_artifact" ADD COLUMN "included_recording_ids" text[];--> statement-breakpoint
+ALTER TABLE "recording" ADD CONSTRAINT "recording_twilio_deleted_check" CHECK ("recording"."twilio_cleanup_state" <> 'Deleted' or "recording"."transfer_state" = 'Stored' or "recording"."twilio_deleted_at" is not null);

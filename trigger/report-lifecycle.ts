@@ -5,7 +5,8 @@
  *
  * @description
  *  Every 6 hours, records report and Calls export jobs stuck Queued or
- *  Generating for over 6 hours Failed, and deletes up to 100 jobs whose
+ *  Generating for over 6 hours Failed, deletes the R2 objects of
+ *  artifacts a Purge Media expired early, and deletes up to 100 jobs whose
  *  90-day metadata retention has ended, with their artifacts and any R2
  *  objects the lifecycle rule left behind.
  *

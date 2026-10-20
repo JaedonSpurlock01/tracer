@@ -13,7 +13,7 @@
  *  availability. A missing value is an empty cell. A Recording ZIP manifest
  *  has the same columns plus the Recording file's path inside the archive
  *  and its Recording export outcome: Included, or why it was omitted, as
- *  Expired, No Recording, Processing, Failed, or Missing when its MP3 is
+ *  Purged, Expired, No Recording, Processing, Failed, or Missing when its MP3 is
  *  gone from storage.
  *
  * @remarks
@@ -41,7 +41,7 @@ import type { CallDetail, RecordingAvailability } from "@/data/call-details";
 import type { OutcomeKind } from "@/data/call-flow";
 import type { EffectiveLeadClassification } from "@/data/lead-classification";
 
-export type TranscriptAvailability = "Available" | "Pending" | "Failed" | "Skipped" | "Expired" | "Unavailable";
+export type TranscriptAvailability = "Available" | "Pending" | "Failed" | "Skipped" | "Purged" | "Expired" | "Unavailable";
 
 export interface ReportCsvCall {
   id: string;
@@ -60,7 +60,7 @@ export interface ReportCsvCall {
   transcript: TranscriptAvailability;
 }
 
-export type RecordingExportOutcome = "Included" | "Expired" | "No Recording" | "Processing" | "Failed" | "Missing";
+export type RecordingExportOutcome = "Included" | "Purged" | "Expired" | "No Recording" | "Processing" | "Failed" | "Missing";
 
 export interface ReportManifestCall extends ReportCsvCall {
   recordingFile: string | null;

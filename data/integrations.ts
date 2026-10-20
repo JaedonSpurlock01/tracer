@@ -5,11 +5,18 @@
  *
  * @description
  *  Stores encrypted Twilio credentials, verifies provider access, syncs
- *  incoming number inventory, and reads Recording transfer health while
- *  isolating every query by Organization.
+ *  incoming number inventory, and reads Recording transfer, analysis, and
+ *  media lifecycle health while isolating every query by Organization.
  *
  * @remarks
  *  PostgreSQL advisory locks serialize credential and inventory mutations.
+ *  Media lifecycle health is derived from the Recordings themselves rather
+ *  than a stored sweep result: a purged or expired Recording whose
+ *  `media_deleted_at` is still empty 26 hours after its purge or expiry is
+ *  stuck, because the daily sweep has had one full run plus two hours of
+ *  slack to finish it, and one whose Twilio copy is not deleted while the
+ *  Organization has no Twilio connection is stuck at once, because the
+ *  sweep cannot delete it until Twilio is reconnected.
  *
  * @see
  *  data/credential-encryption.ts
@@ -24,7 +31,8 @@ import type { Pool, PoolClient } from "pg";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
-import type { AnalysisProcessingHealth, RecordingTransferHealth } from "@/data/provider-health";
+import type { AnalysisProcessingHealth, MediaLifecycleHealth, RecordingTransferHealth } from "@/data/provider-health";
+import { recordingMediaExpiredSql, recordingMediaExpiresAtSql } from "@/data/recording-media";
 import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 
 export interface TwilioConnectionRecord {
@@ -103,6 +111,7 @@ export interface Integrations {
   listTwilioNumbers(): Promise<TwilioNumberRecord[]>;
   getRecordingTransferHealth(): Promise<RecordingTransferHealth>;
   getAnalysisProcessingHealth(): Promise<AnalysisProcessingHealth>;
+  getMediaLifecycleHealth(): Promise<MediaLifecycleHealth>;
 }
 
 type ConnectionRow = {
@@ -519,6 +528,37 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
         lastLeadAssessmentAt: row.last_lead_assessment_at?.toISOString() ?? null,
         failedCount: row.failed_count,
         lastFailureAt: row.last_failure_at?.toISOString() ?? null,
+      };
+    },
+
+    async getMediaLifecycleHealth() {
+      const result = await options.pool.query<{ call_id: string; workspace_id: string; workspace_name: string; media: "Purged" | "Expired"; since: Date; twilio_not_connected: boolean; stuck_count: number }>(
+        `select call_id, workspace_id, workspace_name, media, since, twilio_not_connected, count(*) over ()::int as stuck_count
+           from (select r.id, r.call_id, r.workspace_id, w.name as workspace_name,
+                        case when r.media_purged_at is not null then 'Purged' else 'Expired' end as media,
+                        coalesce(r.media_purged_at, ${recordingMediaExpiresAtSql("c.started_at")}) as since,
+                        (t.id is null and r.twilio_cleanup_state <> 'Deleted') as twilio_not_connected
+                   from recording r
+                   join call c on c.id = r.call_id
+                   join workspace w on w.id = r.workspace_id
+                   left join twilio_connection t on t.organization_id = r.organization_id
+                  where r.organization_id = $1 and r.media_deleted_at is null
+                    and (r.media_purged_at is not null or ${recordingMediaExpiredSql("c.started_at", "now()")})) unfinished
+          where since <= now() - interval '26 hours' or twilio_not_connected
+          order by since, id
+          limit 5`,
+        [options.organizationId],
+      );
+      return {
+        stuckCount: result.rows[0]?.stuck_count ?? 0,
+        oldestStuck: result.rows.map((row) => ({
+          callId: row.call_id,
+          workspaceId: row.workspace_id,
+          workspaceName: row.workspace_name,
+          media: row.media,
+          since: row.since.toISOString(),
+          twilioNotConnected: row.twilio_not_connected,
+        })),
       };
     },
   };

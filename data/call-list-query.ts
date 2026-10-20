@@ -54,7 +54,7 @@ export interface CallSort {
 
 export const callOutcomeFilters = ["Answered", "Voicemail", "Missed", "Abandoned", "Blocked", "Failed", "In Progress"] as const;
 export const leadClassificationFilters = ["Good Lead", "Not Good Lead", "Uncertain", "None"] as const;
-export const recordingAvailabilityFilters = ["Ready", "Processing", "Failed", "Unavailable", "Expired"] as const;
+export const recordingAvailabilityFilters = ["Ready", "Processing", "Failed", "Unavailable", "Purged", "Expired"] as const;
 export const analysisStatusFilters = ["Pending", "Completed", "Failed", "Skipped", "Not applicable"] as const;
 
 export type CallOutcomeFilter = (typeof callOutcomeFilters)[number];

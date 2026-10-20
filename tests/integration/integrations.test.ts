@@ -5,7 +5,8 @@
  *
  * @description
  *  Exercises Twilio connection security, number synchronization, provider
- *  health, Organization isolation, and Hyperdrive and Email Service checks.
+ *  health including unfinished media cleanup, Organization isolation, and
+ *  Hyperdrive and Email Service checks.
  *
  * @remarks
  *  The suite uses one PostgreSQL container, real Better Auth sessions, and a
@@ -544,5 +545,79 @@ describe.sequential("Organization integrations", () => {
     });
     const serialized = JSON.stringify(openai);
     expect(serialized).not.toMatch(/HTTP 401|incomplete|Summary of the call/);
+  });
+
+  it("reports purged and expired Recordings whose cleanup is still unfinished 26 hours later, or blocked without a Twilio connection, oldest first and Organization-scoped", async () => {
+    async function lifecycle(organization: string, id: string, values: { startedAgo?: string; purgedAgo?: string; twilio?: "Pending" | "Deleted"; finished?: boolean }) {
+      await pool!.query(
+        `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, '+14155550177', now() - $7::interval, now(), now())`,
+        [`${id}-call`, organization, `${organization}-health-workspace`, `${organization}-health-assignment`, `${organization}-health-flow`, `CA${id.padStart(32, "0")}`, values.startedAgo ?? "0 seconds"],
+      );
+      await pool!.query(
+        `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, twilio_cleanup_state, twilio_deleted_at,
+                                r2_object_key, size_bytes, sha256, stored_at, media_purged_at, media_deleted_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, 'voicemail', 1, 'Stored', $6, case when $6 = 'Deleted' then now() end,
+                 $7, 42, 'checksum', now(), now() - $8::interval, case when $9::boolean then now() end, now(), now())`,
+        [id, organization, `${organization}-health-workspace`, `${id}-call`, `RE${id.padStart(32, "0")}`, values.twilio ?? "Deleted", `organizations/${organization}/recordings/${id}.wav`, values.purgedAgo ?? null, values.finished ?? false],
+      );
+    }
+    await lifecycle(organizationId, "lifecycle-purged-stuck", { purgedAgo: "30 hours" });
+    await lifecycle(organizationId, "lifecycle-purged-fresh", { purgedAgo: "2 hours" });
+    await lifecycle(organizationId, "lifecycle-purged-no-twilio", { purgedAgo: "1 hour", twilio: "Pending" });
+    await lifecycle(organizationId, "lifecycle-expired-stuck", { startedAgo: "12 months 2 days" });
+    await lifecycle(organizationId, "lifecycle-expired-fresh", { startedAgo: "12 months 2 hours" });
+    await lifecycle(organizationId, "lifecycle-purged-finished", { purgedAgo: "40 hours", finished: true });
+    await lifecycle(organizationId, "lifecycle-expired-finished", { startedAgo: "13 months", finished: true });
+    await lifecycle(organizationId, "lifecycle-retained", { twilio: "Pending" });
+    for (let hours = 50; hours < 54; hours += 1) {
+      await lifecycle(organizationId, `lifecycle-backlog-${hours}`, { purgedAgo: `${hours} hours` });
+    }
+    await lifecycle("other-organization-id", "lifecycle-other-stuck", { purgedAgo: "30 hours" });
+    await lifecycle("other-organization-id", "lifecycle-other-fresh", { purgedAgo: "1 hour", twilio: "Pending" });
+    const since = async (id: string) => (await pool!.query<{ since: Date }>(
+      `select coalesce(r.media_purged_at, c.started_at + interval '12 months') as since from recording r join call c on c.id = r.call_id where r.id = $1`,
+      [id],
+    )).rows[0].since.toISOString();
+    const entry = async (id: string, media: "Purged" | "Expired", twilioNotConnected = false) => ({
+      callId: `${id}-call`,
+      workspaceId: `${organizationId}-health-workspace`,
+      workspaceName: "Transfer Health",
+      media,
+      since: await since(id),
+      twilioNotConnected,
+    });
+
+    const cookie = await signIn("operator@example.com");
+    const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    const providers = result.body.providers as Array<{ id: string; mediaLifecycle?: unknown }>;
+    expect(providers.find((provider) => provider.id === "triggerdev")?.mediaLifecycle).toEqual({
+      stuckCount: 7,
+      oldestStuck: [
+        await entry("lifecycle-backlog-53", "Purged"),
+        await entry("lifecycle-backlog-52", "Purged"),
+        await entry("lifecycle-backlog-51", "Purged"),
+        await entry("lifecycle-backlog-50", "Purged"),
+        await entry("lifecycle-expired-stuck", "Expired"),
+      ],
+    });
+    expect(providers.filter((provider) => provider.mediaLifecycle).map((provider) => provider.id)).toEqual(["triggerdev"]);
+    const serialized = JSON.stringify(result.body);
+    expect(serialized).not.toContain("organizations/");
+    expect(serialized).not.toContain("lifecycle-other");
+
+    const remaining = await createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth();
+    expect(remaining.oldestStuck).toHaveLength(5);
+    await pool!.query("update recording set media_deleted_at = now() where id like 'lifecycle-backlog-%'");
+    await expect(createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth()).resolves.toEqual({
+      stuckCount: 3,
+      oldestStuck: [
+        await entry("lifecycle-expired-stuck", "Expired"),
+        await entry("lifecycle-purged-stuck", "Purged"),
+        await entry("lifecycle-purged-no-twilio", "Purged", true),
+      ],
+    });
+    const other = await createIntegrations({ pool: pool!, organizationId: "other-organization-id", twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth();
+    expect(other).toMatchObject({ stuckCount: 1, oldestStuck: [{ callId: "lifecycle-other-stuck-call", twilioNotConnected: false }] });
   });
 });

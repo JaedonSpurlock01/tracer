@@ -45,7 +45,7 @@ export default async function IntegrationsPage() {
     });
     const twilio = await integrations.getTwilioConnection();
     return {
-      providers: describeProviderHealth(runtime.providerConfiguration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth()),
+      providers: describeProviderHealth(runtime.providerConfiguration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth()),
       twilio,
       numbers: twilio ? await integrations.listTwilioNumbers() : [],
     };

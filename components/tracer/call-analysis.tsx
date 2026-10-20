@@ -13,7 +13,9 @@
  *  reporting result with an Operator form to add or update it, and the
  *  automated Lead Assessment whose evidence seeks and emphasizes its turn.
  *  Transcript and Lead Assessment processing states render on their own,
- *  with an Operator-only Retry for a failed stage.
+ *  with an Operator-only Retry for a failed stage. After media expiry or a
+ *  purge the Transcript explains which, and the assessment keeps its
+ *  summary, classification, and score without a Rationale or evidence.
  *
  * @remarks
  *  The Lead Assessment stays labeled as an automated estimate and never
@@ -279,6 +281,8 @@ function TranscriptBody({ transcript, operator, retry, emphasis }: { transcript:
       return operator ? <FailedNotice title="Transcription failed" failureReason={transcript.failureReason} retry={retry} /> : <Notice title="Transcript unavailable" detail="The Transcript is not available for this Call." />;
     case "Skipped":
       return <Notice title="No Transcript" detail={transcript.skipReason ? skipReasons[transcript.skipReason] : "This Call was not analyzed."} />;
+    case "Purged":
+      return <Notice title="Transcript purged" detail="An Operator purged the Transcript with the Recording media." />;
     case "Expired":
       return <Notice title="Transcript expired" detail="Transcript content is removed 12 months after the Call." />;
     case "Unavailable":
@@ -301,8 +305,15 @@ function TranscriptSection({ transcript, operator, retry, emphasis }: { transcri
   );
 }
 
-function AssessmentEvidence({ evidence, expired, onSelect }: { evidence: CallDetail["leadAssessment"]["evidence"]; expired: boolean; onSelect(item: LeadAssessmentEvidence): void }) {
-  if (!evidence) return expired ? <p className="text-sm text-muted-foreground">Evidence expired with the Transcript.</p> : null;
+type ContentRemoval = "Purged" | "Expired" | null;
+
+const removedEvidence: Record<NonNullable<ContentRemoval>, string> = {
+  Purged: "Evidence and rationale were purged with the Transcript.",
+  Expired: "Evidence and rationale expired with the Transcript.",
+};
+
+function AssessmentEvidence({ evidence, removal, onSelect }: { evidence: CallDetail["leadAssessment"]["evidence"]; removal: ContentRemoval; onSelect(item: LeadAssessmentEvidence): void }) {
+  if (!evidence) return removal ? <p className="text-sm text-muted-foreground">{removedEvidence[removal]}</p> : null;
   if (!evidence.length) return null;
   return (
     <div className="flex flex-col gap-1">
@@ -325,7 +336,7 @@ function AssessmentEvidence({ evidence, expired, onSelect }: { evidence: CallDet
   );
 }
 
-function CompletedAssessment({ assessment, timeZone, reviewed, transcriptExpired, onEvidence }: { assessment: CallDetail["leadAssessment"]; timeZone: string; reviewed: boolean; transcriptExpired: boolean; onEvidence(item: LeadAssessmentEvidence): void }) {
+function CompletedAssessment({ assessment, timeZone, reviewed, contentRemoval, onEvidence }: { assessment: CallDetail["leadAssessment"]; timeZone: string; reviewed: boolean; contentRemoval: ContentRemoval; onEvidence(item: LeadAssessmentEvidence): void }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -340,17 +351,19 @@ function CompletedAssessment({ assessment, timeZone, reviewed, transcriptExpired
         <h3 className="text-xs font-medium text-muted-foreground">Summary</h3>
         <p className="text-sm">{assessment.summary}</p>
       </div>
-      <div className="flex flex-col gap-1">
-        <h3 className="text-xs font-medium text-muted-foreground">Rationale</h3>
-        <p className="text-sm">{assessment.rationale}</p>
-      </div>
-      <AssessmentEvidence evidence={assessment.evidence} expired={transcriptExpired} onSelect={onEvidence} />
+      {assessment.rationale ? (
+        <div className="flex flex-col gap-1">
+          <h3 className="text-xs font-medium text-muted-foreground">Rationale</h3>
+          <p className="text-sm">{assessment.rationale}</p>
+        </div>
+      ) : null}
+      <AssessmentEvidence evidence={assessment.evidence} removal={contentRemoval} onSelect={onEvidence} />
       {assessment.processedAt ? <p className="text-xs tabular-nums text-muted-foreground">Processed {formatCallTime(assessment.processedAt, timeZone)}</p> : null}
     </div>
   );
 }
 
-function AssessmentBody(props: { assessment: CallDetail["leadAssessment"]; operator: boolean; retry: RetryState; timeZone: string; reviewed: boolean; transcriptExpired: boolean; onEvidence(item: LeadAssessmentEvidence): void }) {
+function AssessmentBody(props: { assessment: CallDetail["leadAssessment"]; operator: boolean; retry: RetryState; timeZone: string; reviewed: boolean; contentRemoval: ContentRemoval; onEvidence(item: LeadAssessmentEvidence): void }) {
   const { assessment, operator, retry } = props;
   switch (assessment.state) {
     case "Completed":
@@ -554,7 +567,7 @@ export default function CallAnalysis({ call, operator }: { call: CallDetail; ope
         retry={retry}
         timeZone={call.workspace.reportingTimezone}
         reviewed={call.leadReview !== null}
-        transcriptExpired={call.transcript.state === "Expired"}
+        contentRemoval={call.transcript.state === "Purged" || call.transcript.state === "Expired" ? call.transcript.state : null}
         onEvidence={selectEvidence}
       />
     </>

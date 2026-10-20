@@ -448,6 +448,21 @@ describe.sequential("Call Detail Recording availability", () => {
     expect(text).not.toContain(recordingId);
   });
 
+  it("marks Recording media an Operator purged Purged with its purge time, before Expired, without the MP3 download", async () => {
+    const purgedAt = new Date(Date.now() - 60_000);
+    const { recordingId } = await seedCall("purged-call");
+    const startedAt = new Date();
+    startedAt.setUTCMonth(startedAt.getUTCMonth() - 13);
+    const expired = await seedCall("purged-expired-call", { startedAt });
+    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[recordingId, expired.recordingId], purgedAt]);
+    for (const callId of ["purged-call", "purged-expired-call"]) {
+      const { text, body } = await callDetail("granted-active", callId, operatorCookie);
+      expect(body.call).toMatchObject({ id: callId, outcome: "Answered", totalDurationSeconds: 95, mp3RecordingId: null });
+      expect(body.call?.recording).toEqual({ state: "Purged", purgedAt: purgedAt.toISOString() });
+      expect(text).not.toContain(`${callId}-recording`);
+    }
+  });
+
   it("reports when the media of an available Recording expires", async () => {
     await seedCall("retained-call");
     const call = (await callDetail("granted-active", "retained-call", operatorCookie)).body.call as { startedAt: string; recording: { expiresAt: string } };
@@ -512,6 +527,28 @@ describe.sequential("Call Detail spam gate and processing timeline", () => {
     expect(await stages("timeline-transfer-failed-call")).toEqual([["Recording transfer failed", "Failed"]]);
     expect(await stages("timeline-waveform-failed-call")).toEqual([["Recording stored", "Completed"], ["Waveform generation failed", "Failed"]]);
   });
+
+  it("adds Media purged at the purge time and drops the stages purged media will never run", async () => {
+    const analyzed = await seedCall("timeline-purged-call", { analysis: { transcript: "Completed", leadAssessment: "Completed" } });
+    const transferPending = await seedCall("timeline-purged-transfer-call", { recording: { transferState: "Pending" } });
+    const waveformPending = await seedCall("timeline-purged-waveform-call", { recording: { transferState: "Stored", waveformState: "Pending" }, analysis: { transcript: "Pending" } });
+    const assessmentPending = await seedCall("timeline-purged-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Pending" } });
+    const purgedAt = new Date();
+    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[analyzed.recordingId, transferPending.recordingId, waveformPending.recordingId, assessmentPending.recordingId], purgedAt]);
+    const timeline = async (callId: string) => (await callDetail("granted-active", callId, operatorCookie)).body.call?.timeline as { label: string; status: string; at: string }[];
+    const stages = async (callId: string) => (await timeline(callId)).map(({ label, status }) => [label, status]);
+    expect(await stages("timeline-purged-call")).toEqual([
+      ["Recording stored", "Completed"],
+      ["Waveform generated", "Completed"],
+      ["Transcript completed", "Completed"],
+      ["Lead Assessment completed", "Completed"],
+      ["Media purged", "Completed"],
+    ]);
+    expect((await timeline("timeline-purged-call")).at(-1)?.at).toBe(purgedAt.toISOString());
+    expect(await stages("timeline-purged-transfer-call")).toEqual([["Media purged", "Completed"]]);
+    expect(await stages("timeline-purged-waveform-call")).toEqual([["Recording stored", "Completed"], ["Media purged", "Completed"]]);
+    expect(await stages("timeline-purged-assessment-call")).toEqual([["Recording stored", "Completed"], ["Waveform generated", "Completed"], ["Transcript completed", "Completed"], ["Media purged", "Completed"]]);
+  });
 });
 
 describe.sequential("Call Detail Transcript and Lead Assessment", () => {
@@ -575,7 +612,7 @@ describe.sequential("Call Detail Transcript and Lead Assessment", () => {
     }
   });
 
-  it("withholds Transcript turns and evidence after media expiry while keeping the non-content Lead Assessment", async () => {
+  it("withholds Transcript turns, evidence, and rationale after media expiry while keeping the non-content Lead Assessment", async () => {
     const startedAt = new Date();
     startedAt.setUTCMonth(startedAt.getUTCMonth() - 13);
     await seedCall("expired-analysis-call", { startedAt, analysis: analyzed });
@@ -586,11 +623,39 @@ describe.sequential("Call Detail Transcript and Lead Assessment", () => {
       classification: "Good Lead",
       score: 86,
       summary: "Caller needs a leaking water heater repaired today.",
-      rationale: "Urgent, in-scope service request.",
       processedAt: expect.any(String),
     });
     expect(text).not.toContain("my water heater is leaking");
     expect(text).not.toContain("this afternoon");
+    expect(text).not.toContain("Urgent, in-scope service request.");
+  });
+
+  it("marks the Transcript of purged media Purged and keeps the Lead Assessment summary, classification, score, and Lead Review without rationale or evidence", async () => {
+    const { recordingId } = await seedCall("purged-analysis-call", { analysis: { ...analyzed, reviewed: true } });
+    await pool!.query("update recording set media_purged_at = now() where id = $1", [recordingId]);
+    for (const cookie of [operatorCookie, clientCookie]) {
+      const { text, body } = await callDetail("granted-active", "purged-analysis-call", cookie);
+      expect(body.call?.transcript).toEqual({ state: "Purged" });
+      expect(body.call?.leadAssessment).toEqual({
+        state: "Completed",
+        classification: "Good Lead",
+        score: 86,
+        summary: "Caller needs a leaking water heater repaired today.",
+        processedAt: expect.any(String),
+      });
+      expect(body.call?.leadReview).toMatchObject({ classification: "Not Good Lead" });
+      expect(body.call?.effectiveLeadClassification).toEqual({ classification: "Not Good Lead", source: "review" });
+      expect(text).not.toContain("my water heater is leaking");
+      expect(text).not.toContain("Urgent, in-scope service request.");
+    }
+  });
+
+  it("reads a pending or failed stage of purged media as Purged or Unavailable, since it will never run", async () => {
+    const pending = await seedCall("purged-assessment-pending-call", { analysis: { transcript: "Completed", leadAssessment: "Pending" } });
+    const failed = await seedCall("purged-transcript-failed-call", { analysis: { transcript: "Failed" } });
+    await pool!.query("update recording set media_purged_at = now() where id = any($1)", [[pending.recordingId, failed.recordingId]]);
+    expect((await callDetail("granted-active", "purged-assessment-pending-call", operatorCookie)).body.call).toMatchObject({ transcript: { state: "Purged" }, leadAssessment: { state: "Unavailable" } });
+    expect((await callDetail("granted-active", "purged-transcript-failed-call", operatorCookie)).body.call).toMatchObject({ transcript: { state: "Purged" }, leadAssessment: { state: "Unavailable" } });
   });
 
   it("uses the Lead Review over the Lead Assessment for the effective classification", async () => {
@@ -676,6 +741,20 @@ describe.sequential("Call analysis Retry", () => {
     await seedCall("retry-unrecorded-call", { graph: unrecordedGraph, recording: null });
     await seedCall("retry-expired-call", { startedAt: expiredStart, analysis: { transcript: "Failed" } });
     for (const callId of ["retry-completed-call", "retry-pending-call", "retry-skipped-call", "retry-unrecorded-call", "retry-expired-call"]) {
+      const { response, body } = await retry("granted-active", callId, operatorCookie);
+      expect(response.status).toBe(409);
+      expect(body).toEqual({ error: "nothing_to_retry" });
+    }
+    expect(transcriptionRequests.requests).toEqual([]);
+    expect(leadAssessmentRequests.requests).toEqual([]);
+  });
+
+  it("answers Conflict for a failed stage whose media an Operator purged", async () => {
+    clearRequests();
+    const transcript = await seedCall("retry-purged-transcript-call", { analysis: { transcript: "Failed" } });
+    const assessment = await seedCall("retry-purged-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Failed" } });
+    await pool!.query("update recording set media_purged_at = now() where id = any($1)", [[transcript.recordingId, assessment.recordingId]]);
+    for (const callId of ["retry-purged-transcript-call", "retry-purged-assessment-call"]) {
       const { response, body } = await retry("granted-active", callId, operatorCookie);
       expect(response.status).toBe(409);
       expect(body).toEqual({ error: "nothing_to_retry" });

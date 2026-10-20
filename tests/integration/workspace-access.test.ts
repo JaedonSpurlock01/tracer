@@ -74,6 +74,9 @@ const recordingBucket: RecordingMediaBucket = {
     const length = options?.range?.length ?? bytes.byteLength - offset;
     return { body: new Blob([bytes.slice(offset, offset + length)]).stream() };
   },
+  async delete(key) {
+    storedObjects.delete(key);
+  },
 };
 
 const workspacesHandler = () => createWorkspacesHandler({

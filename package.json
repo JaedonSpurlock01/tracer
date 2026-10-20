@@ -19,6 +19,7 @@
     "db:grant-runtime": "tsx scripts/grant-runtime-role.ts",
     "auth:bootstrap": "tsx scripts/bootstrap-initial-operator.ts",
     "smoke:staging-call": "tsx scripts/staging-call-smoke.ts",
+    "fixtures:retention": "tsx scripts/seed-retention-fixtures.ts",
     "trigger:dev": "trigger dev start --env-file .env.trigger",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "preview:deploy": "opennextjs-cloudflare build && wrangler preview",

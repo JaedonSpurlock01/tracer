@@ -471,6 +471,9 @@ export const recordings = pgTable(
     transcriptCompletedAt: timestamp("transcript_completed_at", { withTimezone: true }),
     leadAssessmentState: text("lead_assessment_state"),
     leadAssessmentFailureReason: text("lead_assessment_failure_reason"),
+    mediaPurgedAt: timestamp("media_purged_at", { withTimezone: true }),
+    mediaPurgedByUserId: text("media_purged_by_user_id"),
+    mediaDeletedAt: timestamp("media_deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -480,7 +483,7 @@ export const recordings = pgTable(
     check("recording_transfer_state_check", sql`${table.transferState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_twilio_cleanup_state_check", sql`${table.twilioCleanupState} in ('Pending', 'Deleted', 'Failed')`),
     check("recording_stored_metadata_check", sql`${table.transferState} <> 'Stored' or (${table.r2ObjectKey} is not null and ${table.sizeBytes} is not null and ${table.sha256} is not null and ${table.storedAt} is not null)`),
-    check("recording_cleanup_requires_stored_check", sql`${table.twilioCleanupState} <> 'Deleted' or ${table.transferState} = 'Stored'`),
+    check("recording_twilio_deleted_check", sql`${table.twilioCleanupState} <> 'Deleted' or ${table.transferState} = 'Stored' or ${table.twilioDeletedAt} is not null`),
     check("recording_waveform_state_check", sql`${table.waveformState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_waveform_stored_metadata_check", sql`${table.waveformState} <> 'Stored' or (${table.waveformObjectKey} is not null and ${table.waveformGeneratedAt} is not null)`),
     check("recording_waveform_requires_stored_check", sql`${table.waveformState} = 'Pending' or ${table.transferState} = 'Stored'`),
@@ -508,6 +511,12 @@ export const recordings = pgTable(
     index("recording_mp3_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.mp3State} <> 'Stored'`),
     index("recording_transcript_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.transcriptState} in ('Pending', 'Failed')`),
     index("recording_lead_assessment_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.leadAssessmentState} in ('Pending', 'Failed')`),
+    index("recording_media_undeleted_created_at_idx").on(table.createdAt).where(sql`${table.mediaDeletedAt} is null`),
+    foreignKey({
+      columns: [table.mediaPurgedByUserId],
+      foreignColumns: [users.id],
+      name: "recording_media_purged_by_user_id_fk",
+    }).onDelete("set null"),
   ],
 );
 
@@ -550,7 +559,7 @@ export const leadAssessments = pgTable(
     classification: text().notNull(),
     score: integer().notNull(),
     summary: text().notNull(),
-    rationale: text().notNull(),
+    rationale: text(),
     model: text().notNull(),
     inputTokens: integer("input_tokens").notNull(),
     outputTokens: integer("output_tokens").notNull(),
@@ -623,6 +632,7 @@ export const callEventKinds = [
   "lead_assessment_completed",
   "lead_assessment_failed",
   "lead_review_added",
+  "media_purged",
 ] as const;
 
 export const callEvents = pgTable(
@@ -709,6 +719,7 @@ export const reportArtifacts = pgTable(
     r2Key: text("r2_key").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     contentType: text("content_type").notNull(),
+    includedRecordingIds: text("included_recording_ids").array(),
   },
   (table) => [
     primaryKey({ columns: [table.jobId, table.fileKind] }),

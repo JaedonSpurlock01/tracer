@@ -41,9 +41,9 @@ const result: CallListResult = { calls: [], total: 640, page: 1, pageSize: 25, t
 const filteredQuery: CallListQuery = { page: 2, sort: { column: "startedAt", direction: "desc" }, filters: { ...emptyCallFilters, outcomes: ["Answered"], startedFrom: "2026-10-01", startedTo: "2026-10-07" } };
 const listResponse = { calls: [], total: 640, page: 2, pageSize: 25, timeZone: "America/Chicago", workspace: null, hasCalls: true };
 
-function preview(overrides: Partial<{ matchedCalls: number; retainedRecordings: number; expiredMedia: number; callsWithoutRecording: number }> = {}) {
+function preview(overrides: Partial<{ matchedCalls: number; retainedRecordings: number; purgedMedia: number; expiredMedia: number; callsWithoutRecording: number }> = {}) {
   return {
-    preview: { matchedCalls: 640, retainedRecordings: 420, expiredMedia: 30, callsWithoutRecording: 190, processingRecordings: 0, failedRecordings: 0, ...overrides },
+    preview: { matchedCalls: 640, retainedRecordings: 420, purgedMedia: 12, expiredMedia: 30, callsWithoutRecording: 190, processingRecordings: 0, failedRecordings: 0, ...overrides },
     recordingExportLimit: 500,
   };
 }
@@ -88,6 +88,7 @@ describe("Calls exports", () => {
     const dialog = await confirmation("Export Recordings");
     await waitFor(() => expect(stat(dialog, "Matched Calls")).toBe("640"));
     expect(stat(dialog, "Retained Recordings")).toBe("420");
+    expect(stat(dialog, "Purged media")).toBe("12");
     expect(stat(dialog, "Expired media")).toBe("30");
     expect(stat(dialog, "Calls without recordings")).toBe("190");
     expect(lastBody(fetch, "/api/reports/preview")).toEqual({ kind: "call_export", scope: { kind: "global" }, file: "zip", query: callListSearchParams(filteredQuery).toString() });

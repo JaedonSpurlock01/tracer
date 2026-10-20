@@ -22,10 +22,13 @@
  *  Recording export outcome, and one MP3 per retained Recording at
  *  `recordings/{yyyymmdd-hhmmss}_{callId}.mp3`, named from the start time
  *  in the job's timezone so names sort by time and never collide or carry
- *  a caller number. A Recording that is expired, missing, processing, or
- *  failed is omitted and its reason recorded in the manifest, including
- *  one whose media expires or whose MP3 disappears while the export runs,
- *  so the job still completes. A single-Call Export Call adds
+ *  a caller number. A Recording that is purged, expired, missing,
+ *  processing, or failed is omitted and its reason recorded in the
+ *  manifest, including one whose media is purged or expires or whose MP3
+ *  disappears while the export runs, because each Recording's media is
+ *  re-checked just before its MP3 is read, so the job still completes. The
+ *  ZIP artifact records which Recordings it included, so Purge Media can
+ *  expire exactly the ZIPs that hold a Recording. A single-Call Export Call adds
  *  `transcript.txt` and `lead-assessment.json` beside an included MP3. A
  *  job that is already Completed or Failed is left as it is, so a rerun is
  *  a no-op. A failure that exhausts retries is recorded on the job with a
@@ -35,6 +38,8 @@
  *  Trigger.dev delivers at least once. A rerun of a Generating job, after a
  *  failed or partial upload, rewrites the same object key, and completion
  *  only moves a Queued or Generating job, so artifacts are recorded once.
+ *  Completion refuses a ZIP holding a Recording purged or expired after its
+ *  MP3 was read, so the run retries and the rerun omits it.
  *  Calls are read in keyset pages on start time and Call id, using the
  *  exact stored start time as the cursor, so a large job never loads every
  *  row at once. The R2 helper signs one PUT with the whole body's SHA-256,
@@ -68,6 +73,7 @@ import type { Pool } from "pg";
 import { reportAnalyticsSummary } from "@/data/analytics";
 import { callExportDocuments } from "@/data/call-export-documents";
 import { R2ObjectError, sha256Hex, type ArtifactObjects } from "@/data/r2-objects";
+import { recordingMediaExpiredSql } from "@/data/recording-media";
 import { reportCsvObjectKey, reportPdfObjectKey, reportZipObjectKey } from "@/data/report-artifact-lifecycle";
 import { isoInTimeZone, reportCsvHeader, reportCsvRows, reportManifestHeader, reportManifestRows, type RecordingExportOutcome, type ReportManifestCall } from "@/data/report-csv";
 import { buildReportDocument, reportNotableGoodLeadLimit } from "@/data/report-document";
@@ -95,15 +101,28 @@ function recordingFileName(call: ReportSelectionCall, timeZone: string): string 
 }
 
 const omittedOutcomes: Readonly<Record<Exclude<ReportSelectionCall["recordingExport"], "Retained">, RecordingExportOutcome>> = {
+  Purged: "Purged",
   Expired: "Expired",
   "No Recording": "No Recording",
   Processing: "Processing",
   Failed: "Failed",
 };
 
+async function removedMedia(deps: ReportGenerationDependencies, recordingId: string): Promise<"Purged" | "Expired" | null> {
+  const row = (await deps.pool.query<{ purged: boolean; expired: boolean }>(
+    `select r.media_purged_at is not null as purged, ${recordingMediaExpiredSql("c.started_at", "$2::timestamptz")} as expired
+       from recording r
+       join call c on c.id = r.call_id
+      where r.id = $1`,
+    [recordingId, deps.now()],
+  )).rows[0];
+  return row.purged ? "Purged" : row.expired ? "Expired" : null;
+}
+
 async function addRecording(deps: ReportGenerationDependencies, zip: ZipWriter, call: ReportSelectionCall, timeZone: string, modifiedAt: Date): Promise<ReportManifestCall> {
   if (call.recordingExport !== "Retained" || !call.mp3ObjectKey) return { ...call, recordingFile: null, recordingExport: call.recordingExport === "Retained" ? "Missing" : omittedOutcomes[call.recordingExport] };
-  if (call.mediaExpiresAt && call.mediaExpiresAt <= deps.now()) return { ...call, recordingFile: null, recordingExport: "Expired" };
+  const removed = await removedMedia(deps, call.recordingId!);
+  if (removed) return { ...call, recordingFile: null, recordingExport: removed };
   const mp3 = await deps.objects.get(call.mp3ObjectKey);
   if (!mp3) return { ...call, recordingFile: null, recordingExport: "Missing" };
   const recordingFile = recordingFileName(call, timeZone);
@@ -121,10 +140,12 @@ async function storeRecordingZip(deps: ReportGenerationDependencies, job: Report
     const manifest = [reportManifestHeader()];
     const singleCall = "selection" in job.parameters && job.parameters.selection.kind === "call";
     let exportCall: { id: string; recordingId: string } | undefined;
+    const includedRecordingIds: string[] = [];
     for await (const calls of reportJobCalls(deps.pool, organizationId, job, deps.pageSize)) {
       const rows: ReportManifestCall[] = [];
       for (const call of calls) {
         const row = await addRecording(deps, zip, call, job.timeZone, modifiedAt);
+        if (row.recordingExport === "Included" && call.recordingId) includedRecordingIds.push(call.recordingId);
         if (singleCall && row.recordingExport === "Included" && call.recordingId) exportCall = { id: call.id, recordingId: call.recordingId };
         rows.push(row);
       }
@@ -136,7 +157,7 @@ async function storeRecordingZip(deps: ReportGenerationDependencies, job: Report
     await zip.addFile("manifest.csv", new TextEncoder().encode(manifest.join("")), modifiedAt);
     await zip.finish();
     const { sizeBytes } = await upload.complete();
-    return { file: "zip", r2Key: key, byteSize: sizeBytes, contentType: reportZipContentType };
+    return { file: "zip", r2Key: key, byteSize: sizeBytes, contentType: reportZipContentType, includedRecordingIds };
   } catch (error) {
     await upload.abort().catch(() => undefined);
     throw error;

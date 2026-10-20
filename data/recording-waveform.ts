@@ -11,7 +11,8 @@
  *  dual-channel Recording and one Mixed lane otherwise, each a series of
  *  peak amplitudes between 0 and 1. A Recording that is not Stored, no
  *  longer exists, or whose media expired 12 months after its Call started
- *  is skipped, and its Call and Recording metadata are left as they are. A
+ *  or was purged is skipped, and its Call and Recording metadata are left
+ *  as they are. A
  *  rerun skips a Stored waveform whose object exists and otherwise
  *  overwrites the same key.
  *
@@ -25,7 +26,12 @@
  *  duplicate run would write identical peaks to the same key. A failure is
  *  recorded as Failed with a secret-free reason and rethrown for
  *  Trigger.dev to retry. The peaks key is derived from the Recording's own
- *  key, so a later purge can delete it without a lookup.
+ *  key, so a later purge can delete it without a lookup. Because a purge
+ *  can commit while peaks are generated, the Stored update re-checks that
+ *  the media is retained, and when it matches nothing the run deletes the
+ *  peaks it just uploaded and ends cleanly. A failure is recorded only
+ *  while the media is still retained; otherwise the run ends cleanly
+ *  without a Failed state or a retry.
  *
  * @see
  *  data/audiowaveform.ts
@@ -40,13 +46,13 @@
 import type { Pool } from "pg";
 
 import { AudiowaveformError, type AudiowaveformData, type WaveformPeakGenerator } from "@/data/audiowaveform";
-import { R2ObjectError, sha256Hex, type RecordingObjects } from "@/data/r2-objects";
-import { recordingMediaExpiredSql } from "@/data/recording-media";
+import { R2ObjectError, sha256Hex, type ArtifactObjects, type RecordingObjects } from "@/data/r2-objects";
+import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { recordingObjectKey } from "@/data/recording-transfer";
 
 export interface RecordingWaveformDependencies {
   pool: Pool;
-  objects: RecordingObjects;
+  objects: RecordingObjects & Pick<ArtifactObjects, "delete">;
   peaks: WaveformPeakGenerator;
   now: () => Date;
 }
@@ -103,7 +109,7 @@ type WaveformRow = {
   channels: 1 | 2;
   r2_object_key: string;
   waveform_state: string;
-  media_expired: boolean;
+  media_retained: boolean;
 };
 
 function failureReason(error: unknown): string {
@@ -121,27 +127,35 @@ async function storePeaks(deps: RecordingWaveformDependencies, row: WaveformRow,
 export async function generateRecordingWaveform(deps: RecordingWaveformDependencies, recordingId: string): Promise<void> {
   const result = await deps.pool.query<WaveformRow>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.channels, r.r2_object_key, r.waveform_state,
-            ${recordingMediaExpiredSql("c.started_at", "$2")} as media_expired
+            ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
        join call c on c.id = r.call_id
       where r.id = $1 and r.transfer_state = 'Stored'`,
     [recordingId, deps.now()],
   );
   const row = result.rows[0];
-  if (!row || row.media_expired) return;
+  if (!row?.media_retained) return;
   const key = waveformObjectKey({ id: row.id, organizationId: row.organization_id, workspaceId: row.workspace_id, callId: row.call_id });
   if (row.waveform_state === "Stored" && (await deps.objects.head(key))) return;
   try {
     await storePeaks(deps, row, key);
   } catch (error) {
-    await deps.pool.query("update recording set waveform_state = 'Failed', waveform_failure_reason = $2, updated_at = $3 where id = $1", [row.id, failureReason(error), deps.now()]);
+    const failed = await deps.pool.query(
+      `update recording r set waveform_state = 'Failed', waveform_failure_reason = $2, updated_at = $3
+         from call c
+        where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}`,
+      [row.id, failureReason(error), deps.now()],
+    );
+    if (failed.rowCount === 0) return;
     throw error;
   }
   const now = deps.now();
-  await deps.pool.query(
-    `update recording
+  const stored = await deps.pool.query(
+    `update recording r
         set waveform_state = 'Stored', waveform_object_key = $2, waveform_generated_at = $3, waveform_failure_reason = null, updated_at = $3
-      where id = $1`,
+       from call c
+      where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}`,
     [row.id, key, now],
   );
+  if (stored.rowCount === 0) await deps.objects.delete(key);
 }

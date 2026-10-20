@@ -8,8 +8,9 @@
  *  Organization-scoped services. Streams available Recording audio, serves
  *  its waveform peaks and MP3 download, and reads Call Detail and Recent
  *  Calls, for any actor who can currently read its Workspace. The Workspace list carries each
- *  listed Workspace's analytics list stats. Saves an Operator's Lead Review and
- *  accepts an Operator's Retry of a failed Transcript or Lead Assessment.
+ *  listed Workspace's analytics list stats. Saves an Operator's Lead Review,
+ *  accepts an Operator's Retry of a failed Transcript or Lead Assessment,
+ *  and purges a Call's Recording media for an Operator.
  *
  * @remarks
  *  Routing mutations remain in workspace-routing.ts rather than the Workspace
@@ -20,6 +21,7 @@
  *  data/analytics.ts
  *  data/recording-audio.ts
  *  data/recording-media.ts
+ *  data/media-purge.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -34,12 +36,13 @@ import { createCallDetails } from "@/data/call-details";
 import type { Integrations } from "@/data/integrations";
 import { parseLeadReviewInput } from "@/data/lead-classification";
 import { saveLeadReview } from "@/data/lead-reviews";
+import { purgeCallMedia } from "@/data/media-purge";
 import type { RecordingProcessing } from "@/data/recording";
 import { recordingAudioResponse } from "@/data/recording-audio";
 import { findAvailableRecordingMedia, recordingMp3Response, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
-import type { TwilioClient } from "@/data/twilio-client";
+import type { TwilioClient, TwilioRecordingMedia } from "@/data/twilio-client";
 import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
@@ -53,6 +56,8 @@ export interface WorkspacesHandlerOptions {
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
   recordingBucket?: RecordingMediaBucket;
+  masterKey?: string;
+  twilioMedia?: TwilioRecordingMedia;
   recordingTranscription?: RecordingProcessing;
   recordingLeadAssessment?: RecordingProcessing;
 }
@@ -196,6 +201,13 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         if (retried === "not_found") throw new WorkspacesError("not_found");
         if (retried === "nothing_to_retry") return response({ error: "nothing_to_retry" }, 409);
         return response({ retry: retried }, 202);
+      }
+      const purgeMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/media\/purge$/);
+      if (request.method === "POST" && purgeMatch) {
+        const purged = await purgeCallMedia({ pool: options.pool, objects: options.recordingBucket, twilio: options.twilioMedia, masterKey: options.masterKey }, actor, purgeMatch[1], purgeMatch[2], new Date());
+        if (purged === "not_found") throw new WorkspacesError("not_found");
+        if (typeof purged === "string") return response({ error: purged }, 409);
+        return response({ purge: purged });
       }
       const workspaces: Workspaces = createWorkspaces(options.pool, actor.organizationId);
       const routing = createWorkspaceRouting({

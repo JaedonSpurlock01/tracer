@@ -532,6 +532,27 @@ describe.sequential("Calls filters", () => {
     expect(await options(clientCookie)).toEqual([{ id: "granted-active", name: "Acme Plumbing" }, { id: "granted-quiet", name: "Quiet Dental" }]);
     expect((await options(operatorCookie)).map((option) => option.name)).toEqual(["Acme Plumbing", "Empty Office", "Gamma HVAC", "Quiet Dental", "Roof_100% Co", "Tokyo Office"]);
   });
+
+  it("labels and narrows Recording media an Operator purged as Purged, before Expired, without the MP3 download", async () => {
+    await pool!.query(
+      `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
+       values ('purge-office', $1, 'Purge Office', 'UTC', 'Active', true, now(), now())`,
+      [organizationId],
+    );
+    await seedWorkspaceRouting("purge-office");
+    await seedCall({ id: "purged-recording-call", workspaceId: "purge-office", minutesAgo: 58, recording: "Stored" });
+    await seedCall({ id: "purged-expired-call", workspaceId: "purge-office", minutesAgo: 60 * 24 * 401, recording: "Stored" });
+    await seedCall({ id: "unpurged-expired-call", workspaceId: "purge-office", minutesAgo: 60 * 24 * 402, recording: "Stored" });
+    await pool!.query(
+      "update recording set mp3_state = 'Stored', mp3_object_key = 'recordings/' || id || '.mp3', mp3_size_bytes = 512, mp3_generated_at = now(), media_purged_at = now() where id in ('purged-recording-call-recording', 'purged-expired-call-recording')",
+    );
+    const scoped = (filter: string) => listCalls(operatorCookie, `?workspaceId=purge-office${filter}`);
+    const byId = new Map((await scoped("")).body.calls.map((call) => [call.id, call]));
+    for (const id of ["purged-recording-call", "purged-expired-call"]) expect(byId.get(id)).toMatchObject({ recording: "Purged", mp3RecordingId: null });
+    expect(byId.get("unpurged-expired-call")).toMatchObject({ recording: "Expired" });
+    expect(ids((await scoped("&recording=Purged")).body)).toEqual(["purged-recording-call", "purged-expired-call"]);
+    expect(ids((await scoped("&recording=Expired")).body)).toEqual(["unpurged-expired-call"]);
+  });
 });
 
 describe.sequential("Calls condition groups", () => {

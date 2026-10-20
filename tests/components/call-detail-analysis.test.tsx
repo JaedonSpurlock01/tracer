@@ -263,11 +263,31 @@ describe("Call Detail Lead Assessment", () => {
     expect(screen.queryByText("Good Lead")).not.toBeInTheDocument();
   });
 
-  it("keeps non-content assessment fields when evidence expired with the Transcript", () => {
-    render(<CallDetailView call={{ ...call, transcript: { state: "Expired" }, leadAssessment: { ...call.leadAssessment, evidence: undefined } }} operator={false} />);
+  it("keeps non-content assessment fields without a Rationale when evidence and rationale expired with the Transcript", () => {
+    render(<CallDetailView call={{ ...call, transcript: { state: "Expired" }, leadAssessment: { ...call.leadAssessment, rationale: undefined, evidence: undefined } }} operator={false} />);
     expect(assessment()).toHaveTextContent("86 / 100");
+    expect(assessment()).toHaveTextContent("A homeowner requested same-day water heater repair.");
+    expect(within(assessment()).queryByRole("heading", { name: "Rationale" })).not.toBeInTheDocument();
     expect(within(assessment()).queryByRole("button")).not.toBeInTheDocument();
-    expect(assessment()).toHaveTextContent("Evidence expired with the Transcript.");
+    expect(assessment()).toHaveTextContent("Evidence and rationale expired with the Transcript.");
+  });
+
+  it("keeps the summary, classification, and score of purged media without its Transcript, evidence, or Rationale", () => {
+    const purged: CallDetail = {
+      ...call,
+      recording: { state: "Purged", purgedAt: "2026-10-17T14:30:00.000Z" },
+      transcript: { state: "Purged" },
+      leadAssessment: { ...call.leadAssessment, rationale: undefined, evidence: undefined },
+    };
+    render(<CallDetailView call={purged} operator={false} />);
+    expect(transcript()).toHaveTextContent("Transcript purged");
+    expect(within(transcript()).queryByRole("list")).not.toBeInTheDocument();
+    expect(within(assessment()).getByText("Good Lead")).toBeVisible();
+    expect(assessment()).toHaveTextContent("86 / 100");
+    expect(assessment()).toHaveTextContent("A homeowner requested same-day water heater repair.");
+    expect(within(assessment()).queryByRole("heading", { name: "Rationale" })).not.toBeInTheDocument();
+    expect(within(assessment()).queryByRole("button")).not.toBeInTheDocument();
+    expect(assessment()).toHaveTextContent("Evidence and rationale were purged with the Transcript.");
   });
 });
 

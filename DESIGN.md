@@ -275,6 +275,7 @@ Expanding an entry reveals only lifecycle events that occurred:
 6. Transcript completed, skipped, expired, or failed
 7. Lead Assessment completed or failed
 8. Lead Review added
+9. Media purged
 
 Outcome and processing states use one semantic Badge per row. Infrastructure details remain behind concise user-facing status copy. Selecting the entry header opens Call Detail.
 
@@ -306,7 +307,7 @@ Outcome and processing states use one semantic Badge per row. Infrastructure det
 - Secondary action: Export CSV
 - Global page includes a Workspace filter; Workspace Calls fixes the scope and omits that filter
 
-Both exports operate on the current scope, date range, search, and filters. Tracer does not use row-selection checkboxes in the first release. Before creating an export, a confirmation shows matched Calls, retained Recordings, expired media, and calls without recordings. A Recording export is limited to 500 retained Recordings; above that, the confirmation blocks the export and asks the user to narrow the filters.
+Both exports operate on the current scope, date range, search, and filters. Tracer does not use row-selection checkboxes in the first release. Before creating an export, a confirmation shows matched Calls, retained Recordings, expired media, purged media, and calls without recordings. A Recording ZIP omits expired and purged media, and its `manifest.csv` names each omitted Recording's reason, with Purged kept distinct from Expired. A Recording export is limited to 500 retained Recordings; above that, the confirmation blocks the export and asks the user to narrow the filters.
 
 ### Search and filters
 
@@ -360,6 +361,7 @@ Provider-specific status remains diagnostic metadata and does not appear as a co
 - **Loading:** Use Data Grid Skeleton rows with stable column widths.
 - **Fetch error:** Render the error and Retry inside the grid without removing the toolbar.
 - **Expired Recording:** Keep the Call row and show recording availability as Expired.
+- **Purged Recording:** Keep the Call row and show recording availability as Purged, ahead of Expired, without Play Recording or Download MP3. The Recording availability filter offers Purged beside Expired.
 
 ## Call Detail
 
@@ -423,6 +425,8 @@ Show the immutable AI result after the Transcript:
 - Timestamp-linked evidence snippets
 - Model-processing timestamp
 
+The rationale and evidence reproduce Transcript content, so they are removed with the Transcript when media expires or is purged; the Rationale heading then does not render, while the classification, score, summary, and processing timestamp remain.
+
 State clearly that the assessment is automated. Pending, failed, skipped, and unavailable are processing states, not lead classifications.
 
 ### Lead Review
@@ -462,11 +466,19 @@ Use a compact ReUI Timeline for webhook receipt, routing, Recording transfer, wa
 - **Transcript failed:** Show Retry to Operators and a neutral unavailable message to Client Viewers.
 - **Analysis pending or failed:** Keep the Transcript usable and isolate the analysis state.
 - **Single-channel fallback:** Label the waveform `Mixed audio` and retain Transcript speaker labels when provided by transcription.
-- **Purged media:** Keep Call facts and assessment summary, remove audio, waveform, Transcript text, and Transcript-derived evidence, and label the purge time.
+- **Recording expired:** Keep Call facts and the assessment summary, explain that media is removed 12 months after the Call, and show the expiry date in the Recording fact.
+- **Purged media:** Keep Call facts, the assessment summary, classification, and score, and the Lead Review; remove audio, waveform, Download MP3, Transcript text, Transcript-derived evidence, and rationale; label the purge time in the Recording fact and end the processing timeline with Media purged. Stages that can no longer run after a purge do not show as pending. A purge takes precedence over expiry.
 
 ### Purge Media
 
-Purge Media is Operator only and uses an AlertDialog with explicit irreversible confirmation. It deletes Recording audio, waveform peaks, Transcript content, and evidence snippets that reproduce Transcript text. It preserves Call metadata, Call Outcome, non-content Lead Assessment fields, Lead Review, and aggregate analytics. Client Viewers cannot purge content.
+Purge Media is Operator only and uses an AlertDialog with explicit irreversible confirmation: the destructive Purge Media button stays disabled until the Operator ticks the acknowledgement checkbox "I understand this permanently deletes this Call's media", which is cleared each time the dialog opens. It deletes Recording audio, waveform peaks, the MP3, Transcript content, the evidence snippets and rationale that reproduce Transcript text, any copy of the audio still at Twilio, and any unexpired export ZIPs that include the Recording. It preserves Call metadata, Call Outcome, the Lead Assessment summary, classification, and score, Lead Review, and aggregate analytics. Client Viewers cannot purge content and never see the action.
+
+- Placement: a destructive Button in the Call Detail header actions, shown only while a Recording exists whose media has neither expired nor been purged
+- Confirmation: the AlertDialog states that the purge cannot be undone, lists what is deleted and what is kept, and purges nothing until the destructive action is confirmed
+- Pending: the confirm action shows a Spinner and `Purging...` and both actions are disabled
+- Success: the dialog closes and Call Detail shows the purged media state
+- Conflict: when the media was already purged, expired, or has no Recording, the dialog explains which and Call Detail refreshes
+- Other failures: the dialog stays open with a concise error so the Operator can try again
 
 ## Workspaces
 
@@ -839,7 +851,7 @@ Columns:
 7. Expires
 8. Row actions
 
-Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. Job metadata and parameters remain for 90 days.
+Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. A Recording ZIP or Export Call that includes a Recording whose media an Operator purges expires at the purge, so its row shows Expired with Regenerate, and the regenerated export omits that Recording as Purged. Job metadata and parameters remain for 90 days.
 
 ### States
 
@@ -1091,6 +1103,7 @@ The API key secret is encrypted with a deployment-held master key and never disp
 - Task deployment version
 - Recording-processing queue health
 - Report and export queue health
+- Unfinished media cleanup: the count of purged or expired Recordings whose cleanup is still unfinished 26 hours after purge or expiry, or blocked by a missing Twilio connection, and a table of the 5 oldest with a View Call link, Workspace, Purged or Expired, since when, and whether Twilio is not connected or the daily sweep retries it; the card is Degraded while any remain, and shows "No unfinished media cleanup." otherwise
 - Recent failed runs with links to Trigger.dev observability
 - Test a minimal no-customer-data task
 

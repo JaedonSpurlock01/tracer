@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * -------------------------------------------------------------------------
  * @file   call-detail-view.tsx
@@ -7,8 +9,9 @@
  *  Shows the caller number as the Call's identity with its Workspace,
  *  Tracking Number, Call Outcome, and effective Lead classification, a
  *  sticky Recording player Frame, the Transcript, Lead Review, and Lead
- *  Assessment, the Call facts in a dense definition list, and the
- *  processing timeline. The Twilio call SID appears only when the read
+ *  Assessment, the Call facts in a dense definition list with the
+ *  Recording's retention, expiry, or purge time, and the processing
+ *  timeline. The Twilio call SID appears only when the read
  *  model provides it, which it does for Operators. The header links back
  *  to the list the Call was opened from and steps to the previous and next
  *  Call in it, with a step disabled at either end of the list.
@@ -17,10 +20,12 @@
  *  A PlaybackProvider spans the player and the analysis regions so the
  *  Transcript and evidence can follow and seek playback. The header offers
  *  Download MP3 whenever the read model gives a downloadable MP3, whatever
- *  the waveform state; the read model withholds it once media expires. It
- *  downloads through the Workspace-authorized MP3 route. Export Call
- *  confirms and requests a single-Call Recording ZIP. Purge Media waits
- *  for a later milestone, so it does not render here. The page resolves the back link and previous and next Call
+ *  the waveform state; the read model withholds it once media expires or
+ *  is purged. It downloads through the Workspace-authorized MP3 route.
+ *  Export Call confirms and requests a single-Call Recording ZIP. Operators
+ *  also get Purge Media while the media can be purged; after a purge the
+ *  page shows the purged media state locally until the refreshed Call
+ *  arrives, as Lead Review and Retry do. The page resolves the back link and previous and next Call
  *  hrefs on the server; without them the back link is Workspace Calls and
  *  both steps are disabled. Previous and next are compact icon buttons so
  *  the header row fits at 390px. Call Detail is a record-detail page, so
@@ -31,13 +36,14 @@
  *  data/call-details.ts
  *  components/tracer/recording-player.tsx
  *  components/tracer/call-analysis.tsx
+ *  components/tracer/purge-media.tsx
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, DownloadIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
@@ -51,6 +57,7 @@ import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock, formatTimeOfDay } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
 import { PlaybackProvider } from "@/components/tracer/playback";
+import PurgeMediaButton, { canPurgeMedia, purgedCallDetail } from "@/components/tracer/purge-media";
 import RecordingPlayer from "@/components/tracer/recording-player";
 import type { CallDetail, CallTimelineEntry } from "@/data/call-details";
 
@@ -72,6 +79,8 @@ function recordingStatus(call: CallDetail): string {
       return "Failed";
     case "Unavailable":
       return recording.reason === "disabled" ? "Not recorded" : "Not captured";
+    case "Purged":
+      return `Purged on ${formatCallTime(recording.purgedAt, timeZone)}`;
     case "Expired":
       return `Expired on ${formatCallDate(recording.expiredAt, timeZone)}`;
   }
@@ -143,16 +152,18 @@ function StepCall({ label, href, children }: { label: string; href: string | nul
 }
 
 export default function CallDetailView({
-  call,
+  call: loadedCall,
   operator,
   autoPlay = false,
-  navigation = { back: `/workspaces/${call.workspace.id}/calls`, previous: null, next: null },
+  navigation = { back: `/workspaces/${loadedCall.workspace.id}/calls`, previous: null, next: null },
 }: {
   call: CallDetail;
   operator: boolean;
   autoPlay?: boolean;
   navigation?: CallDetailNavigation;
 }) {
+  const [purge, setPurge] = useState<{ call: CallDetail; purgedAt: string } | null>(null);
+  const call = purge?.call === loadedCall ? purgedCallDetail(loadedCall, purge.purgedAt) : loadedCall;
   const timeZone = call.workspace.reportingTimezone;
   return (
     <div className="flex flex-col gap-6">
@@ -181,6 +192,9 @@ export default function CallDetailView({
               </a>
             ) : null}
             <ExportCallButton workspaceId={call.workspace.id} callId={call.id} />
+            {operator && canPurgeMedia(call.recording) ? (
+              <PurgeMediaButton workspaceId={call.workspace.id} callId={call.id} onPurged={(purgedAt) => setPurge({ call: loadedCall, purgedAt })} />
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">

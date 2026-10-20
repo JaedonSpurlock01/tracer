@@ -115,7 +115,6 @@ it("migrates a clean database to the latest authentication and Organization sche
   );
   expect(recordingConstraints.rows.map(({ constraint_name }) => constraint_name)).toEqual([
     "recording_channels_check",
-    "recording_cleanup_requires_stored_check",
     "recording_lead_assessment_requires_transcript_check",
     "recording_lead_assessment_state_check",
     "recording_mp3_requires_stored_check",
@@ -129,6 +128,7 @@ it("migrates a clean database to the latest authentication and Organization sche
     "recording_transcript_usage_check",
     "recording_transfer_state_check",
     "recording_twilio_cleanup_state_check",
+    "recording_twilio_deleted_check",
     "recording_waveform_requires_stored_check",
     "recording_waveform_state_check",
     "recording_waveform_stored_metadata_check",
@@ -200,7 +200,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(19);
+  expect(Number(result.rows[0].count)).toBe(22);
 }, 30_000);
 
 it("enforces Transcript, immutable Lead Assessment, and one current Lead Review per Call invariants", async () => {
@@ -317,6 +317,57 @@ it("enforces Transcript, immutable Lead Assessment, and one current Lead Review 
   expect(unchanged.rows).toEqual([{ classification: "Good Lead", score: 82 }]);
 }, 30_000);
 
+it("records Recording media removal and lets only the Lead Assessment rationale be cleared", async () => {
+  const mediaColumns = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+    `select column_name, data_type, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = 'recording' and column_name like 'media_%'
+      order by column_name`,
+  );
+  expect(mediaColumns.rows).toEqual([
+    { column_name: "media_deleted_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+    { column_name: "media_purged_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+    { column_name: "media_purged_by_user_id", data_type: "text", is_nullable: "YES" },
+  ]);
+  const purgedBy = await pool.query<{ delete_rule: string }>(
+    "select delete_rule from information_schema.referential_constraints where constraint_name = 'recording_media_purged_by_user_id_fk'",
+  );
+  expect(purgedBy.rows).toEqual([{ delete_rule: "SET NULL" }]);
+  const retentionIndex = await pool.query<{ indexdef: string }>("select indexdef from pg_indexes where indexname = 'recording_media_undeleted_created_at_idx'");
+  expect(retentionIndex.rows).toEqual([{ indexdef: expect.stringMatching(/ON public\.recording USING btree \(created_at\) WHERE \(media_deleted_at IS NULL\)$/) }]);
+
+  await expect(pool.query("update lead_assessment set rationale = 'Rewritten.' where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+  await expect(pool.query("update lead_assessment set rationale = null, score = 10 where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+  await pool.query("update lead_assessment set rationale = null where id = 'assessment-1'");
+  const cleared = await pool.query("select classification, score, summary, rationale from lead_assessment where id = 'assessment-1'");
+  expect(cleared.rows).toEqual([{ classification: "Good Lead", score: 82, summary: "Caller asked for a quote.", rationale: null }]);
+  await expect(pool.query("update lead_assessment set rationale = 'Restored.' where id = 'assessment-1'")).rejects.toThrow("Lead Assessment is immutable");
+});
+
+it("records a Twilio copy Deleted only once the Recording is Stored or its deletion time is recorded", async () => {
+  const organizationId = (await pool.query<{ organization_id: string }>("select organization_id from call where id = 'analysis-call'")).rows[0].organization_id;
+  await pool.query(
+    `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, created_at, updated_at)
+     values ('never-stored-recording', $1, 'analysis-workspace', 'analysis-call', 'REbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'voicemail', 1, 31, 'Failed', now(), now())`,
+    [organizationId],
+  );
+
+  await expect(pool.query("update recording set twilio_cleanup_state = 'Deleted' where id = 'never-stored-recording'")).rejects.toMatchObject({ constraint: "recording_twilio_deleted_check" });
+  await pool.query("update recording set twilio_cleanup_state = 'Deleted', twilio_deleted_at = '2026-10-19T08:29:41.613Z' where id = 'never-stored-recording'");
+  await pool.query("update recording set twilio_cleanup_state = 'Deleted' where id = 'analysis-recording'");
+  await expect(pool.query("select id, transfer_state, twilio_cleanup_state from recording where call_id = 'analysis-call' order by id")).resolves.toMatchObject({
+    rows: [
+      { id: "analysis-recording", transfer_state: "Stored", twilio_cleanup_state: "Deleted" },
+      { id: "never-stored-recording", transfer_state: "Failed", twilio_cleanup_state: "Deleted" },
+    ],
+  });
+
+  const artifactColumns = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+    "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'report_artifact' and column_name = 'included_recording_ids'",
+  );
+  expect(artifactColumns.rows).toEqual([{ column_name: "included_recording_ids", data_type: "ARRAY", is_nullable: "YES" }]);
+});
+
 it("creates and reads an Organization by its generated ID", async () => {
   const repository = createOrganizationRepository(pool);
 
@@ -391,6 +442,11 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment", privilege_type: "INSERT" });
   expect(grants.rows).not.toContainEqual({ table_name: "lead_assessment", privilege_type: "UPDATE" });
   expect(grants.rows).not.toContainEqual({ table_name: "lead_assessment", privilege_type: "DELETE" });
+  const assessmentUpdates = await pool.query<{ column_name: string }>(
+    "select column_name from information_schema.column_privileges where grantee = $1 and table_name = 'lead_assessment' and privilege_type = 'UPDATE'",
+    [runtimeRole],
+  );
+  expect(assessmentUpdates.rows).toEqual([{ column_name: "rationale" }]);
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "SELECT" });
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "INSERT" });
   expect(grants.rows).toContainEqual({ table_name: "lead_assessment_evidence", privilege_type: "DELETE" });

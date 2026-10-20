@@ -10,7 +10,8 @@
  *  single Caller channel, the 3-hour cap, the purge-surviving usage
  *  metadata, the single Lead Assessment request, secret-free failures that
  *  leave playback untouched, retry from Failed, and no-ops for Recordings
- *  that are Skipped, Completed, expired, not Stored, or missing.
+ *  that are Skipped, Completed, expired, purged, not Stored, or missing,
+ *  including a purge that commits while OpenAI transcribes.
  *
  * @remarks
  *  The fake transcriber tells the channels apart by the constant sample
@@ -51,12 +52,14 @@ let organizationId = "";
 interface FakeR2 extends RecordingObjects {
   objects: Map<string, Uint8Array>;
   gets: string[];
+  beforeGet: (() => Promise<void>) | null;
 }
 
 interface FakeTranscriber extends AudioTranscriber {
   calls: { speaker: "Caller" | "Business"; durationMs: number }[];
   scripts: Record<"Caller" | "Business", TranscriptionSegment[]>;
   failure: Error | null;
+  during: (() => Promise<void>) | null;
 }
 
 interface FakeLeadAssessment extends RecordingProcessing {
@@ -68,6 +71,7 @@ function fakeR2(): FakeR2 {
   const r2: FakeR2 = {
     objects: new Map(),
     gets: [],
+    beforeGet: null,
     async head(key): Promise<StoredObject | null> {
       const bytes = r2.objects.get(key);
       return bytes ? { sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") } : null;
@@ -77,6 +81,7 @@ function fakeR2(): FakeR2 {
     },
     async get(key) {
       r2.gets.push(key);
+      await r2.beforeGet?.();
       return r2.objects.get(key) ?? null;
     },
   };
@@ -88,10 +93,12 @@ function fakeTranscriber(scripts: FakeTranscriber["scripts"]): FakeTranscriber {
     calls: [],
     scripts,
     failure: null,
+    during: null,
     async transcribe(wav) {
       const audio = readRecordingAudio(wav);
       const speaker = new DataView(wav.buffer, wav.byteOffset).getInt16(44, true) === businessSample ? "Business" : "Caller";
       transcriber.calls.push({ speaker, durationMs: audio.durationMs });
+      await transcriber.during?.();
       if (transcriber.failure) throw transcriber.failure;
       return transcriber.scripts[speaker];
     },
@@ -151,7 +158,7 @@ let sequence = 0;
 
 async function storedRecording(
   r2: FakeR2,
-  options: { channels?: 1 | 2; wav?: Uint8Array | null; transfer?: string; transcript?: string | null; skipReason?: string; callStartedAt?: Date } = {},
+  options: { channels?: 1 | 2; wav?: Uint8Array | null; transfer?: string; transcript?: string | null; skipReason?: string; callStartedAt?: Date; purgedAt?: Date } = {},
 ): Promise<{ id: string; callId: string; wavKey: string }> {
   sequence += 1;
   const channels = options.channels ?? 2;
@@ -191,8 +198,13 @@ async function storedRecording(
       transcript === "Skipped" ? (options.skipReason ?? "too_short") : null,
     ],
   );
+  if (options.purgedAt) await purge(id, options.purgedAt);
   if (stored && wav) r2.objects.set(wavKey, wav);
   return { id, callId, wavKey };
+}
+
+async function purge(id: string, at: Date): Promise<void> {
+  await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
 }
 
 async function recordingRow(id: string): Promise<Record<string, unknown>> {
@@ -423,6 +435,53 @@ describe("Recording transcription", () => {
     expect(leadAssessment.requests).toEqual([]);
     expect(await Promise.all(records.map((recording) => recordingRow(recording.id)))).toEqual(before);
     expect(before[0]).toMatchObject({ transcript_state: "Skipped", transcript_skip_reason: "analysis_disabled" });
+  });
+
+  it("never calls OpenAI for a Recording whose media an Operator purged", async () => {
+    const r2 = fakeR2();
+    const transcriber = fakeTranscriber(conversation);
+    const leadAssessment = fakeLeadAssessment();
+    const purged = await storedRecording(r2, { purgedAt: days(0) });
+    const before = await recordingRow(purged.id);
+
+    await expect(transcribeRecording(dependencies(r2, transcriber, leadAssessment), purged.id)).resolves.toBeUndefined();
+
+    expect(r2.gets).toEqual([]);
+    expect(transcriber.calls).toEqual([]);
+    expect(leadAssessment.requests).toEqual([]);
+    expect(await transcriptRow(purged.id)).toBeUndefined();
+    expect(await recordingRow(purged.id)).toEqual(before);
+  });
+
+  it("writes no Transcript and requests no Lead Assessment when a purge commits while OpenAI transcribes", async () => {
+    const r2 = fakeR2();
+    const transcriber = fakeTranscriber(conversation);
+    const leadAssessment = fakeLeadAssessment();
+    const recording = await storedRecording(r2);
+    transcriber.during = () => purge(recording.id, now);
+
+    await expect(transcribeRecording(dependencies(r2, transcriber, leadAssessment), recording.id)).resolves.toBeUndefined();
+
+    expect(await transcriptRow(recording.id)).toBeUndefined();
+    expect(leadAssessment.requests).toEqual([]);
+    expect(await recordingRow(recording.id)).toMatchObject({ transcript_state: "Pending", transcript_completed_at: null, lead_assessment_state: null });
+  });
+
+  it("ends cleanly without recording Failed when a purge deletes the WAV before the run reads it", async () => {
+    const r2 = fakeR2();
+    const transcriber = fakeTranscriber(conversation);
+    const leadAssessment = fakeLeadAssessment();
+    const recording = await storedRecording(r2);
+    r2.beforeGet = async () => {
+      await purge(recording.id, now);
+      r2.objects.delete(recording.wavKey);
+    };
+
+    await expect(transcribeRecording(dependencies(r2, transcriber, leadAssessment), recording.id)).resolves.toBeUndefined();
+
+    expect(transcriber.calls).toEqual([]);
+    expect(await recordingRow(recording.id)).toMatchObject({ transcript_state: "Pending", transcript_failure_reason: null });
+    await expect(pool!.query("select 1 from call_event where call_id = $1 and kind = 'transcript_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
   });
 });
 

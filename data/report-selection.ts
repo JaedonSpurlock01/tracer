@@ -15,15 +15,16 @@
  *  Reads the selection in keyset pages, oldest first, as CSV rows that
  *  also carry each Call's Recording export state and MP3 object. The
  *  preview counts the same selection: matched Calls, retained Recordings
- *  whose MP3 can be downloaded, expired media, Calls without a Recording,
+ *  whose MP3 can be downloaded, media an Operator purged, expired media,
+ *  Calls without a Recording,
  *  and Recordings still processing or failed, which together account for
  *  every matched Call. A global Calls export's stored scope is narrowed to
  *  the distinct Workspaces of the Calls its selection matches.
  *
  * @remarks
  *  A Recording is retained exactly when Download MP3 would offer it, so the
- *  export reuses that rule from Call Detail. Expired media wins over every
- *  other state. A Recording whose transfer or MP3 failed is Failed; one
+ *  export reuses that rule from Call Detail. Purged media wins over every
+ *  other state, then expired media, as in Call Detail. A Recording whose transfer or MP3 failed is Failed; one
  *  still transferring or encoding is Processing. The preview groups the
  *  selection by those Recording fields in SQL and classifies each group
  *  with the same rule, so it costs one aggregate query however many Calls
@@ -52,18 +53,18 @@ import type { ReportJob } from "@/data/report-jobs";
 
 export type ReportSelection = Pick<ReportJob, "workspaceIds" | "timeZone" | "parameters" | "requestedAt">;
 
-export type RecordingExportState = "Retained" | "Expired" | "No Recording" | "Processing" | "Failed";
+export type RecordingExportState = "Retained" | "Purged" | "Expired" | "No Recording" | "Processing" | "Failed";
 
 export interface ReportSelectionCall extends ReportCsvCall {
   recordingExport: RecordingExportState;
   recordingId: string | null;
   mp3ObjectKey: string | null;
-  mediaExpiresAt: Date | null;
 }
 
 export interface ReportSelectionPreview {
   matchedCalls: number;
   retainedRecordings: number;
+  purgedMedia: number;
   expiredMedia: number;
   callsWithoutRecording: number;
   processingRecordings: number;
@@ -72,7 +73,7 @@ export interface ReportSelectionPreview {
 
 const defaultPageSize = 500;
 
-type RecordingStateRow = Pick<CallListRow, "recording_id" | "expired" | "transfer_state" | "mp3_state">;
+type RecordingStateRow = Pick<CallListRow, "recording_id" | "expired" | "transfer_state" | "mp3_state"> & { purged: boolean };
 
 type ReportCallRow = CallListRow & {
   tracking_number: string;
@@ -84,21 +85,23 @@ type ReportCallRow = CallListRow & {
 
 function recordingExportState(row: RecordingStateRow): RecordingExportState {
   if (!row.recording_id) return "No Recording";
+  if (row.purged) return "Purged";
   if (row.expired) return "Expired";
-  if (downloadableMp3RecordingId({ id: row.recording_id, expired: row.expired, transfer_state: row.transfer_state, mp3_state: row.mp3_state })) return "Retained";
+  if (downloadableMp3RecordingId({ id: row.recording_id, expired: row.expired, purged_at: null, transfer_state: row.transfer_state, mp3_state: row.mp3_state })) return "Retained";
   return row.transfer_state === "Failed" || row.mp3_state === "Failed" ? "Failed" : "Processing";
 }
 
 function transcriptAvailability(row: ReportCallRow): TranscriptAvailability {
   if (!row.recording_id || !row.transcript_state) return "Unavailable";
   if (row.transcript_state === "Skipped") return "Skipped";
+  if (row.purged_at) return "Purged";
   if (row.expired) return "Expired";
   return row.transcript_state === "Completed" ? "Available" : row.transcript_state;
 }
 
 function reportSelectionCall(row: ReportCallRow): ReportSelectionCall {
   const item = callListItem(row);
-  const recordingExport = recordingExportState(row);
+  const recordingExport = recordingExportState({ ...row, purged: row.purged_at !== null });
   return {
     id: item.id,
     workspaceName: item.workspace.name,
@@ -117,7 +120,6 @@ function reportSelectionCall(row: ReportCallRow): ReportSelectionCall {
     recordingExport,
     recordingId: row.recording_id,
     mp3ObjectKey: recordingExport === "Retained" ? row.mp3_object_key : null,
-    mediaExpiresAt: row.recording_id ? row.expires_at : null,
   };
 }
 
@@ -141,15 +143,17 @@ function selectionWhere(organizationId: string, selection: ReportSelection): { w
 export async function previewReportSelection(pool: Pool, organizationId: string, selection: ReportSelection): Promise<ReportSelectionPreview> {
   const { where, values } = selectionWhere(organizationId, selection);
   const groups = await pool.query<RecordingStateRow & { count: number }>(
-    `select case when r.id is not null then 'recording' end as recording_id, coalesce(r.expired, false) as expired, r.transfer_state, r.mp3_state, count(*)::int as count
+    `select case when r.id is not null then 'recording' end as recording_id, coalesce(r.expired, false) as expired, r.media_purged_at is not null as purged,
+            r.transfer_state, r.mp3_state, count(*)::int as count
        from ${callSource}
       where ${where}
-      group by 1, 2, 3, 4`,
+      group by 1, 2, 3, 4, 5`,
     values,
   );
-  const preview: ReportSelectionPreview = { matchedCalls: 0, retainedRecordings: 0, expiredMedia: 0, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 };
+  const preview: ReportSelectionPreview = { matchedCalls: 0, retainedRecordings: 0, purgedMedia: 0, expiredMedia: 0, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 };
   const counters: Record<RecordingExportState, keyof ReportSelectionPreview> = {
     Retained: "retainedRecordings",
+    Purged: "purgedMedia",
     Expired: "expiredMedia",
     "No Recording": "callsWithoutRecording",
     Processing: "processingRecordings",

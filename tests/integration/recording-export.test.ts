@@ -42,10 +42,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
+import { purgeCallMedia } from "@/data/media-purge";
 import { migrateDatabase } from "@/data/migrate";
 import { R2ObjectError, type ArtifactObjects, type MultipartUpload, type StoredObject } from "@/data/r2-objects";
 import { generateReportJob, recordReportGenerationFailure } from "@/data/report-generation";
-import { createReportJob, previewReportJob, type ReportJobRequest } from "@/data/report-jobs";
+import { authorizeReportDownload, createReportJob, previewReportJob, regenerateReportJob, type ReportJobRequest } from "@/data/report-jobs";
+import { sweepReportJobs } from "@/data/report-lifecycle";
 import { ReportRequestError } from "@/data/report-request";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
@@ -67,6 +69,8 @@ interface FakeR2 extends ArtifactObjects {
   uploads: Array<{ key: string; state: "Open" | "Completed" | "Aborted" }>;
   staleAborts: string[];
   getFailure: Error | null;
+  onGet: ((key: string) => Promise<void>) | null;
+  failingDeletes: Set<string>;
 }
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
@@ -81,6 +85,8 @@ function fakeR2(): FakeR2 {
     uploads: [],
     staleAborts: [],
     getFailure: null,
+    onGet: null,
+    failingDeletes: new Set(),
     async head(key): Promise<StoredObject | null> {
       const object = r2.objects.get(key);
       return object ? { sizeBytes: object.bytes.byteLength, sha256: createHash("sha256").update(object.bytes).digest("hex") } : null;
@@ -90,7 +96,9 @@ function fakeR2(): FakeR2 {
     },
     async get(key) {
       if (r2.getFailure) throw r2.getFailure;
-      return r2.objects.get(key)?.bytes ?? null;
+      const bytes = r2.objects.get(key)?.bytes ?? null;
+      await r2.onGet?.(key);
+      return bytes;
     },
     async createMultipartUpload(key, contentType): Promise<MultipartUpload> {
       const upload = { key, state: "Open" as FakeR2["uploads"][number]["state"] };
@@ -115,6 +123,7 @@ function fakeR2(): FakeR2 {
       r2.staleAborts.push(key);
     },
     async delete(key) {
+      if (r2.failingDeletes.has(key)) throw new R2ObjectError(503);
       r2.objects.delete(key);
     },
   };
@@ -257,6 +266,7 @@ describe("Recording export preview", () => {
     await expect(preview({ kind: "call_export", scope: { kind: "workspace", workspaceId: "north" }, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" })).resolves.toEqual({
       matchedCalls: 9,
       retainedRecordings: 3,
+      purgedMedia: 0,
       expiredMedia: 1,
       callsWithoutRecording: 1,
       processingRecordings: 2,
@@ -466,5 +476,154 @@ describe("Recording ZIP generation", () => {
     expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260928-111641_south-answered.mp3"]);
     expect(decode(files["manifest.csv"]).split("\r\n").slice(1, -1).map((row) => row.split(",")[0])).toEqual(["south-answered"]);
     expect(decode(r2.objects.get(`reports/${csvJob.id}/calls.csv`)?.bytes).split("\r\n").slice(1, -1).map((row) => row.split(",")[0])).toEqual(["south-answered"]);
+  });
+});
+
+describe("Purged media in Recording exports", () => {
+  it("omits Recording media an Operator purged, counts it apart from expired media, and names it Purged in the manifest", async () => {
+    await seedWorkspace("east", "East Pools", "UTC", "+14155550163");
+    await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-east', 'fleet', 'east', 'export-viewer', now())");
+    await seedCall({ id: "east-purged", workspaceId: "east", startedAt: "2026-09-02T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-purged-expired", workspaceId: "east", startedAt: "2025-08-02T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-expired", workspaceId: "east", startedAt: "2025-08-03T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "east-retained", workspaceId: "east", startedAt: "2026-09-04T10:00:00.000Z", outcome: "Answered", recording: "retained" });
+    await pool!.query("update recording set transcript_state = 'Completed', transcript_completed_at = now(), media_purged_at = now() where id in ('east-purged-recording', 'east-purged-expired-recording')");
+    const request: ReportJobRequest = { kind: "call_export", scope: { kind: "workspace", workspaceId: "east" }, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" };
+    await expect(preview(request)).resolves.toEqual({ matchedCalls: 4, retainedRecordings: 1, purgedMedia: 2, expiredMedia: 1, callsWithoutRecording: 0, processingRecordings: 0, failedRecordings: 0 });
+
+    const job = await create(request);
+    const r2 = fakeR2();
+    for (const callId of ["east-purged", "east-purged-expired", "east-expired", "east-retained"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
+    await generate(r2, job.id);
+
+    const files = archive(r2, job.id);
+    expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260904-100000_east-retained.mp3"]);
+    expect(decode(files["manifest.csv"])).toBe(
+      manifestHeader +
+        "east-purged-expired,East Pools,+14155550163,+12125551014,2025-08-02T10:00:00+00:00,Answered,143,137,None,,No,Purged,Purged,,Purged\r\n" +
+        "east-expired,East Pools,+14155550163,+12125551015,2025-08-03T10:00:00+00:00,Answered,143,137,None,,No,Expired,Unavailable,,Expired\r\n" +
+        "east-purged,East Pools,+14155550163,+12125551013,2026-09-02T10:00:00+00:00,Answered,143,137,None,,No,Purged,Purged,,Purged\r\n" +
+        "east-retained,East Pools,+14155550163,+12125551016,2026-09-04T10:00:00+00:00,Answered,143,137,None,,No,Ready,Unavailable,recordings/20260904-100000_east-retained.mp3,Included\r\n",
+    );
+  });
+});
+
+describe("Purge Media during Recording ZIP generation", () => {
+  const purgeAt = new Date("2026-10-14T15:39:44.217Z");
+
+  async function seedRace(prefix: string): Promise<ReportJobRequest> {
+    await seedWorkspace(prefix, `${prefix} Glass`, "UTC", `+1415555${String(1200 + seeded).slice(-4)}`);
+    await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, 'export-viewer', now())", [`grant-${prefix}`, prefix]);
+    for (const [index, suffix] of ["first", "second"].entries()) {
+      await seedCall({ id: `${prefix}-${suffix}`, workspaceId: prefix, startedAt: `2026-09-1${index + 1}T08:14:3${index}.517Z`, outcome: "Answered", recording: "retained" });
+    }
+    return { kind: "call_export", scope: { kind: "workspace", workspaceId: prefix }, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" };
+  }
+
+  const markPurged = (callId: string) => pool!.query("update recording set media_purged_at = $2 where call_id = $1", [callId, purgeAt]);
+
+  it("omits a Recording purged after its page was read and names it Purged in the manifest", async () => {
+    const job = await create(await seedRace("racea"));
+    const r2 = fakeR2();
+    for (const callId of ["racea-first", "racea-second"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
+    r2.onGet = async (key) => {
+      if (key === "recordings/racea-first.mp3") await markPurged("racea-second");
+    };
+
+    await generate(r2, job.id);
+
+    const files = archive(r2, job.id);
+    expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260911-081430_racea-first.mp3"]);
+    expect(decode(files["manifest.csv"]).split("\r\n").slice(1, -1).map((row) => row.split(",").slice(-2))).toEqual([
+      ["recordings/20260911-081430_racea-first.mp3", "Included"],
+      ["", "Purged"],
+    ]);
+    const artifact = await pool!.query("select included_recording_ids from report_artifact where job_id = $1", [job.id]);
+    expect(artifact.rows).toEqual([{ included_recording_ids: ["racea-first-recording"] }]);
+  });
+
+  it("refuses to complete a ZIP holding a Recording purged after its MP3 was read, and omits it as Purged on the rerun", async () => {
+    const job = await create(await seedRace("raceb"));
+    const r2 = fakeR2();
+    for (const callId of ["raceb-first", "raceb-second"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
+    r2.onGet = async (key) => {
+      if (key === "recordings/raceb-second.mp3") await markPurged("raceb-second");
+    };
+
+    await expect(generate(r2, job.id)).rejects.toThrow("Recording media was removed while the export ran");
+    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
+    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(0);
+
+    r2.onGet = null;
+    await generate(r2, job.id);
+
+    const files = archive(r2, job.id);
+    expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260911-081430_raceb-first.mp3"]);
+    expect(decode(files["manifest.csv"]).split("\r\n").slice(1, -1).map((row) => row.split(",").at(-1))).toEqual(["Included", "Purged"]);
+    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+  });
+});
+
+describe("Purge Media and Recording export artifacts", () => {
+  const operator: Actor = { userId: "export-operator", organizationId: "fleet", role: "Operator", timezone: "UTC", name: "Export Operator", email: "export-operator@example.com", state: "Active" };
+  const purgeAt = new Date("2026-10-16T07:23:51.604Z");
+  const zipKey = (jobId: string) => `reports/${jobId}/recordings.zip`;
+  const expiry = async (jobId: string) => (await pool!.query<{ artifacts_expire_at: Date }>("select artifacts_expire_at from report_job where id = $1", [jobId])).rows[0].artifacts_expire_at;
+  const download = (jobId: string, file: "zip" | "csv", now: Date) => authorizeReportDownload(pool!, viewer, createReadableWorkspaces(pool!, viewer), jobId, file, now);
+
+  it("expires and deletes every unexpired Recording ZIP and Export Call holding the purged Recording, and leaves other jobs downloadable", async () => {
+    await pool!.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('export-operator', 'Export Operator', 'export-operator@example.com', true, 'Active', 'UTC', now(), now())`);
+    await seedWorkspace("harbor", "Harbor Docks", "UTC", "+14155550177");
+    await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-harbor', 'fleet', 'harbor', 'export-viewer', now())");
+    await seedCall({ id: "harbor-purged", workspaceId: "harbor", startedAt: "2026-09-08T13:47:21.093Z", outcome: "Answered", recording: "retained" });
+    await seedCall({ id: "harbor-kept", workspaceId: "harbor", startedAt: "2026-09-09T10:02:44.781Z", outcome: "Voicemail", recording: "retained" });
+    await seedCall({ id: "harbor-extra", workspaceId: "harbor", startedAt: "2026-09-10T16:31:08.442Z", outcome: "Answered", recording: "retained" });
+    const scope = { kind: "workspace", workspaceId: "harbor" } as const;
+    const allZip = await create({ kind: "call_export", scope, selection: { kind: "filters", filters: emptyCallFilters }, file: "zip" });
+    const exportCall = await create({ kind: "call_export", scope, selection: { kind: "call", callId: "harbor-purged" }, file: "zip" });
+    const otherExportCall = await create({ kind: "call_export", scope, selection: { kind: "call", callId: "harbor-kept" }, file: "zip" });
+    const voicemailZip = await create({ kind: "call_export", scope, selection: { kind: "filters", filters: { ...emptyCallFilters, outcomes: ["Voicemail"] } }, file: "zip" });
+    const legacyZip = await create({ kind: "call_export", scope, selection: { kind: "filters", filters: { ...emptyCallFilters, startedFrom: "2026-09-01" } }, file: "zip" });
+    const legacyOtherExportCall = await create({ kind: "call_export", scope, selection: { kind: "call", callId: "harbor-extra" }, file: "zip" });
+    const callsCsv = await create({ kind: "call_export", scope, selection: { kind: "filters", filters: emptyCallFilters }, file: "csv" });
+    const report = await create({ kind: "report", scope, period: { kind: "all" }, files: ["csv"] });
+    const r2 = fakeR2();
+    for (const callId of ["harbor-purged", "harbor-kept", "harbor-extra"]) r2.objects.set(`recordings/${callId}.mp3`, { bytes: mp3Bytes(callId), contentType: "audio/mpeg" });
+    for (const job of [allZip, exportCall, otherExportCall, voicemailZip, legacyZip, legacyOtherExportCall, callsCsv, report]) await generate(r2, job.id);
+    await pool!.query("update report_artifact set included_recording_ids = null where job_id = any($1::text[])", [[legacyZip.id, legacyOtherExportCall.id]]);
+    const unaffected = [otherExportCall, voicemailZip, legacyOtherExportCall];
+    const expiries = await Promise.all([...unaffected, callsCsv, report].map(({ id }) => expiry(id)));
+    r2.failingDeletes.add(zipKey(exportCall.id));
+
+    await expect(purgeCallMedia({ pool: pool!, objects: r2 }, operator, "harbor", "harbor-purged", purgeAt)).resolves.toEqual({ purgedAt: purgeAt.toISOString() });
+
+    for (const job of [allZip, exportCall, legacyZip]) {
+      await expect(expiry(job.id)).resolves.toEqual(purgeAt);
+      await expect(download(job.id, "zip", purgeAt)).resolves.toBeNull();
+    }
+    expect(await Promise.all([...unaffected, callsCsv, report].map(({ id }) => expiry(id)))).toEqual(expiries);
+    for (const job of unaffected) await expect(download(job.id, "zip", purgeAt)).resolves.toMatchObject({ r2Key: zipKey(job.id) });
+    for (const job of [callsCsv, report]) await expect(download(job.id, "csv", purgeAt)).resolves.toMatchObject({ r2Key: `reports/${job.id}/calls.csv` });
+    expect(r2.objects.has(zipKey(allZip.id))).toBe(false);
+    expect(r2.objects.has(zipKey(legacyZip.id))).toBe(false);
+    expect(r2.objects.has(zipKey(exportCall.id))).toBe(true);
+    for (const job of unaffected) expect(r2.objects.has(zipKey(job.id))).toBe(true);
+
+    r2.failingDeletes.clear();
+    await sweepReportJobs({ pool: pool!, objects: r2 }, new Date(purgeAt.getTime() + 6 * 3_600_000));
+    expect(r2.objects.has(zipKey(exportCall.id))).toBe(false);
+    for (const job of unaffected) expect(r2.objects.has(zipKey(job.id))).toBe(true);
+
+    const regenerated = await regenerateReportJob(pool!, viewer, createReadableWorkspaces(pool!, viewer), allZip.id, new Date(purgeAt.getTime() + 60_000), { async request() {} });
+    if (typeof regenerated === "string") throw new Error(regenerated);
+    expect(regenerated.created).toBe(true);
+    await generate(r2, regenerated.job.id);
+    const files = archive(r2, regenerated.job.id);
+    expect(Object.keys(files).sort()).toEqual(["manifest.csv", "recordings/20260909-100244_harbor-kept.mp3", "recordings/20260910-163108_harbor-extra.mp3"]);
+    expect(decode(files["manifest.csv"]).split("\r\n").slice(1, -1).map((row) => [row.split(",")[0], row.split(",").at(-1)])).toEqual([
+      ["harbor-purged", "Purged"],
+      ["harbor-kept", "Included"],
+      ["harbor-extra", "Included"],
+    ]);
   });
 });

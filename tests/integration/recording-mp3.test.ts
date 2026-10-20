@@ -8,8 +8,9 @@
  *  fake R2 object and MP3 encoder boundaries, and checks the stored MP3
  *  object, the persisted MP3 state and size, idempotent reruns, failure
  *  recording and recovery at the same key, upload verification, and that
- *  Recordings that are not Stored, missing, or past media retention are
- *  left untouched without producing a file.
+ *  Recordings that are not Stored, missing, past media retention, or purged
+ *  are left untouched without producing a file, including when a purge
+ *  commits during encoding.
  *
  * @remarks
  *  The encoder fake stands in for ffmpeg, which exists only in the
@@ -32,7 +33,7 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { FfmpegError, type Mp3Encoder } from "@/data/ffmpeg";
 import { migrateDatabase } from "@/data/migrate";
-import { R2ObjectError, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
+import { R2ObjectError, type ArtifactObjects, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import { generateRecordingMp3, type RecordingMp3Dependencies } from "@/data/recording-mp3";
 
 const now = new Date("2026-10-16T12:00:00.000Z");
@@ -42,17 +43,20 @@ let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
 let organizationId = "";
 
-interface FakeR2 extends RecordingObjects {
+interface FakeR2 extends RecordingObjects, Pick<ArtifactObjects, "delete"> {
   objects: Map<string, { bytes: Uint8Array; contentType: string }>;
   gets: string[];
   puts: string[];
+  deletes: string[];
   putFailure: Error | null;
   truncatePuts: boolean;
+  beforeGet: (() => Promise<void>) | null;
 }
 
 interface FakeEncoder extends Mp3Encoder {
   calls: Uint8Array[];
   failure: Error | null;
+  during: (() => Promise<void>) | null;
 }
 
 function fakeR2(): FakeR2 {
@@ -60,8 +64,10 @@ function fakeR2(): FakeR2 {
     objects: new Map(),
     gets: [],
     puts: [],
+    deletes: [],
     putFailure: null,
     truncatePuts: false,
+    beforeGet: null,
     async head(key): Promise<StoredObject | null> {
       const object = r2.objects.get(key);
       return object ? { sizeBytes: object.bytes.byteLength, sha256: createHash("sha256").update(object.bytes).digest("hex") } : null;
@@ -73,7 +79,12 @@ function fakeR2(): FakeR2 {
     },
     async get(key) {
       r2.gets.push(key);
+      await r2.beforeGet?.();
       return r2.objects.get(key)?.bytes ?? null;
+    },
+    async delete(key) {
+      r2.deletes.push(key);
+      r2.objects.delete(key);
     },
   };
   return r2;
@@ -83,8 +94,10 @@ function fakeEncoder(): FakeEncoder {
   const encoder: FakeEncoder = {
     calls: [],
     failure: null,
+    during: null,
     async encode(wav) {
       encoder.calls.push(wav);
+      await encoder.during?.();
       if (encoder.failure) throw encoder.failure;
       return new TextEncoder().encode(`ID3 mp3 of ${new TextDecoder().decode(wav)}`);
     },
@@ -100,7 +113,7 @@ let sequence = 0;
 
 async function storedRecording(
   r2: FakeR2,
-  options: { channels?: 1 | 2; transfer?: string; callStartedAt?: Date } = {},
+  options: { channels?: 1 | 2; transfer?: string; callStartedAt?: Date; purgedAt?: Date } = {},
 ): Promise<{ id: string; callId: string; wavKey: string; mp3Key: string; wav: Uint8Array }> {
   sequence += 1;
   const channels = options.channels ?? 2;
@@ -134,8 +147,13 @@ async function storedRecording(
       days(1),
     ],
   );
+  if (options.purgedAt) await purge(id, options.purgedAt);
   if (stored) r2.objects.set(`${base}.wav`, { bytes: wav, contentType: "audio/wav" });
   return { id, callId, wavKey: `${base}.wav`, mp3Key: `${base}.mp3`, wav };
+}
+
+async function purge(id: string, at: Date): Promise<void> {
+  await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
 }
 
 async function mp3Row(id: string): Promise<Record<string, unknown>> {
@@ -325,5 +343,48 @@ describe("Recording MP3", () => {
     expect(before).toMatchObject({ channels: 2, duration_seconds: 12, mp3_state: "Pending" });
     await expect(pool!.query("select id from call where id = $1", [expired.callId])).resolves.toMatchObject({ rowCount: 1 });
     expect(await mp3Row(retained.id)).toMatchObject({ mp3_state: "Stored" });
+  });
+
+  it("refuses a Recording whose media an Operator purged without reading or uploading anything", async () => {
+    const r2 = fakeR2();
+    const encoder = fakeEncoder();
+    const purged = await storedRecording(r2, { purgedAt: days(0) });
+    const before = await mp3Row(purged.id);
+
+    await expect(generateRecordingMp3(dependencies(r2, encoder), purged.id)).resolves.toBeUndefined();
+
+    expect(r2.gets).toEqual([]);
+    expect(r2.puts).toEqual([]);
+    expect(encoder.calls).toEqual([]);
+    expect(await mp3Row(purged.id)).toEqual(before);
+  });
+
+  it("deletes the MP3 it uploaded and leaves the MP3 unstored when a purge commits while it is encoded", async () => {
+    const r2 = fakeR2();
+    const encoder = fakeEncoder();
+    const recording = await storedRecording(r2);
+    encoder.during = () => purge(recording.id, now);
+
+    await expect(generateRecordingMp3(dependencies(r2, encoder), recording.id)).resolves.toBeUndefined();
+
+    expect(r2.puts).toEqual([recording.mp3Key]);
+    expect(r2.objects.has(recording.mp3Key)).toBe(false);
+    expect(await mp3Row(recording.id)).toMatchObject({ mp3_state: "Pending", mp3_object_key: null, mp3_generated_at: null });
+  });
+
+  it("ends cleanly without recording Failed when a purge deletes the WAV before the run reads it", async () => {
+    const r2 = fakeR2();
+    const encoder = fakeEncoder();
+    const recording = await storedRecording(r2);
+    r2.beforeGet = async () => {
+      await purge(recording.id, now);
+      r2.objects.delete(recording.wavKey);
+    };
+
+    await expect(generateRecordingMp3(dependencies(r2, encoder), recording.id)).resolves.toBeUndefined();
+
+    expect(encoder.calls).toEqual([]);
+    expect(r2.puts).toEqual([]);
+    expect(await mp3Row(recording.id)).toMatchObject({ mp3_state: "Pending", mp3_failure_reason: null });
   });
 });
