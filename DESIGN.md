@@ -14,45 +14,55 @@ This document defines Tracer's product experience, page architecture, visual sys
 
 ### Brand idea
 
-Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity pairs a precise operational interface with soft gradient orbs that represent calls moving through the system.
+Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity is a terminal-styled, minimalist interface: flat matte surfaces, hairline borders, monospace identifiers, and a soft gradient orb as the mark, representing a call moving through the system. It should feel technical without stopping being customer-facing.
 
 ### Mark
 
-- The primary lockup combines a compact gradient orb with the `Tracer` wordmark in Geist Semibold.
-- Use the full lockup on authentication screens, report covers, and the expanded application sidebar.
-- Use the orb alone for the favicon and collapsed sidebar.
+- The mark is a gradient orb: a radial highlight from zinc-50 through zinc-400 to zinc-700, drawn by `BrandMark` in `components/tracer/brand.tsx`.
+- The lockup pairs the orb with the `Tracer` wordmark in Geist Semibold on authentication screens and report covers.
+- The orb alone appears in the Sidebar account menu trigger and as the favicon (`app/icon.svg`).
+- Use at most one orb per view, never behind tables, charts, transcripts, forms, or other data-heavy regions.
+- Treat the orb as decorative, hidden from assistive technology, with no perpetual animation.
 - Do not place a tagline in application chrome.
-- Maintain clear space around the mark equal to at least half the orb diameter.
 
-### Gradient orb mascot
+### Line art
 
-- Use at most one static orb per view.
-- Place orbs in page headers, authentication artwork, empty states, onboarding, and report covers.
-- Do not place an orb behind tables, charts, transcripts, forms, or other data-heavy regions.
-- Use low contrast in application views and stronger contrast only in isolated brand moments.
-- Treat orbs as decorative imagery with empty alternative text.
-- Do not use perpetual orb animation.
+Empty states use single-weight vector line art drawn in `components/tracer/line-art.tsx`: dashed isometric orbits with one small subject, stroked in the muted foreground at reduced opacity. Scenes are decorative, hidden from assistive technology, and sit only in Empty states, never behind data. The scenes are No Activity (a listening tracking line), No Calls (an empty call log card), No Transcript (a recording strip at 0:00, used when a Transcript was skipped or never existed), No Reports (a report page with empty bars), No Workspaces (an open slot), and No Results (a lens over the field). Other Empty states use the shared `EmptyState` without art until a scene is approved for them.
+
+Three scenes carry slow ambient motion, defined in `globals.css` under `.line-art-motion`: the Activity sweep circles its orbit with a ping once per pass, the Reports page drifts up and down, and the Calls row markers spin now and then. Motion only moves elements the static drawing already has, is skipped for viewers who prefer reduced motion, and switches off everywhere through the `lineArtMotion` constant in `line-art.tsx`, which restores the static scenes exactly.
 
 ### Color
 
-Tracer is dark-mode only. Colors are implemented through shadcn-compatible semantic tokens rather than raw values in components.
+Colors are implemented through shadcn-compatible semantic tokens rather than raw values in components. Tracer ships five themes, Dark (the default), Light, and three experiments: Midnight (deep navy), Blossom (rose light), and Blossom Dark (plum); the two Blossom themes use their rose primary as the key chart series. They are chosen in Account Settings under Preferences. A theme is one token block in `app/globals.css` selected by `data-theme`, plus an entry in `data/theme.ts`; adding a theme needs nothing else. The choice is kept in a cookie per browser, so the server renders the chosen theme on the first response. The palette is shadcn zinc with the three darkest steps redefined; the table below is the Dark theme. Light inverts the layering on near-white: zinc-100 root and Sidebar, white panels, zinc-900 primary.
 
 | Role | Color | Intended use |
 | --- | --- | --- |
-| Deep slate | `#253237` | Page background and deepest surfaces |
-| Slate | `#5c6b73` | Secondary surfaces, borders, and subdued controls |
-| Steel blue | `#9db4c0` | Muted text, chart identity, and focus support |
-| Pale blue | `#c2dfe3` | Primary controls and emphasized data |
-| Ice | `#e0fbfc` | Foreground text and highest-contrast accents |
+| zinc-950 | `#09090a` | App root, Sidebar, and page background |
+| zinc-900 | `#121213` | Cards, panels, popovers, and dialogs |
+| zinc-800 | `#1a1a1b` | Hover and active rows, secondary controls, Skeletons |
+| zinc-400 | Tailwind default | Muted text and focus ring |
+| zinc-50 | Tailwind default | Foreground text and primary controls |
+| Brand orange | `#f79d71` | The warm accent for the key chart series and nothing else |
+
+Surfaces layer from dark to light: the root is darkest, panels sit one step lighter, and raised controls one step lighter again. Every layer boundary is a 1px `border-border` hairline at 10% white. There are no drop shadows on in-flow surfaces; floating menus and popovers may use `shadow-sm` at most.
+
+Content regions (the Sidebar inset and authentication pages) carry the `bg-grain` utility, a faint monochrome noise that gives surfaces a matte-paper finish. The Sidebar and panels stay flat.
 
 Status meaning uses ReUI semantic success, warning, info, and destructive tokens through Badge and Alert variants. The Tracer palette expresses brand and chart-series identity, not success or failure.
 
-Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must also differ by labels, markers, or line styles so color is not the only distinction.
+Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, and zinc-400 for Total Calls. Series must also differ by labels, markers, or line styles so color is not the only distinction.
+
+### Geometry
+
+- `--radius` is `0.25rem`. Panels, Cards, and Dialogs use `rounded-lg` (4px); controls and menus use `rounded-md` (2px) or `rounded-lg`. Nothing in application chrome is rounder than 8px.
+- Panels are flat: one background, one hairline, inner padding, no inner ring and no shadow. A Frame is a chrome-free column that spaces its panels; a FramePanel is the surface.
+- The Sidebar sits flush on the root color with a single hairline on its content edge; it is never inset or floating.
 
 ### Typography
 
 - Use Geist throughout the product and generated reports.
 - Use Geist Semibold for the wordmark and page headings.
+- Use Geist Mono (`font-mono`) for identifiers: phone numbers, Organization slugs, timestamps, durations, scores, and KPI values. Body copy, labels, headings, and navigation stay in Geist Sans.
 - Use `text-sm` for body content and `text-xs` for metadata, never smaller.
 - Use tabular numerals for phone numbers, durations, dates, scores, and KPIs.
 - Keep page and panel titles to one to three words where possible.
@@ -68,8 +78,8 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
-- Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher.
-- Prefer Frame-led pages and dense controls.
+- Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher. The content header holds the Sidebar trigger, route breadcrumbs (every segment linked but the current page, with Workspace and Call segments named by their records), and the notification popover.
+- Prefer Frame-led pages and dense controls. Each FramePanel is one flat surface; headings live inside the panel.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
 - Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
@@ -94,7 +104,7 @@ Recommended chart identities are Ice, Pale Blue, and Steel Blue. Series must als
 
 ### Account menu
 
-The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer orb, the user's name, and the current Organization slug. The menu contains:
+The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer orb, the user's name, and the current Organization slug in Geist Mono. The menu contains:
 
 1. **Organizations:** the current Organization with its name, slug, and a check, then a disabled New organization action until multiple Organizations are supported
 2. **User:** a DiceBear Gaze avatar seeded by the user id, the name, the email, and an outline role Badge
@@ -958,7 +968,7 @@ Safeguards:
 
 ### Sign In
 
-Use one centered Card at `max-w-sm` with a restrained gradient orb above the full Tracer lockup.
+Use one centered Card at `max-w-sm` with the Tracer lockup (orb and wordmark) above it on the grained page background.
 
 Order:
 

@@ -4,10 +4,13 @@
  * @brief  Defines Tracer's root application layout.
  *
  * @description
- *  Applies Geist, dark mode, metadata, and semantic theme classes globally.
+ *  Applies Geist and Geist Mono, the chosen color theme, metadata, and
+ *  semantic theme classes globally. The orb favicon comes from app/icon.svg.
  *
  * @remarks
- *  Tracer is dark-only, so the dark class is fixed on the root element.
+ *  The color theme comes from the theme cookie, so the first response is
+ *  already in the chosen theme. `dark` marks dark-scheme themes for
+ *  components' dark: variants; `data-theme` selects the token block.
  *
  * @see
  *  DESIGN.md
@@ -16,14 +19,22 @@
  * -------------------------------------------------------------------------
  */
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
+
+import { resolveTheme, themeCookie } from "@/data/theme";
 
 import "./globals.css";
 
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-geist-sans",
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
 });
 
 export const metadata: Metadata = {
@@ -35,11 +46,12 @@ interface RootLayoutProps {
   children: ReactNode;
 }
 
-export default function RootLayout({ children }: RootLayoutProps) {
+export default async function RootLayout({ children }: RootLayoutProps) {
+  const theme = resolveTheme((await cookies()).get(themeCookie)?.value);
   return (
-    <html lang="en" className="dark">
+    <html lang="en" data-theme={theme.id} className={theme.scheme === "dark" ? "dark" : undefined}>
       <body
-        className={`${geist.variable} min-h-screen bg-background font-sans text-foreground antialiased`}
+        className={`${geist.variable} ${geistMono.variable} min-h-screen bg-background font-sans text-foreground antialiased`}
       >
         {children}
       </body>

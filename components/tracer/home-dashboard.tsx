@@ -91,7 +91,7 @@ function WorkspacePerformance({ rows }: { rows: WorkspacePerformanceRow[] }) {
         ),
         size: 200,
       },
-      { id: "trackingNumber", header: "Tracking Number", cell: ({ row }) => <span className="tabular-nums">{row.original.trackingNumber ?? "-"}</span>, size: 160 },
+      { id: "trackingNumber", header: "Tracking Number", cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.trackingNumber ?? "-"}</span>, size: 160 },
       { id: "totalCalls", header: "Total Calls", cell: ({ row }) => <span className="tabular-nums">{row.original.totalCalls}</span>, size: 120 },
       { id: "answerRate", header: "Answer Rate", cell: ({ row }) => <span className="tabular-nums">{formatRate(row.original.answerRate)}</span>, size: 120 },
       { id: "goodLeads", header: "Good Leads", cell: ({ row }) => <span className="tabular-nums">{row.original.goodLeads}</span>, size: 120 },
@@ -118,18 +118,18 @@ function RecentCallsGrid({ calls, timeZone, hasCalls }: { calls: CallListItem[];
         id: "callerNumber",
         header: "Caller",
         cell: ({ row }) => (
-          <Link href={callDetailHref({ id: row.original.id, workspaceId: row.original.workspace.id }, callsSource)} prefetch className="font-medium tabular-nums transition-colors hover:text-muted-foreground">
+          <Link href={callDetailHref({ id: row.original.id, workspaceId: row.original.workspace.id }, callsSource)} prefetch className="font-mono font-medium tabular-nums transition-colors hover:text-muted-foreground">
             {row.original.callerNumber ?? "Unknown caller"}
           </Link>
         ),
         size: 150,
       },
       { id: "workspace", header: "Workspace", cell: ({ row }) => row.original.workspace.name, size: 160 },
-      { id: "startedAt", header: "Started", cell: ({ row }) => <span className="tabular-nums">{formatCallTime(row.original.startedAt, timeZone)}</span>, size: 200 },
+      { id: "startedAt", header: "Started", cell: ({ row }) => <span className="font-mono tabular-nums">{formatCallTime(row.original.startedAt, timeZone)}</span>, size: 200 },
       {
         id: "connectedDuration",
         header: "Connected Duration",
-        cell: ({ row }) => <span className="tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
         size: 170,
       },
       {

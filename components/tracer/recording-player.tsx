@@ -139,8 +139,8 @@ function ReadyPlayer({ workspaceId, recording, autoPlay }: { workspaceId: string
     let disposed = false;
     const styles = getComputedStyle(document.documentElement);
     const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
-    const waveColor = token("--muted-foreground", "#9db4c0");
-    const progressColor = token("--foreground", "#e0fbfc");
+    const waveColor = token("--muted-foreground", "#a1a1aa");
+    const progressColor = token("--foreground", "#fafafa");
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     const split = peaks.peaks.lanes.length > 1;
     void Promise.all([import("wavesurfer.js"), import("wavesurfer.js/plugins/timeline")]).then(([{ default: WaveSurfer }, { default: TimelinePlugin }]) => {
@@ -153,7 +153,7 @@ function ReadyPlayer({ workspaceId, recording, autoPlay }: { workspaceId: string
         height: laneHeight,
         waveColor,
         progressColor,
-        cursorColor: token("--primary", "#c2dfe3"),
+        cursorColor: token("--primary", "#fafafa"),
         cursorWidth: 2,
         barWidth: 2,
         barGap: 1,

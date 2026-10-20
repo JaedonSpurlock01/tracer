@@ -23,6 +23,7 @@ import type { FormEvent } from "react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
+import { BrandLockup } from "@/components/tracer/brand";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp";
@@ -95,7 +96,8 @@ export default function VerifyEmailPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center gap-6 px-6 py-12">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-grain px-6 py-12">
+      <BrandLockup />
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Verify email</CardTitle>

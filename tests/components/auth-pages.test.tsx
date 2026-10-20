@@ -20,7 +20,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const router = vi.hoisted(() => ({ push: vi.fn() }));
+const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 afterEach(() => {
@@ -148,10 +148,15 @@ describe("authentication pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Security" }));
     fireEvent.click(screen.getByRole("button", { name: "Profile" }));
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Updated Name" } });
+    expect(screen.getAllByRole("radio")).toHaveLength(12);
+    expect(screen.getByRole("radio", { name: "Avatar 1" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
+    expect(screen.getByRole("radio", { name: "Avatar 1" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "Avatar 3" }));
     fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       "/api/auth/update-user",
-      expect.objectContaining({ body: JSON.stringify({ name: "Updated Name" }) }),
+      expect.objectContaining({ body: expect.stringMatching(/^\{"name":"Updated Name","image":"dicebear:gaze:[a-z0-9]{10}"\}$/) }),
     ));
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     fireEvent.change(screen.getByLabelText("Timezone"), { target: { value: "America/New_York" } });

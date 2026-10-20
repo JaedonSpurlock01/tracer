@@ -5,21 +5,23 @@
  *
  * @description
  *  Provides global navigation and an account menu at the top of the Sidebar.
- *  The menu lists the current Organization with a disabled New organization
- *  action, the signed-in user with a DiceBear avatar, Account Settings, and
- *  Sign out.
+ *  The menu trigger carries the Tracer orb. The menu lists the
+ *  current Organization with a disabled New organization action, the
+ *  signed-in user with a DiceBear avatar, Account Settings, and Sign out.
+ *  The Sidebar is flat on the root color with one hairline on its edge.
  *
  * @remarks
  *  Workspace selection lives on the Workspaces page, so the Sidebar carries
  *  no Workspace switcher. The first release has one Organization; New
  *  organization stays disabled until multiple Organizations are supported.
  *  Operator navigation is hidden for Client Viewers while server guards
- *  remain authoritative for protected routes. The avatar is seeded by the
- *  opaque user id so no email or name is sent to DiceBear.
+ *  remain authoritative for protected routes. The avatar is the DiceBear
+ *  Gaze face the user picked in Account Settings, or one seeded by the
+ *  opaque user id, so no email or name is sent to DiceBear.
  *
  * @see
  *  DESIGN.md
- *  https://www.dicebear.com/styles/gaze/
+ *  data/avatar.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -28,7 +30,6 @@
 
 import {
   Activity,
-  Building2,
   Check,
   ChevronsUpDown,
   FileText,
@@ -46,6 +47,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ComponentType } from "react";
 
 import { Badge } from "@/components/reui/badge";
+import { BrandMark } from "@/components/tracer/brand";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -65,9 +67,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { type CanonicalRole } from "@/data/auth-policy";
+import { avatarInitials, avatarUrl } from "@/data/avatar";
 
 interface AppSidebarProps {
-  actor: { id: string; name: string; email: string; role: CanonicalRole };
+  actor: { id: string; name: string; email: string; role: CanonicalRole; avatarSeed?: string };
   organization: { name: string; slug: string };
 }
 
@@ -88,20 +91,6 @@ const navigation: NavigationItem[] = [
   { label: "Integrations", href: "/integrations", icon: Plug, operatorOnly: true },
 ];
 
-export function avatarUrl(userId: string): string {
-  return `https://api.dicebear.com/10.x/gaze/svg?seed=${encodeURIComponent(userId)}`;
-}
-
-function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
 function AccountMenu({ actor, organization }: AppSidebarProps) {
   const router = useRouter();
 
@@ -118,7 +107,7 @@ function AccountMenu({ actor, organization }: AppSidebarProps) {
           <DropdownMenuTrigger
             render={<SidebarMenuButton size="lg" className="aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground" />}
           >
-            <span aria-hidden="true" className="size-6 shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,var(--color-chart-1),var(--color-chart-3))]" />
+            <BrandMark />
             <span className="flex min-w-0 flex-col items-start leading-tight">
               <span className="truncate font-semibold">{actor.name}</span>
               <span className="truncate font-mono text-xs text-muted-foreground">{organization.slug}</span>
@@ -128,15 +117,14 @@ function AccountMenu({ actor, organization }: AppSidebarProps) {
           <DropdownMenuContent side="bottom" align="start" className="w-64">
             <DropdownMenuGroup>
               <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-              <DropdownMenuItem>
-                <Building2 aria-hidden="true" />
-                <span className="flex min-w-0 flex-col">
+              <DropdownMenuItem className="gap-2 px-2 py-2">
+                <span className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate">{organization.name}</span>
                   <span className="truncate font-mono text-xs text-muted-foreground">{organization.slug}</span>
                 </span>
                 <Check className="ml-auto" aria-hidden="true" />
               </DropdownMenuItem>
-              <DropdownMenuItem disabled>
+              <DropdownMenuItem disabled className="gap-2 px-2 py-1.5">
                 <Plus aria-hidden="true" />
                 New organization
               </DropdownMenuItem>
@@ -144,8 +132,8 @@ function AccountMenu({ actor, organization }: AppSidebarProps) {
             <DropdownMenuSeparator />
             <div className="flex items-center gap-2 px-1.5 py-1.5">
               <Avatar className="size-8">
-                <AvatarImage src={avatarUrl(actor.id)} alt="" />
-                <AvatarFallback>{initials(actor.name)}</AvatarFallback>
+                <AvatarImage src={avatarUrl(actor.avatarSeed ?? actor.id)} alt="" />
+                <AvatarFallback>{avatarInitials(actor.name)}</AvatarFallback>
               </Avatar>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm font-medium">{actor.name}</span>
@@ -174,7 +162,7 @@ export default function AppSidebar({ actor, organization }: AppSidebarProps) {
   const items = navigation.filter((item) => !item.operatorOnly || actor.role === "Operator");
 
   return (
-    <Sidebar variant="inset">
+    <Sidebar>
       <SidebarHeader>
         <AccountMenu actor={actor} organization={organization} />
       </SidebarHeader>

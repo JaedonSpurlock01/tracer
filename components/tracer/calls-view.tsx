@@ -53,6 +53,8 @@ import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagina
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "@/components/reui/frame";
+import { EmptyState } from "@/components/tracer/empty-state";
+import { NoCallsArt, NoResultsArt } from "@/components/tracer/line-art";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -186,7 +188,7 @@ export default function CallsView({
         accessorFn: (row) => row.startedAt,
         header: ({ column }) => <DataGridColumnHeader title="Started" column={column} />,
         cell: ({ row }) => (
-          <Link href={callHref(row.original, back)} prefetch className="font-medium tabular-nums transition-colors hover:text-muted-foreground">
+          <Link href={callHref(row.original, back)} prefetch className="font-mono font-medium tabular-nums transition-colors hover:text-muted-foreground">
             {formatCallTime(row.original.startedAt, timeZone)}
           </Link>
         ),
@@ -197,7 +199,7 @@ export default function CallsView({
         id: "callerNumber",
         accessorFn: (row) => row.callerNumber,
         header: ({ column }) => <DataGridColumnHeader title="Caller" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.callerNumber ?? "Unknown caller"}</span>,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.callerNumber ?? "Unknown caller"}</span>,
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
@@ -221,7 +223,7 @@ export default function CallsView({
         id: "connectedDuration",
         accessorFn: (row) => row.connectedDurationSeconds,
         header: ({ column }) => <DataGridColumnHeader title="Connected Duration" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
         size: 170,
         meta: { skeleton: <Skeleton className="h-4 w-12" /> },
       },
@@ -240,7 +242,7 @@ export default function CallsView({
         id: "leadScore",
         accessorFn: (row) => row.leadScore,
         header: ({ column }) => <DataGridColumnHeader title="Lead Score" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.leadScore ?? ""}</span>,
+        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.leadScore ?? ""}</span>,
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-8" /> },
       },
@@ -305,14 +307,22 @@ export default function CallsView({
       </Button>
     </div>
   ) : result.hasCalls ? (
-    <div className="flex flex-col items-center gap-3">
-      <p>No Calls match these filters.</p>
-      <Button type="button" variant="outline" onClick={clearFilters}>
-        Clear Filters
-      </Button>
-    </div>
+    <EmptyState
+      art={<NoResultsArt />}
+      title="No matching Calls"
+      description="No Calls match these filters."
+      action={
+        <Button type="button" variant="outline" onClick={clearFilters}>
+          Clear Filters
+        </Button>
+      }
+    />
   ) : (
-    "Calls appear after inbound traffic reaches an assigned Tracking Number."
+    <EmptyState
+      art={<NoCallsArt />}
+      title="No Calls yet"
+      description="Calls appear after inbound traffic reaches an assigned Tracking Number."
+    />
   );
 
   return (
