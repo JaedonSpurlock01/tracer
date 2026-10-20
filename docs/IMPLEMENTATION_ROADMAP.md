@@ -1029,6 +1029,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - R2 and PostgreSQL state agree after cleanup.
 - Staging report artifacts generated during M16 verification are confirmed expired by the `report-artifacts` R2 lifecycle rule.
 
+- On 2026-10-19 the Product Owner had M17 merged to `main` while it was still In Progress. By then every slice was implemented, `verify:full` had passed locally, and the Verification workflow had passed. M17 stays In Progress until two things are done: the Product Owner's Staging demonstration with `pnpm fixtures:retention`, which covers purge, expiry, and R2 and PostgreSQL agreement; and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule, which is due around 2026-10-25.
+
 #### Exit criteria
 
 - Every retained content type has one tested creation and deletion path.
@@ -1123,6 +1125,10 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 - Google sign-in for provisioned identities, deferred until email-code usage demonstrates a need for another authentication method.
 - Projected monthly cost per Workspace, estimating Twilio number rental, inbound and forwarded call minutes, recording, R2 storage, transcription, and a share of hosting from persisted Call and Recording data, with a pricing guide that explains each rate and an example such as a two-hour Call. Unscheduled because it needs a price-source decision (maintained rate table or provider billing APIs) and accurate usage data that M13 transcription and M16 exports will add.
+- Small fixes found during the M17 full verification, none blocking:
+  - `components/tracer/workspaces-view.tsx:436` assigns `canActivate` but never uses it.
+  - The Workspaces DataGrid renders a Base UI `Button` with `nativeButton` on a non-button element. This logs 34 accessibility warnings during the Playwright run.
+  - `tests/integration/report-jobs.test.ts` can fail CI in teardown with an unhandled PostgreSQL `57P01` (administrator shutdown) after all of its tests pass. A pool connection is still open when the Testcontainers container stops. It happened once on the M17 pull request and passed on rerun.
 
 ## Post-launch roadmap intake
 
