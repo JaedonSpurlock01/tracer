@@ -5,9 +5,9 @@
  *
  * @description
  *  Converts runtime configuration, persisted Twilio state, persisted
- *  Recording transfer outcomes, and persisted Transcript and Lead Assessment
- *  outcomes into stable provider health records without contacting
- *  external services.
+ *  Recording transfer outcomes, persisted Transcript and Lead Assessment
+ *  outcomes, and unfinished media cleanup into stable provider health
+ *  records without contacting external services.
  *
  * @remarks
  *  Deferred provider tests remain explicitly non-testable until their owning
@@ -18,7 +18,10 @@
  *  last successful Transcript and Lead Assessment, and how many Recordings
  *  have a Failed Transcript or Lead Assessment, and is degraded while the
  *  newest of those failures follows the last success. Failure reasons are
- *  left to Call Detail so this card carries no Call content.
+ *  left to Call Detail so this card carries no Call content. Trigger.dev,
+ *  which runs the media retention sweep, also carries the unfinished media
+ *  cleanup and is degraded while any purged or expired Recording's cleanup
+ *  is stuck.
  *
  * @see
  *  data/integrations.ts
@@ -45,6 +48,7 @@ export interface ProviderHealth {
   note: string | null;
   recentFailures?: RecordingTransferFailure[];
   analysis?: OpenAIAnalysisHealth;
+  mediaLifecycle?: MediaLifecycleHealth;
 }
 
 export interface AnalysisProcessingHealth {
@@ -68,6 +72,20 @@ export interface RecordingTransferFailure {
 export interface RecordingTransferHealth {
   lastStoredAt: string | null;
   recentFailures: RecordingTransferFailure[];
+}
+
+export interface StuckMediaCleanup {
+  callId: string;
+  workspaceId: string;
+  workspaceName: string;
+  media: "Purged" | "Expired";
+  since: string;
+  twilioNotConnected: boolean;
+}
+
+export interface MediaLifecycleHealth {
+  stuckCount: number;
+  oldestStuck: StuckMediaCleanup[];
 }
 
 export interface ProviderConfiguration {
@@ -106,13 +124,14 @@ function recordingTransferProvider(
   configured: boolean,
   identifier: string | null,
   transfers: RecordingTransferHealth,
+  mediaLifecycle?: MediaLifecycleHealth,
 ): ProviderHealth {
   const latestFailure = transfers.recentFailures[0];
   const failedSinceSuccess = Boolean(latestFailure && (!transfers.lastStoredAt || latestFailure.at > transfers.lastStoredAt));
   return {
     id,
     name,
-    state: !configured ? "not_configured" : failedSinceSuccess ? "degraded" : "configured",
+    state: !configured ? "not_configured" : failedSinceSuccess || (mediaLifecycle?.stuckCount ?? 0) > 0 ? "degraded" : "configured",
     identifier,
     lastSuccessAt: transfers.lastStoredAt,
     lastFailureAt: latestFailure?.at ?? null,
@@ -120,6 +139,7 @@ function recordingTransferProvider(
     testable: false,
     note: "Test Connection arrives with its milestone",
     recentFailures: transfers.recentFailures,
+    ...(mediaLifecycle ? { mediaLifecycle } : {}),
   };
 }
 
@@ -128,6 +148,7 @@ export function describeProviderHealth(
   twilio: TwilioConnectionRecord | null,
   recordingTransfers: RecordingTransferHealth,
   analysis: AnalysisProcessingHealth,
+  mediaLifecycle: MediaLifecycleHealth,
 ): ProviderHealth[] {
   const twilioHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
@@ -196,6 +217,6 @@ export function describeProviderHealth(
     email,
     recordingTransferProvider("r2", "Cloudflare R2", configuration.r2, configuration.r2Bucket, recordingTransfers),
     openAIProvider(configuration.openai, analysis),
-    recordingTransferProvider("triggerdev", "Trigger.dev", configuration.triggerdev, "TRIGGER_SECRET_KEY", recordingTransfers),
+    recordingTransferProvider("triggerdev", "Trigger.dev", configuration.triggerdev, "TRIGGER_SECRET_KEY", recordingTransfers, mediaLifecycle),
   ];
 }

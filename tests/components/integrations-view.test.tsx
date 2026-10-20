@@ -4,8 +4,9 @@
  * @brief  Verifies the Operator Integrations page interactions.
  *
  * @description
- *  Covers provider health, Twilio credential actions, number inventory, and
- *  platform provider test feedback through the public fetch boundary.
+ *  Covers provider health including unfinished media cleanup, Twilio
+ *  credential actions, number inventory, and platform provider test
+ *  feedback through the public fetch boundary.
  *
  * @remarks
  *  Network calls are faked only at the public HTTP boundary.
@@ -301,5 +302,43 @@ describe("IntegrationsView", () => {
     expect(value("Last failure")).toHaveTextContent(time(analysis.lastFailureAt));
     expect(within(region).queryByText("Last successful check")).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Cloudflare R2" })).queryByText("Transcription model")).not.toBeInTheDocument();
+  });
+
+  it("shows no unfinished media cleanup on a healthy Trigger.dev card and lists the oldest stuck cleanups with their Call links on a degraded one", async () => {
+    const time = (value: string) => new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+    const healthyProviders = providers.map((provider) => provider.id === "triggerdev"
+      ? { ...provider, state: "configured" as const, recentFailures: [], mediaLifecycle: { stuckCount: 0, oldestStuck: [] } }
+      : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: healthyProviders })));
+    render(<IntegrationsView initial={initialData({ providers: healthyProviders })} />);
+    const healthy = await screen.findByRole("region", { name: "Trigger.dev" });
+    expect(within(healthy).getByText("Configured")).toBeVisible();
+    expect(within(healthy).getByText("Unfinished media cleanup", { selector: "dt" }).nextElementSibling).toHaveTextContent("0");
+    expect(within(healthy).getByText("No unfinished media cleanup.")).toBeVisible();
+    expect(within(healthy).queryByRole("table", { name: "Unfinished media cleanup" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Cloudflare R2" })).queryByText("Unfinished media cleanup")).not.toBeInTheDocument();
+
+    cleanup();
+    const oldestStuck = [
+      { callId: "call-1", workspaceId: "workspace-1", workspaceName: "North Clinic", media: "Expired" as const, since: "2026-10-12T00:00:00.000Z", twilioNotConnected: false },
+      { callId: "call-2", workspaceId: "workspace-2", workspaceName: "South Clinic", media: "Purged" as const, since: "2026-10-13T00:00:00.000Z", twilioNotConnected: true },
+    ];
+    const stuckProviders = providers.map((provider) => provider.id === "triggerdev"
+      ? { ...provider, state: "degraded" as const, recentFailures: [], mediaLifecycle: { stuckCount: 7, oldestStuck } }
+      : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: stuckProviders })));
+    render(<IntegrationsView initial={initialData({ providers: stuckProviders })} />);
+    const degraded = await screen.findByRole("region", { name: "Trigger.dev" });
+    expect(within(degraded).getByText("Degraded")).toBeVisible();
+    expect(within(degraded).getByText("Unfinished media cleanup", { selector: "dt" }).nextElementSibling).toHaveTextContent("7");
+    const table = within(degraded).getByRole("table", { name: "Unfinished media cleanup" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent))).toEqual([
+      ["View Call", "North Clinic", "Expired", time(oldestStuck[0].since), "Retried by the daily sweep"],
+      ["View Call", "South Clinic", "Purged", time(oldestStuck[1].since), "Twilio is not connected"],
+    ]);
+    expect(within(rows[0]).getByRole("link", { name: "View Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-1");
+    expect(within(rows[1]).getByRole("link", { name: "View Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-2");
+    expect(within(degraded).queryByText("No unfinished media cleanup.")).not.toBeInTheDocument();
   });
 });

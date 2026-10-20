@@ -4,7 +4,8 @@
  * @brief  Verifies provider configuration health descriptions.
  *
  * @description
- *  Covers configured, connected, degraded, and missing provider states.
+ *  Covers configured, connected, degraded, and missing provider states,
+ *  including Trigger.dev degraded by unfinished media cleanup.
  *
  * @remarks
  *  Provider health is pure and does not contact external services.
@@ -17,7 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { describeProviderHealth, type AnalysisProcessingHealth, type ProviderConfiguration, type RecordingTransferHealth } from "@/data/provider-health";
+import { describeProviderHealth, type AnalysisProcessingHealth, type MediaLifecycleHealth, type ProviderConfiguration, type RecordingTransferHealth } from "@/data/provider-health";
 import type { TwilioConnectionRecord } from "@/data/integrations";
 
 const configured: ProviderConfiguration = {
@@ -36,6 +37,8 @@ const noTransfers: RecordingTransferHealth = { lastStoredAt: null, recentFailure
 
 const noAnalysis: AnalysisProcessingHealth = { lastTranscriptAt: null, lastLeadAssessmentAt: null, failedCount: 0, lastFailureAt: null };
 
+const noLifecycle: MediaLifecycleHealth = { stuckCount: 0, oldestStuck: [] };
+
 const connection: TwilioConnectionRecord = {
   accountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   apiKeySid: "SK11111111111111111111111111111111",
@@ -52,7 +55,7 @@ const connection: TwilioConnectionRecord = {
 
 describe("provider health", () => {
   it("describes configured platform providers in the stable order", () => {
-    const health = describeProviderHealth(configured, null, noTransfers, noAnalysis);
+    const health = describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle);
 
     expect(health.map((provider) => provider.id)).toEqual(["twilio", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
     expect(health).toEqual(expect.arrayContaining([
@@ -63,8 +66,8 @@ describe("provider health", () => {
   });
 
   it("describes missing Twilio master key and connection", () => {
-    const withoutMasterKey = describeProviderHealth({ ...configured, twilioMasterKey: false }, null, noTransfers, noAnalysis)[0];
-    const withoutConnection = describeProviderHealth(configured, null, noTransfers, noAnalysis)[0];
+    const withoutMasterKey = describeProviderHealth({ ...configured, twilioMasterKey: false }, null, noTransfers, noAnalysis, noLifecycle)[0];
+    const withoutConnection = describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle)[0];
 
     expect(withoutMasterKey).toMatchObject({ state: "not_configured", testable: false, note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing" });
     expect(withoutConnection).toMatchObject({ state: "not_configured", testable: false, note: "No Organization Twilio credential is connected" });
@@ -75,19 +78,19 @@ describe("provider health", () => {
       ...connection,
       lastFailureAt: "2026-10-14T02:00:00.000Z",
       lastFailureDetail: "Twilio rejected the credential (HTTP 401)",
-    }, noTransfers, noAnalysis)[0];
+    }, noTransfers, noAnalysis, noLifecycle)[0];
 
     expect(degraded).toMatchObject({ state: "degraded", identifier: connection.accountSid, lastSuccessAt: connection.lastVerifiedAt, testable: true });
   });
 
   it("describes email with an empty allowlist as degraded", () => {
-    const email = describeProviderHealth({ ...configured, emailAllowlistCount: 0 }, null, noTransfers, noAnalysis).find((provider) => provider.id === "email");
+    const email = describeProviderHealth({ ...configured, emailAllowlistCount: 0 }, null, noTransfers, noAnalysis, noLifecycle).find((provider) => provider.id === "email");
 
     expect(email).toMatchObject({ state: "degraded", note: "The recipient allowlist is empty, so sends are disabled", testable: false });
   });
 
   it("describes configured R2 by its bucket name and Trigger.dev with no Recording transfers yet", () => {
-    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, noTransfers, noAnalysis);
+    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, noTransfers, noAnalysis, noLifecycle);
 
     expect(health.find((provider) => provider.id === "r2")).toMatchObject({
       state: "configured",
@@ -111,7 +114,7 @@ describe("provider health", () => {
       lastStoredAt: "2026-10-14T03:00:00.000Z",
       recentFailures: [{ stage: "download", reason: "Twilio is unavailable", at: "2026-10-14T02:00:00.000Z" }],
     };
-    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, transfers, noAnalysis);
+    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, transfers, noAnalysis, noLifecycle);
 
     for (const id of ["r2", "triggerdev"]) {
       expect(health.find((provider) => provider.id === id)).toMatchObject({
@@ -131,7 +134,7 @@ describe("provider health", () => {
       failedCount: 1,
       lastFailureAt: "2026-10-16T09:00:00.000Z",
     };
-    const openai = describeProviderHealth({ ...configured, openai: true }, null, noTransfers, analysis).find((provider) => provider.id === "openai");
+    const openai = describeProviderHealth({ ...configured, openai: true }, null, noTransfers, analysis, noLifecycle).find((provider) => provider.id === "openai");
 
     expect(openai).toMatchObject({
       state: "configured",
@@ -147,10 +150,10 @@ describe("provider health", () => {
   it("marks OpenAI degraded when a Transcript or Lead Assessment failed after the last success, and not configured without its key", () => {
     const analysis: AnalysisProcessingHealth = { lastTranscriptAt: "2026-10-17T01:00:00.000Z", lastLeadAssessmentAt: null, failedCount: 2, lastFailureAt: "2026-10-17T02:00:00.000Z" };
 
-    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, analysis).find((provider) => provider.id === "openai")?.state).toBe("degraded");
-    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, { ...analysis, lastTranscriptAt: null }).find((provider) => provider.id === "openai")?.state).toBe("degraded");
-    expect(describeProviderHealth(configured, null, noTransfers, analysis).find((provider) => provider.id === "openai")?.state).toBe("not_configured");
-    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, noAnalysis).find((provider) => provider.id === "openai")).toMatchObject({
+    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, analysis, noLifecycle).find((provider) => provider.id === "openai")?.state).toBe("degraded");
+    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, { ...analysis, lastTranscriptAt: null }, noLifecycle).find((provider) => provider.id === "openai")?.state).toBe("degraded");
+    expect(describeProviderHealth(configured, null, noTransfers, analysis, noLifecycle).find((provider) => provider.id === "openai")?.state).toBe("not_configured");
+    expect(describeProviderHealth({ ...configured, openai: true }, null, noTransfers, noAnalysis, noLifecycle).find((provider) => provider.id === "openai")).toMatchObject({
       state: "configured",
       lastSuccessAt: null,
       lastFailureAt: null,
@@ -166,7 +169,7 @@ describe("provider health", () => {
         { stage: "cleanup", reason: "Twilio request failed (HTTP 500)", at: "2026-10-14T00:30:00.000Z" },
       ],
     };
-    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, transfers, noAnalysis);
+    const health = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, transfers, noAnalysis, noLifecycle);
 
     for (const id of ["r2", "triggerdev"]) {
       expect(health.find((provider) => provider.id === id)).toMatchObject({
@@ -175,6 +178,24 @@ describe("provider health", () => {
         lastFailureDetail: "R2 request failed (HTTP 503)",
       });
     }
-    expect(describeProviderHealth(configured, null, { lastStoredAt: null, recentFailures: transfers.recentFailures }, noAnalysis).find((provider) => provider.id === "r2")?.state).toBe("not_configured");
+    expect(describeProviderHealth(configured, null, { lastStoredAt: null, recentFailures: transfers.recentFailures }, noAnalysis, noLifecycle).find((provider) => provider.id === "r2")?.state).toBe("not_configured");
+  });
+
+  it("keeps Trigger.dev configured with no unfinished media cleanup and marks it degraded while a purged or expired Recording's cleanup is stuck", () => {
+    const stuck: MediaLifecycleHealth = {
+      stuckCount: 2,
+      oldestStuck: [
+        { callId: "call-1", workspaceId: "workspace-1", workspaceName: "North", media: "Expired", since: "2026-10-12T00:00:00.000Z", twilioNotConnected: false },
+        { callId: "call-2", workspaceId: "workspace-1", workspaceName: "North", media: "Purged", since: "2026-10-13T00:00:00.000Z", twilioNotConnected: true },
+      ],
+    };
+    const healthy = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, noTransfers, noAnalysis, noLifecycle);
+    const degraded = describeProviderHealth({ ...configured, r2: true, triggerdev: true }, null, noTransfers, noAnalysis, stuck);
+
+    expect(healthy.find((provider) => provider.id === "triggerdev")).toMatchObject({ state: "configured", mediaLifecycle: noLifecycle });
+    expect(degraded.find((provider) => provider.id === "triggerdev")).toMatchObject({ state: "degraded", mediaLifecycle: stuck });
+    expect(degraded.find((provider) => provider.id === "r2")).toMatchObject({ state: "configured" });
+    expect(degraded.find((provider) => provider.id === "r2")).not.toHaveProperty("mediaLifecycle");
+    expect(describeProviderHealth(configured, null, noTransfers, noAnalysis, stuck).find((provider) => provider.id === "triggerdev")?.state).toBe("not_configured");
   });
 });

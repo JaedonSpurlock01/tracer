@@ -1103,6 +1103,7 @@ The API key secret is encrypted with a deployment-held master key and never disp
 - Task deployment version
 - Recording-processing queue health
 - Report and export queue health
+- Unfinished media cleanup: the count of purged or expired Recordings whose cleanup is still unfinished 26 hours after purge or expiry, or blocked by a missing Twilio connection, and a table of the 5 oldest with a View Call link, Workspace, Purged or Expired, since when, and whether Twilio is not connected or the daily sweep retries it; the card is Degraded while any remain, and shows "No unfinished media cleanup." otherwise
 - Recent failed runs with links to Trigger.dev observability
 - Test a minimal no-customer-data task
 
