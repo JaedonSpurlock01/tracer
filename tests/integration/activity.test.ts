@@ -247,6 +247,20 @@ async function localMidnight(timeZone: string, daysBack: number): Promise<Date> 
   return row.rows[0].at;
 }
 
+/** The Calls seeded around the Operator's (Chicago) window start, newest first. */
+const boundaryCalls: { id: string; startedAt: Date }[] = [];
+
+/**
+ * The boundary Calls inside a viewer's default window right now. The
+ * Client Viewer is in Denver, whose window usually starts an hour after
+ * Chicago's, but for the hour after Chicago's midnight the two cities are
+ * on different dates and Denver's window starts almost a day earlier.
+ */
+async function boundaryCallsInWindow(timeZone: string): Promise<string[]> {
+  const windowStart = await localMidnight(timeZone, 6);
+  return boundaryCalls.filter((call) => call.startedAt >= windowStart).map((call) => call.id);
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
@@ -303,8 +317,11 @@ beforeAll(async () => {
   await seedCall({ id: "other-organization-call", workspaceId: "other-organization-workspace", startedAt: ago(3) });
 
   const chicagoWindowStart = await localMidnight("America/Chicago", 6);
-  await seedCall({ id: "window-start-call", workspaceId: "granted-active", startedAt: new Date(chicagoWindowStart.getTime() + 60_000).toISOString() });
-  await seedCall({ id: "before-window-call", workspaceId: "granted-active", startedAt: new Date(chicagoWindowStart.getTime() - 60_000).toISOString() });
+  boundaryCalls.push(
+    { id: "window-start-call", startedAt: new Date(chicagoWindowStart.getTime() + 60_000) },
+    { id: "before-window-call", startedAt: new Date(chicagoWindowStart.getTime() - 60_000) },
+  );
+  for (const call of boundaryCalls) await seedCall({ id: call.id, workspaceId: "granted-active", startedAt: call.startedAt.toISOString() });
 
   const thirteenMonthsAgo = new Date();
   thirteenMonthsAgo.setUTCMonth(thirteenMonthsAgo.getUTCMonth() - 13);
@@ -330,7 +347,7 @@ describe.sequential("Activity authorization", () => {
 
   it("lists only granted Workspaces for a Client Viewer, and a filter naming an ungranted Workspace matches nothing", async () => {
     const { body } = await listActivity(clientCookie);
-    expect(ids(body)).toEqual(["in-progress-call", "assessed-call", "pending-call", "lifecycle-call"]);
+    expect(ids(body)).toEqual(["in-progress-call", "assessed-call", "pending-call", "lifecycle-call", ...(await boundaryCallsInWindow("America/Denver"))]);
     expect(body.timeZone).toBe("America/Denver");
     for (const query of ["?workspace=ungranted-active", "?workspace=other-organization-workspace", "?workspace=ungranted-active&from=2000-01-01"]) {
       const filtered = await listActivity(clientCookie, query);
@@ -413,9 +430,13 @@ describe.sequential("Activity entries", () => {
 
 describe.sequential("Activity window and Load more", () => {
   it("starts the default window at local midnight six days back in the user's timezone", async () => {
-    expect(ids((await listActivity(operatorCookie)).body)).toContain("window-start-call");
-    expect(ids((await listActivity(operatorCookie)).body)).not.toContain("before-window-call");
-    expect(ids((await listActivity(clientCookie)).body)).not.toContain("window-start-call");
+    const operator = ids((await listActivity(operatorCookie)).body);
+    expect(operator).toContain("window-start-call");
+    expect(operator).not.toContain("before-window-call");
+    // The Client Viewer's window follows Denver's midnight, so it never matches Chicago's boundary.
+    const client = ids((await listActivity(clientCookie)).body).filter((id) => boundaryCalls.some((call) => call.id === id));
+    expect(client).toEqual(await boundaryCallsInWindow("America/Denver"));
+    expect(client).not.toEqual(["window-start-call"]);
   });
 
   it("loads older Calls before the oldest loaded one, unaffected by a new Call arriving", async () => {
