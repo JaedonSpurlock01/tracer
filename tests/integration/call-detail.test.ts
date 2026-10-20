@@ -157,7 +157,7 @@ interface SeedCall {
   answered?: boolean;
   forwarded?: boolean;
   events?: { kind: string; payload: Record<string, string>; key?: string; secondsAfterStart: number }[];
-  recording?: { transferState: "Pending" | "Stored" | "Failed"; waveformState?: "Pending" | "Stored" | "Failed"; channels?: 1 | 2 } | null;
+  recording?: { transferState: "Pending" | "Stored" | "Failed"; waveformState?: "Pending" | "Stored" | "Failed"; mp3State?: "Pending" | "Stored" | "Failed"; channels?: 1 | 2 } | null;
   analysis?: {
     transcript: "Pending" | "Completed" | "Failed" | "Skipped";
     skipReason?: string;
@@ -234,6 +234,13 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
         waveformState === "Failed" ? "audiowaveform exited with code 1" : null, at(96), at(120),
       ],
     );
+    const mp3State = stored ? (recording.mp3State ?? "Stored") : "Pending";
+    if (mp3State !== "Pending") {
+      await pool!.query(
+        "update recording set mp3_state = $2, mp3_object_key = $3, mp3_size_bytes = $4, mp3_generated_at = $5, mp3_failure_reason = $6 where id = $1",
+        [recordingId, mp3State, mp3State === "Stored" ? `recordings/${recordingId}.mp3` : null, mp3State === "Stored" ? 512 : null, at(115), mp3State === "Failed" ? "ffmpeg could not encode the MP3" : null],
+      );
+    }
   }
   const analysis = options.analysis;
   if (recording && analysis) {
@@ -384,6 +391,23 @@ describe.sequential("Call Detail Recording availability", () => {
   it("marks a Stored Recording with Stored peaks Ready with aligned Caller and Business lanes", async () => {
     const { recordingId } = await seedCall("ready-call");
     expect(await recordingOf("ready-call")).toMatchObject({ state: "Ready", id: recordingId, channels: 2, lanes: ["Caller", "Business"], waveform: true, durationSeconds: 83 });
+  });
+
+  it("offers the MP3 download whenever its MP3 is Stored and media is retained, whatever the waveform state", async () => {
+    const ready = await seedCall("mp3-ready-call");
+    const waveformPending = await seedCall("mp3-waveform-pending-call", { recording: { transferState: "Stored", waveformState: "Pending" } });
+    const waveformFailed = await seedCall("mp3-waveform-failed-call", { recording: { transferState: "Stored", waveformState: "Failed" } });
+    await seedCall("mp3-pending-call", { recording: { transferState: "Stored", mp3State: "Pending" } });
+    await seedCall("mp3-failed-call", { recording: { transferState: "Stored", mp3State: "Failed" } });
+    const expiredAt = new Date();
+    expiredAt.setUTCMonth(expiredAt.getUTCMonth() - 13);
+    await seedCall("mp3-expired-call", { startedAt: expiredAt });
+    const mp3Of = async (callId: string) => (await callDetail("granted-active", callId, operatorCookie)).body.call?.mp3RecordingId;
+    expect(await mp3Of("mp3-ready-call")).toBe(ready.recordingId);
+    expect(await mp3Of("mp3-waveform-pending-call")).toBe(waveformPending.recordingId);
+    expect(await recordingOf("mp3-waveform-pending-call")).toEqual({ state: "Processing", stage: "waveform" });
+    expect(await mp3Of("mp3-waveform-failed-call")).toBe(waveformFailed.recordingId);
+    for (const callId of ["mp3-pending-call", "mp3-failed-call", "mp3-expired-call"]) expect(await mp3Of(callId)).toBeNull();
   });
 
   it("marks a single-channel Recording Ready with one Mixed lane", async () => {

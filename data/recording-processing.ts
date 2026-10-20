@@ -5,9 +5,9 @@
  *
  * @description
  *  Triggers one Recording transfer run, or with the waveform,
- *  transcription, or Lead Assessment task id one run of that stage, per
+ *  transcription, Lead Assessment, or MP3 task id one run of that stage, per
  *  Recording by posting its id and Recording-derived idempotency key to
- *  Trigger.dev. Without a secret key the request does nothing, so the
+ *  Trigger.dev. Report generation reuses the same request. Without a secret key the request does nothing, so the
  *  Recording stays Pending for the recovery sweep. A queued run waits up to
  *  7 days, matching the sweep window.
  *
@@ -25,6 +25,7 @@
  *  trigger/recording-waveform.ts
  *  trigger/recording-transcription.ts
  *  trigger/recording-lead-assessment.ts
+ *  trigger/recording-mp3.ts
  *  https://trigger.dev/docs/management/tasks/trigger
  *
  * @author Jaedon Spurlock
@@ -40,33 +41,40 @@ export const recordingTranscriptionTaskId = "recording-transcription";
 
 export const recordingLeadAssessmentTaskId = "recording-lead-assessment";
 
-export function createTriggerRecordingProcessing(options: {
+export const recordingMp3TaskId = "recording-mp3";
+
+export interface TriggerTaskRequestOptions {
   secretKey: string | undefined;
   fetch?: typeof fetch;
   baseUrl?: string;
   timeoutMs?: number;
-  taskId?: string;
-}): RecordingProcessing {
+}
+
+export async function triggerTaskRun(options: TriggerTaskRequestOptions, taskId: string, payload: Record<string, string>, idempotencyKey: string): Promise<void> {
+  if (!options.secretKey) return;
   const request = options.fetch ?? globalThis.fetch;
   const baseUrl = (options.baseUrl ?? "https://api.trigger.dev").replace(/\/$/, "");
+  let response: Response;
+  try {
+    response = await request(`${baseUrl}/api/v1/tasks/${taskId}/trigger`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${options.secretKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ payload, options: { idempotencyKey, ttl: "7d" } }),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
+    });
+  } catch {
+    throw new Error("Trigger.dev is unavailable");
+  }
+  if (!response.ok) {
+    throw new Error(`Trigger.dev request failed (HTTP ${response.status})`);
+  }
+}
+
+export function createTriggerRecordingProcessing(options: TriggerTaskRequestOptions & { taskId?: string }): RecordingProcessing {
   const taskId = options.taskId ?? recordingTransferTaskId;
   return {
     async request(recording) {
-      if (!options.secretKey) return;
-      let response: Response;
-      try {
-        response = await request(`${baseUrl}/api/v1/tasks/${taskId}/trigger`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${options.secretKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ payload: { recordingId: recording.id }, options: { idempotencyKey: recording.idempotencyKey, ttl: "7d" } }),
-          signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
-        });
-      } catch {
-        throw new Error("Trigger.dev is unavailable");
-      }
-      if (!response.ok) {
-        throw new Error(`Trigger.dev request failed (HTTP ${response.status})`);
-      }
+      await triggerTaskRun(options, taskId, { recordingId: recording.id }, recording.idempotencyKey);
     },
   };
 }

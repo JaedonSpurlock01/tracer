@@ -458,6 +458,11 @@ export const recordings = pgTable(
     waveformObjectKey: text("waveform_object_key"),
     waveformFailureReason: text("waveform_failure_reason"),
     waveformGeneratedAt: timestamp("waveform_generated_at", { withTimezone: true }),
+    mp3State: text("mp3_state").notNull().default("Pending"),
+    mp3ObjectKey: text("mp3_object_key"),
+    mp3SizeBytes: bigint("mp3_size_bytes", { mode: "number" }),
+    mp3FailureReason: text("mp3_failure_reason"),
+    mp3GeneratedAt: timestamp("mp3_generated_at", { withTimezone: true }),
     transcriptState: text("transcript_state"),
     transcriptSkipReason: text("transcript_skip_reason"),
     transcriptFailureReason: text("transcript_failure_reason"),
@@ -479,6 +484,9 @@ export const recordings = pgTable(
     check("recording_waveform_state_check", sql`${table.waveformState} in ('Pending', 'Stored', 'Failed')`),
     check("recording_waveform_stored_metadata_check", sql`${table.waveformState} <> 'Stored' or (${table.waveformObjectKey} is not null and ${table.waveformGeneratedAt} is not null)`),
     check("recording_waveform_requires_stored_check", sql`${table.waveformState} = 'Pending' or ${table.transferState} = 'Stored'`),
+    check("recording_mp3_state_check", sql`${table.mp3State} in ('Pending', 'Stored', 'Failed')`),
+    check("recording_mp3_stored_metadata_check", sql`${table.mp3State} <> 'Stored' or (${table.mp3ObjectKey} is not null and ${table.mp3SizeBytes} is not null and ${table.mp3GeneratedAt} is not null)`),
+    check("recording_mp3_requires_stored_check", sql`${table.mp3State} = 'Pending' or ${table.transferState} = 'Stored'`),
     check("recording_transcript_state_check", sql`${table.transcriptState} is null or ${table.transcriptState} in ('Pending', 'Completed', 'Failed', 'Skipped')`),
     check(
       "recording_transcript_skip_reason_check",
@@ -497,6 +505,7 @@ export const recordings = pgTable(
     index("recording_call_id_idx").on(table.callId),
     index("recording_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.twilioCleanupState} <> 'Deleted'`),
     index("recording_waveform_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.waveformState} <> 'Stored'`),
+    index("recording_mp3_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.mp3State} <> 'Stored'`),
     index("recording_transcript_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.transcriptState} in ('Pending', 'Failed')`),
     index("recording_lead_assessment_unfinished_created_at_idx").on(table.createdAt).where(sql`${table.leadAssessmentState} in ('Pending', 'Failed')`),
   ],
@@ -650,6 +659,64 @@ export const callEvents = pgTable(
   ],
 );
 
+export const reportJobKinds = ["report", "call_export"] as const;
+
+export const reportJobStatuses = ["Queued", "Generating", "Completed", "Failed"] as const;
+
+export const reportFileKinds = ["pdf", "csv", "zip"] as const;
+
+export const reportJobs = pgTable(
+  "report_job",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    requesterUserId: text("requester_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text().notNull(),
+    workspaceIds: text("workspace_ids").array().notNull(),
+    timeZone: text("time_zone").notNull(),
+    parameters: jsonb().notNull(),
+    fingerprint: text().notNull(),
+    status: text().notNull().default("Queued"),
+    failureReason: text("failure_reason"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    artifactsExpireAt: timestamp("artifacts_expire_at", { withTimezone: true }),
+    metadataExpireAt: timestamp("metadata_expire_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("report_job_kind_check", sql.raw(`"report_job"."kind" in (${reportJobKinds.map((kind) => `'${kind}'`).join(", ")})`)),
+    check("report_job_status_check", sql.raw(`"report_job"."status" in (${reportJobStatuses.map((status) => `'${status}'`).join(", ")})`)),
+    check("report_job_scope_check", sql`cardinality(${table.workspaceIds}) > 0`),
+    check("report_job_parameters_check", sql`jsonb_typeof(${table.parameters}) = 'object'`),
+    check("report_job_failure_check", sql`(${table.status} = 'Failed') = (${table.failureReason} is not null)`),
+    check("report_job_completed_check", sql`(${table.status} = 'Completed') = (${table.completedAt} is not null and ${table.artifactsExpireAt} is not null)`),
+    index("report_job_requester_requested_at_idx").on(table.organizationId, table.requesterUserId, table.requestedAt),
+    index("report_job_requester_fingerprint_idx").on(table.requesterUserId, table.fingerprint),
+  ],
+);
+
+export const reportArtifacts = pgTable(
+  "report_artifact",
+  {
+    jobId: text("job_id")
+      .notNull()
+      .references(() => reportJobs.id, { onDelete: "cascade" }),
+    fileKind: text("file_kind").notNull(),
+    r2Key: text("r2_key").notNull(),
+    byteSize: bigint("byte_size", { mode: "number" }).notNull(),
+    contentType: text("content_type").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.jobId, table.fileKind] }),
+    check("report_artifact_file_kind_check", sql.raw(`"report_artifact"."file_kind" in (${reportFileKinds.map((kind) => `'${kind}'`).join(", ")})`)),
+    check("report_artifact_byte_size_check", sql`${table.byteSize} >= 0`),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -673,4 +740,6 @@ export const schema = {
   leadAssessmentEvidence,
   leadReview: leadReviews,
   callEvent: callEvents,
+  reportJob: reportJobs,
+  reportArtifact: reportArtifacts,
 };

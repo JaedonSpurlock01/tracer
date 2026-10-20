@@ -12,12 +12,16 @@
  *  show Skeleton rows while it loads. Any search or filter change returns
  *  to the first page. Rows open Call Detail, and Play Recording opens it
  *  with playback started; both carry this list's URL as the `back` param so
- *  Call Detail can return to it and step through it. Workspace Calls fixes the Workspace scope, omits
+ *  Call Detail can return to it and step through it. Download MP3 appears
+ *  only when the row's Recording has a retained MP3 and downloads it
+ *  through the Workspace-authorized MP3 route. Workspace Calls fixes the
+ *  Workspace scope, omits
  *  the Workspace column and filter, and shows the Workspace tabs below the
  *  header.
  *
  * @remarks
- *  Export Recordings and Export CSV stay disabled until exports are built.
+ *  Export Recordings and Export CSV confirm and export the current scope
+ *  and the filters in the URL.
  *  The Empty and fetch error states render inside the grid so the header
  *  actions and toolbar stay in place. A scope with no Calls explains where
  *  Calls come from, while filters that match nothing keep the filters and
@@ -39,7 +43,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTable, type ColumnDef, type PaginationState, type SortingState, type Updater } from "@tanstack/react-table";
 
 import { Badge } from "@/components/reui/badge";
@@ -52,7 +56,7 @@ import { Frame, FramePanel } from "@/components/reui/frame";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CallsExportActions } from "@/components/tracer/call-export";
 import CallFilterToolbar, { callFiltersFromTrees, filterTreesFromCallFilters, type CallFilterTrees } from "@/components/tracer/call-filters";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallTime, formatClock } from "@/components/tracer/call-format";
@@ -70,8 +74,6 @@ const recordingBadges = {
   Expired: ["Expired", "warning-light"],
 } as const satisfies Record<CallListItem["recording"], readonly [string, string]>;
 
-const exportsLater = "Exports arrive in a later release.";
-
 function callHref(call: CallListItem, back: string, options?: { play?: boolean }): string {
   return callDetailHref({ id: call.id, workspaceId: call.workspace.id }, back, options);
 }
@@ -84,19 +86,6 @@ function nextSort(current: CallSort, sorting: SortingState): CallSort {
   const [first] = sorting;
   if (first) return { column: first.id as CallSortColumn, direction: first.desc ? "desc" : "asc" };
   return current.column === defaultCallSort.column && current.direction === defaultCallSort.direction ? { ...defaultCallSort, direction: "asc" } : defaultCallSort;
-}
-
-function DisabledExport({ children, variant }: { children: ReactNode; variant?: "outline" }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span tabIndex={0} />}>
-        <Button type="button" variant={variant} disabled>
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{exportsLater}</TooltipContent>
-    </Tooltip>
-  );
 }
 
 export default function CallsView({
@@ -278,10 +267,15 @@ export default function CallsView({
             <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back)} prefetch>
               Open Call
             </Link>
+            {row.original.mp3RecordingId ? (
+              <a className={buttonVariants({ variant: "ghost", size: "sm" })} href={`/api/workspaces/${row.original.workspace.id}/recordings/${row.original.mp3RecordingId}/mp3`} download>
+                Download MP3
+              </a>
+            ) : null}
           </div>
         ),
         enableSorting: false,
-        size: 230,
+        size: 340,
         meta: { skeleton: <Skeleton className="h-8 w-32" /> },
       },
     ];
@@ -330,10 +324,7 @@ export default function CallsView({
             {workspace ? ` in ${workspace.name}` : null}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <DisabledExport>Export Recordings</DisabledExport>
-          <DisabledExport variant="outline">Export CSV</DisabledExport>
-        </div>
+        <CallsExportActions workspaceId={workspaceId} query={listSearch} />
       </div>
       {workspace ? <WorkspaceTabs workspaceId={workspace.id} operator={operator} current="calls" /> : null}
       <Frame>

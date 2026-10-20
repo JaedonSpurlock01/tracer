@@ -6,7 +6,7 @@
  * @description
  *  Covers the DESIGN column order with the Workspace column omitted in
  *  Workspace scope, dates in the result's timezone, the In Progress badge,
- *  the effective Lead classification and Lead Score, disabled export
+ *  the effective Lead classification and Lead Score, the export
  *  actions, the No Calls Empty state, a fetch error with Retry inside the
  *  grid, Open Call and Play Recording only for a playable Recording, row
  *  selection, server sorting and paging kept in the URL with Skeleton rows
@@ -47,6 +47,7 @@ const answered: CallListItem = {
   effectiveLeadClassification: { classification: "Not Good Lead", source: "review" },
   leadScore: 82,
   recording: "Ready",
+  mp3RecordingId: "recording-1",
 };
 const inProgress: CallListItem = {
   id: "call-2",
@@ -59,6 +60,7 @@ const inProgress: CallListItem = {
   effectiveLeadClassification: null,
   leadScore: null,
   recording: "Unavailable",
+  mp3RecordingId: null,
 };
 const result: CallListResult = { calls: [inProgress, answered], total: 2, page: 1, pageSize: 25, timeZone: "America/Chicago", workspace: null, hasCalls: true };
 const defaultQuery: CallListQuery = { page: 1, sort: { column: "startedAt", direction: "desc" }, filters: emptyCallFilters };
@@ -126,24 +128,21 @@ describe("CallsView", () => {
     const nav = screen.getByRole("navigation", { name: "Workspace" });
     expect(screen.getByRole("heading", { level: 1, name: "Calls" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(nav.compareDocumentPosition(screen.getByRole("searchbox", { name: "Search Calls" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Reports"]);
     expect(within(nav).getByRole("link", { name: "Calls" })).toHaveAttribute("aria-current", "page");
 
     rerender(<CallsView initialResult={result} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} operator />);
-    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
 
     rerender(<CallsView initialResult={result} initialQuery={defaultQuery} />);
     expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
   });
 
-  it("shows Export Recordings and Export CSV disabled until exports arrive", async () => {
+  it("offers Export Recordings as the primary action and Export CSV as the secondary action", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
-    const recordings = screen.getByRole("button", { name: "Export Recordings" });
-    expect(recordings).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
-    fireEvent.focus(recordings.parentElement!);
-    expect(await screen.findAllByText("Exports arrive in a later release.")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Export Recordings" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled();
   });
 
   it("offers Play Recording only for a playable Recording and opens Call Detail from a row", () => {
@@ -157,6 +156,21 @@ describe("CallsView", () => {
     expect(within(pending).getByRole("link", { name: "Open Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
     fireEvent.click(within(pending).getByText("Quiet Dental"));
     expect(push).toHaveBeenCalledWith("/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
+  });
+
+  it("offers Download MP3 in the row actions whenever the Recording's MP3 is retained, even without Play Recording", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    const processing: CallListItem = { ...answered, id: "call-3", callerNumber: "+13125550199", mp3RecordingId: null };
+    const waveformPending: CallListItem = { ...answered, id: "call-4", callerNumber: "+13125550188", recording: "Processing", mp3RecordingId: "recording-4" };
+    render(<CallsView initialResult={{ ...result, calls: [inProgress, answered, processing, waveformPending], total: 4 }} initialQuery={defaultQuery} />);
+    const pendingRow = screen.getByRole("row", { name: /\+13125550188/ });
+    expect(within(pendingRow).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-4/mp3");
+    expect(within(pendingRow).queryByRole("link", { name: "Play Recording" })).toBeNull();
+    const download = within(screen.getByRole("row", { name: /\+13125550142/ })).getByRole("link", { name: "Download MP3" });
+    expect(download).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    expect(download).toHaveAttribute("download");
+    expect(within(screen.getByRole("row", { name: /\+13125550199/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
+    expect(within(screen.getByRole("row", { name: /Unknown caller/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
   });
 
   it("opens Call Detail carrying the list's page, sort, and filters from rows and row actions", () => {

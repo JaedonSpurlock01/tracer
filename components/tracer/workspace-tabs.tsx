@@ -4,8 +4,8 @@
  * @brief  Renders the Workspace navigation tabs.
  *
  * @description
- *  Shows one prefetched link per Workspace page: Overview, Calls, and, for
- *  Operators, Flow and Settings. Each Workspace page renders the tabs below
+ *  Shows one prefetched link per Workspace page: Overview, Calls, Reports,
+ *  and, for Operators, Flow before Reports and Settings after it. Each Workspace page renders the tabs below
  *  its own header and names its own tab, which is marked as the current
  *  page, so every Workspace Settings section marks Settings.
  *
@@ -27,7 +27,7 @@ import Link from "next/link";
 
 import { cn } from "cn";
 
-export type WorkspaceTab = "overview" | "calls" | "flow" | "settings";
+export type WorkspaceTab = "overview" | "calls" | "flow" | "reports" | "settings";
 
 interface WorkspaceTabsProps {
   workspaceId: string;
@@ -40,12 +40,9 @@ export default function WorkspaceTabs({ workspaceId, operator, current }: Worksp
   const tabs: { id: WorkspaceTab; label: string; href: string }[] = [
     { id: "overview", label: "Overview", href: base },
     { id: "calls", label: "Calls", href: `${base}/calls` },
-    ...(operator
-      ? [
-          { id: "flow" as const, label: "Flow", href: `${base}/flow` },
-          { id: "settings" as const, label: "Settings", href: `${base}/settings` },
-        ]
-      : []),
+    ...(operator ? [{ id: "flow" as const, label: "Flow", href: `${base}/flow` }] : []),
+    { id: "reports", label: "Reports", href: `${base}/reports` },
+    ...(operator ? [{ id: "settings" as const, label: "Settings", href: `${base}/settings` }] : []),
   ];
 
   return (

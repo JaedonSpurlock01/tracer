@@ -18,7 +18,8 @@
  *  regions, so either can fail alone: a failed region shows an inline Retry
  *  that rerenders the page and every other region stays visible. A range
  *  change shows the analytics regions as Skeletons until the new range
- *  arrives. Generate Report stays disabled until Reports exist.
+ *  arrives. Generate Report opens the Generate Report dialog over every
+ *  accessible Workspace with the account timezone.
  *
  * @see
  *  app/(app)/page.tsx
@@ -50,11 +51,11 @@ import {
   CallTrendsChart,
   CallTrendsSkeleton,
   formatRate,
-  GenerateReportButton,
   RegionRetry,
   useAnalyticsNavigation,
 } from "@/components/tracer/analytics-panels";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
+import GenerateReportButton, { type GenerateReportScope } from "@/components/tracer/generate-report-dialog";
 import { formatCallTime, formatClock } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
 import type { AnalyticsSummary, WorkspacePerformanceRow } from "@/data/analytics";
@@ -73,6 +74,7 @@ interface HomeDashboardProps {
   summary: AnalyticsSummary | null;
   recentCalls: CallListResult | null;
   callsHref: string;
+  reportScope: GenerateReportScope;
 }
 
 function WorkspacePerformance({ rows }: { rows: WorkspacePerformanceRow[] }) {
@@ -171,7 +173,7 @@ function RegionTitle({ id, title, description, action }: { id: string; title: st
   );
 }
 
-export default function HomeDashboard({ operator, workspaceCount, range, summary, recentCalls, callsHref }: HomeDashboardProps) {
+export default function HomeDashboard({ operator, workspaceCount, range, summary, recentCalls, callsHref, reportScope }: HomeDashboardProps) {
   const { pending, changeRange, retry } = useAnalyticsNavigation();
   const scope = operator ? "All Workspaces" : `${workspaceCount} ${workspaceCount === 1 ? "Workspace" : "Workspaces"}`;
   const noWorkspaces = operator && workspaceCount === 0;
@@ -187,7 +189,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
             <Badge variant="outline">{scope}</Badge>
           </div>
         </div>
-        <GenerateReportButton />
+        <GenerateReportButton scope={reportScope} />
       </div>
       {noWorkspaces ? (
         <Frame>

@@ -9,7 +9,8 @@
  *  stored size and SHA-256 checksum, and records the Recording as Stored
  *  together with its analysis eligibility, so the Transcript becomes Pending
  *  or Skipped with a reason. Only after Stored is committed does it request
- *  waveform generation and, for a Pending Transcript, transcription, and
+ *  waveform generation, MP3 derivation, and, for a Pending Transcript,
+ *  transcription, and
  *  then delete the Twilio copy and record the cleanup. A rerun skips finished stages, reuses a matching object at
  *  the same key, and replaces a mismatched one.
  *
@@ -21,7 +22,7 @@
  *  to a savepoint and recorded under the same lock with a secret-free
  *  reason before the error is rethrown for Trigger.dev to retry. The WAV is
  *  buffered in memory, which suits voicemail and connected-call lengths. A
- *  failed waveform or transcription request is ignored so it never blocks
+ *  failed waveform, MP3, or transcription request is ignored so it never blocks
  *  the transfer or cleanup; the recovery sweep re-requests it. Each request
  *  reuses its own Recording-derived idempotency key so reruns map to one
  *  run. Eligibility is decided once, in the Stored transaction, so the
@@ -59,6 +60,7 @@ export interface RecordingTransferDependencies {
   objects: RecordingObjects;
   waveform: RecordingProcessing;
   transcription: RecordingProcessing;
+  mp3: RecordingProcessing;
   now: () => Date;
 }
 
@@ -237,6 +239,7 @@ export async function transferRecording(deps: RecordingTransferDependencies, rec
   });
   if (storedOrganizationId) {
     await deps.waveform.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-waveform:${recordingId}` }).catch(() => undefined);
+    await deps.mp3.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-mp3:${recordingId}` }).catch(() => undefined);
     if (transcriptState === "Pending") {
       await deps.transcription.request({ id: recordingId, organizationId: storedOrganizationId, idempotencyKey: `recording-transcription:${recordingId}` }).catch(() => undefined);
     }

@@ -1,22 +1,35 @@
 /**
  * -------------------------------------------------------------------------
  * @file   page.tsx
- * @brief  Renders the authenticated Reports placeholder.
+ * @brief  Renders the global Reports page.
  *
  * @description
- *  Reserves the Reports surface until Workspace analytics are available.
+ *  Loads the Workspaces the actor can read, for the Generate Report
+ *  Workspace multi-select, and renders Reports with the actor's account
+ *  timezone as the default document timezone and the history timezone.
  *
  * @remarks
- *  The shell protects this page before the placeholder renders.
+ *  Report history loads on the client from the Reports API through the
+ *  shell's shared jobs provider, which only ever lists the requester's own
+ *  jobs. The Reports API rechecks every Workspace on each request.
  *
  * @see
- *  components/tracer/page-placeholder.tsx
+ *  components/tracer/reports-view.tsx
+ *  data/reports-handler.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { PagePlaceholder } from "@/components/tracer/page-placeholder";
+import { notFound } from "next/navigation";
 
-export default function ReportsPage() {
-  return <PagePlaceholder title="Reports" description="On-demand reports arrive with Workspace analytics." />;
+import { resolveRequestActor } from "@/app/(app)/actor";
+import ReportsView from "@/components/tracer/reports-view";
+import { createCallList } from "@/data/calls";
+import { withTracerRuntime } from "@/data/tracer-runtime";
+
+export default async function ReportsPage() {
+  const actor = await resolveRequestActor();
+  if (actor?.state !== "Active") notFound();
+  const workspaces = await withTracerRuntime(({ pool }) => createCallList(pool, actor).workspaceOptions());
+  return <ReportsView scope={{ kind: "global", workspaces, accountTimeZone: actor.timezone }} />;
 }

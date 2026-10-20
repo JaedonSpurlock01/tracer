@@ -6,7 +6,7 @@
  * @description
  *  Checks the signed PUT, HEAD, and GET requests Tracer sends to the R2 S3
  *  API for a Recording object, the stored size and checksum read back from
- *  HEAD, the bytes read back from GET, and safe errors that never expose the
+ *  HEAD, the bytes read back from GET, the signed DELETE, and safe errors that never expose the
  *  R2 secret access key.
  *
  * @remarks
@@ -100,6 +100,27 @@ describe("R2 Recording objects", () => {
     const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(fixture.accessDenied.body, { status: fixture.accessDenied.status }));
 
     const error = await objects(fetch).get(fixture.key).catch((value: unknown) => value);
+
+    expect((error as Error).message).toBe("R2 request failed (HTTP 403)");
+    expect((error as Error).message).not.toContain(credentials.secretAccessKey);
+  });
+
+  it("deletes an object with a signed DELETE, treating an absent object as deleted", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(null, { status: 204 }));
+
+    await objects(fetch).delete(fixture.key);
+
+    const request = fetch.mock.calls[0][0];
+    expect(request.method).toBe("DELETE");
+    expect(request.url).toBe(objectUrl);
+    expect(request.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
+    await expect(objects(vi.fn(async () => new Response(null, { status: 404 }))).delete(fixture.key)).resolves.toBeUndefined();
+  });
+
+  it("rejects a failed DELETE without exposing the secret access key", async () => {
+    const fetch = vi.fn<(request: Request) => Promise<Response>>(async () => new Response(fixture.accessDenied.body, { status: fixture.accessDenied.status }));
+
+    const error = await objects(fetch).delete(fixture.key).catch((value: unknown) => value);
 
     expect((error as Error).message).toBe("R2 request failed (HTTP 403)");
     expect((error as Error).message).not.toContain(credentials.secretAccessKey);

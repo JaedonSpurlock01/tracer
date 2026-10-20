@@ -306,7 +306,7 @@ Outcome and processing states use one semantic Badge per row. Infrastructure det
 - Secondary action: Export CSV
 - Global page includes a Workspace filter; Workspace Calls fixes the scope and omits that filter
 
-Both exports operate on the current scope, date range, search, and filters. Tracer does not use row-selection checkboxes in the first release. Before creating an export, a confirmation shows matched Calls, retained Recordings, expired media, and calls without recordings.
+Both exports operate on the current scope, date range, search, and filters. Tracer does not use row-selection checkboxes in the first release. Before creating an export, a confirmation shows matched Calls, retained Recordings, expired media, and calls without recordings. A Recording export is limited to 500 retained Recordings; above that, the confirmation blocks the export and asks the user to narrow the filters.
 
 ### Search and filters
 

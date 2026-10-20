@@ -47,7 +47,6 @@ import { Calendar } from "@/components/ui/calendar";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatCallDate, formatClock } from "@/components/tracer/call-format";
 import type { AnalyticsComparison, AnalyticsKpi, AnalyticsKpis, AnalyticsTrendPoint } from "@/data/analytics";
 import { analyticsPresetDays, analyticsRangeSearchParams, type AnalyticsRange, type AnalyticsTrendInterval } from "@/data/analytics-range";
@@ -321,15 +320,3 @@ export function RegionRetry({ message, pending, onRetry }: { message: string; pe
   );
 }
 
-export function GenerateReportButton() {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span tabIndex={0} />}>
-        <Button type="button" disabled>
-          Generate Report
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>Reports arrive in a later release.</TooltipContent>
-    </Tooltip>
-  );
-}

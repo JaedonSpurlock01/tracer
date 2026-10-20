@@ -5,9 +5,9 @@
  *
  * @description
  *  Resolves Active Operators and maps Workspace and routing requests to their
- *  Organization-scoped services. Streams available Recording audio and serves
- *  its waveform peaks, and reads Call Detail and Recent Calls, for any actor
- *  who can currently read its Workspace. The Workspace list carries each
+ *  Organization-scoped services. Streams available Recording audio, serves
+ *  its waveform peaks and MP3 download, and reads Call Detail and Recent
+ *  Calls, for any actor who can currently read its Workspace. The Workspace list carries each
  *  listed Workspace's analytics list stats. Saves an Operator's Lead Review and
  *  accepts an Operator's Retry of a failed Transcript or Lead Assessment.
  *
@@ -36,7 +36,7 @@ import { parseLeadReviewInput } from "@/data/lead-classification";
 import { saveLeadReview } from "@/data/lead-reviews";
 import type { RecordingProcessing } from "@/data/recording";
 import { recordingAudioResponse } from "@/data/recording-audio";
-import { findAvailableRecordingMedia, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
+import { findAvailableRecordingMedia, recordingMp3Response, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
 import type { TwilioClient } from "@/data/twilio-client";
@@ -129,7 +129,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
     try {
       const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
-      const mediaMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/(audio|peaks)$/);
+      const mediaMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/(audio|peaks|mp3)$/);
       if (request.method === "GET" && mediaMatch) {
         const workspace = await createReadableWorkspaces(options.pool, actor).find(mediaMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
@@ -140,9 +140,13 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
             ? null
             : mediaMatch[3] === "audio"
               ? await recordingAudioResponse(bucket, media.audio, request.headers.get("range"))
-              : media.peaksKey
-                ? await recordingPeaksResponse(bucket, media.peaksKey)
-                : null;
+              : mediaMatch[3] === "peaks"
+                ? media.peaksKey
+                  ? await recordingPeaksResponse(bucket, media.peaksKey)
+                  : null
+                : media.mp3
+                  ? await recordingMp3Response(bucket, media.mp3)
+                  : null;
         if (!served) throw new WorkspacesError("not_found");
         return served;
       }

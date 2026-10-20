@@ -55,6 +55,7 @@ const call: CallDetail = {
   connectedDurationSeconds: 78,
   spamGate: "Passed",
   recording: { state: "Ready", id: "recording-1", channels: 2, lanes: ["Caller", "Business"], durationSeconds: 83, waveform: false, expiresAt: "2027-10-16T20:04:05.000Z" },
+  mp3RecordingId: null,
   timeline: [],
   transcript: { state: "Completed", turns },
   leadAssessment: {

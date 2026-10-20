@@ -7,8 +7,8 @@
  *  Signs in a real Client Viewer and exercises the Workspaces server
  *  interface to prove granted reads, ungranted denials, Operator-only
  *  mutations, Workspace State rules, and immediate revocation, including
- *  for streamed Recording audio and waveform peaks, and Recording media
- *  expiry 12 months after the Call started.
+ *  for streamed Recording audio, waveform peaks, and MP3 downloads, and
+ *  Recording media expiry 12 months after the Call started.
  *
  * @remarks
  *  Revocation is checked with a session created before the grant is removed,
@@ -33,6 +33,7 @@ import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { schema } from "@/data/schema";
 import type { RecordingMediaBucket } from "@/data/recording-media";
+import { mp3ObjectKey } from "@/data/recording-mp3";
 import { recordingObjectKey } from "@/data/recording-transfer";
 import { waveformObjectKey } from "@/data/recording-waveform";
 import { createTracerAuth } from "@/data/tracer-auth";
@@ -195,8 +196,8 @@ async function seedRecording(
   workspaceId: string,
   recordingId: string,
   transferState: "Stored" | "Pending" = "Stored",
-  options: { callStartedAt?: Date; waveform?: boolean } = {},
-): Promise<{ key: string; bytes: Uint8Array; peaksKey: string; peaks: string }> {
+  options: { callStartedAt?: Date; waveform?: boolean; mp3?: "Pending" | "Stored" | "Failed" } = {},
+): Promise<{ key: string; bytes: Uint8Array; peaksKey: string; peaks: string; callId: string; mp3Key: string; mp3: Uint8Array }> {
   seededCalls += 1;
   const sequence = String(seededCalls).padStart(32, "0");
   const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
@@ -235,7 +236,17 @@ async function seedRecording(
     await pool!.query("update recording set waveform_state = 'Stored', waveform_object_key = $2, waveform_generated_at = now() where id = $1", [recordingId, peaksKey]);
     storedObjects.set(peaksKey, new TextEncoder().encode(peaks));
   }
-  return { key, bytes, peaksKey, peaks };
+  const mp3Key = mp3ObjectKey({ id: recordingId, organizationId: workspace.organization_id, workspaceId, callId });
+  const mp3 = new TextEncoder().encode(`ID3 synthetic mp3 ${recordingId}`);
+  const mp3State = options.mp3 ?? (transferState === "Stored" ? "Stored" : "Pending");
+  if (mp3State !== "Pending") {
+    await pool!.query(
+      "update recording set mp3_state = $2, mp3_object_key = $3, mp3_size_bytes = $4, mp3_generated_at = now() where id = $1",
+      [recordingId, mp3State, mp3State === "Stored" ? mp3Key : null, mp3State === "Stored" ? mp3.byteLength : null],
+    );
+  }
+  if (mp3State === "Stored") storedObjects.set(mp3Key, mp3);
+  return { key, bytes, peaksKey, peaks, callId, mp3Key, mp3 };
 }
 
 async function recordingAudio(workspaceId: string, recordingId: string, cookie: string, headers: Record<string, string> = {}) {
@@ -244,6 +255,10 @@ async function recordingAudio(workspaceId: string, recordingId: string, cookie: 
 
 async function recordingPeaks(workspaceId: string, recordingId: string, cookie: string) {
   return workspacesHandler()(new Request(`http://localhost:3000/api/workspaces/${workspaceId}/recordings/${recordingId}/peaks`, { headers: { cookie } }));
+}
+
+async function recordingMp3(workspaceId: string, recordingId: string, cookie: string) {
+  return workspacesHandler()(new Request(`http://localhost:3000/api/workspaces/${workspaceId}/recordings/${recordingId}/mp3`, { headers: { cookie } }));
 }
 
 describe.sequential("Recording stream", () => {
@@ -439,6 +454,70 @@ describe.sequential("Recording waveform peaks", () => {
   });
 });
 
+describe.sequential("Recording MP3 download", () => {
+  let operatorCookie = "";
+  let clientCookie = "";
+  let activeRecording: Awaited<ReturnType<typeof seedRecording>>;
+
+  beforeAll(async () => {
+    operatorCookie = await signIn("operator@example.com");
+    clientCookie = await signIn("client@example.com");
+    await pool!.query(
+      `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
+       select 'mp3-regrant', organization_id, 'granted-active', (select id from "user" where email = 'client@example.com'), now()
+         from workspace where id = 'granted-active'
+       on conflict do nothing`,
+    );
+    activeRecording = await seedRecording("granted-active", "active-mp3-recording");
+    await seedRecording("ungranted-active", "ungranted-mp3-recording");
+    await seedRecording("other-organization-workspace", "other-organization-mp3-recording");
+  });
+
+  it("downloads a Stored MP3 to an Operator and a granted Client Viewer as a private attachment named for its Call without revealing its object keys", async () => {
+    for (const cookie of [operatorCookie, clientCookie]) {
+      const response = await recordingMp3("granted-active", "active-mp3-recording", cookie);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("audio/mpeg");
+      expect(response.headers.get("content-disposition")).toBe(`attachment; filename="tracer-call-${activeRecording.callId}.mp3"`);
+      expect(response.headers.get("content-length")).toBe(String(activeRecording.mp3.byteLength));
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(activeRecording.mp3);
+      expect(JSON.stringify([...response.headers])).not.toContain(activeRecording.mp3Key);
+    }
+  });
+
+  it("answers Not Found for an MP3 in an ungranted Workspace, through another Workspace's path, or in another Organization", async () => {
+    for (const [workspaceId, recordingId, cookie] of [
+      ["ungranted-active", "ungranted-mp3-recording", clientCookie],
+      ["granted-active", "ungranted-mp3-recording", clientCookie],
+      ["other-organization-workspace", "other-organization-mp3-recording", clientCookie],
+      ["granted-active", "other-organization-mp3-recording", operatorCookie],
+    ]) {
+      const response = await recordingMp3(workspaceId, recordingId, cookie);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    }
+  });
+
+  it("answers Not Found for an MP3 that is Pending or Failed, whose Recording is not Stored, or whose object is missing from R2", async () => {
+    await seedRecording("granted-active", "pending-mp3-recording", "Stored", { mp3: "Pending" });
+    await seedRecording("granted-active", "failed-mp3-recording", "Stored", { mp3: "Failed" });
+    await seedRecording("granted-active", "pending-transfer-mp3-recording", "Pending");
+    const missing = await seedRecording("granted-active", "missing-mp3-recording");
+    storedObjects.delete(missing.mp3Key);
+    for (const recordingId of ["pending-mp3-recording", "failed-mp3-recording", "pending-transfer-mp3-recording", "missing-mp3-recording"]) {
+      const response = await recordingMp3("granted-active", recordingId, operatorCookie);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    }
+  });
+
+  it("rejects an unauthenticated MP3 request", async () => {
+    const response = await recordingMp3("granted-active", "active-mp3-recording", "");
+    expect(response.status).toBe(401);
+  });
+});
+
 describe.sequential("Recording media expiry", () => {
   let operatorCookie = "";
 
@@ -452,10 +531,14 @@ describe.sequential("Recording media expiry", () => {
     operatorCookie = await signIn("operator@example.com");
   });
 
-  it("refuses audio and peaks with Not Found once 12 months have passed since the Call started, keeping the Call and Recording", async () => {
+  it("refuses audio, peaks, and the MP3 with Not Found once 12 months have passed since the Call started, keeping the Call and Recording", async () => {
     await seedRecording("granted-active", "expired-recording", "Stored", { callStartedAt: monthsAgo(13) });
     const before = (await pool!.query("select * from recording where id = 'expired-recording'")).rows[0];
-    for (const response of [await recordingAudio("granted-active", "expired-recording", operatorCookie), await recordingPeaks("granted-active", "expired-recording", operatorCookie)]) {
+    for (const response of [
+      await recordingAudio("granted-active", "expired-recording", operatorCookie),
+      await recordingPeaks("granted-active", "expired-recording", operatorCookie),
+      await recordingMp3("granted-active", "expired-recording", operatorCookie),
+    ]) {
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: "not_found" });
     }
@@ -463,9 +546,10 @@ describe.sequential("Recording media expiry", () => {
     expect((await pool!.query("select id from call where id = 'expired-recording-call'")).rowCount).toBe(1);
   });
 
-  it("keeps serving audio and peaks before 12 months have passed since the Call started", async () => {
+  it("keeps serving audio, peaks, and the MP3 before 12 months have passed since the Call started", async () => {
     await seedRecording("granted-active", "retained-recording", "Stored", { callStartedAt: monthsAgo(11) });
     expect((await recordingAudio("granted-active", "retained-recording", operatorCookie)).status).toBe(200);
     expect((await recordingPeaks("granted-active", "retained-recording", operatorCookie)).status).toBe(200);
+    expect((await recordingMp3("granted-active", "retained-recording", operatorCookie)).status).toBe(200);
   });
 });

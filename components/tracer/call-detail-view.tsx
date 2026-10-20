@@ -15,9 +15,12 @@
  *
  * @remarks
  *  A PlaybackProvider spans the player and the analysis regions so the
- *  Transcript and evidence can follow and seek playback. Download MP3,
- *  Export Call, and Purge Media wait for later milestones, so none of them
- *  render here. The page resolves the back link and previous and next Call
+ *  Transcript and evidence can follow and seek playback. The header offers
+ *  Download MP3 whenever the read model gives a downloadable MP3, whatever
+ *  the waveform state; the read model withholds it once media expires. It
+ *  downloads through the Workspace-authorized MP3 route. Export Call
+ *  confirms and requests a single-Call Recording ZIP. Purge Media waits
+ *  for a later milestone, so it does not render here. The page resolves the back link and previous and next Call
  *  hrefs on the server; without them the back link is Workspace Calls and
  *  both steps are disabled. Previous and next are compact icon buttons so
  *  the header row fits at 390px. Call Detail is a record-detail page, so
@@ -35,7 +38,7 @@
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, DownloadIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -43,6 +46,7 @@ import { ButtonGroup } from "@/components/ui/button-group";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineDate, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
 import CallAnalysis from "@/components/tracer/call-analysis";
+import { ExportCallButton } from "@/components/tracer/call-export";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock, formatTimeOfDay } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
@@ -167,7 +171,18 @@ export default function CallDetailView({
             </StepCall>
           </ButtonGroup>
         </div>
-        <h1 className="text-2xl font-semibold tracking-tight tabular-nums">{call.callerNumber ?? "Unknown caller"}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight tabular-nums">{call.callerNumber ?? "Unknown caller"}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {call.mp3RecordingId ? (
+              <a className={buttonVariants({ variant: "outline", size: "sm" })} href={`/api/workspaces/${call.workspace.id}/recordings/${call.mp3RecordingId}/mp3`} download>
+                <DownloadIcon data-icon="inline-start" aria-hidden />
+                Download MP3
+              </a>
+            ) : null}
+            <ExportCallButton workspaceId={call.workspace.id} callId={call.id} />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <CallOutcomeBadge outcome={call.outcome} />
           {call.effectiveLeadClassification ? (

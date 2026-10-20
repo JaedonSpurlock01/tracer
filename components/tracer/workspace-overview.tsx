@@ -10,8 +10,8 @@
  *  published Call Flow summary, and the five Recent Calls linking to Call
  *  Detail, with View Calls opening Workspace Calls over the same range. The
  *  Workspace tabs sit below the header. Operators get Edit Flow and
- *  Workspace Settings; Client Viewers get Generate Report, disabled until
- *  Reports exist, and Reports.
+ *  Workspace Settings; Client Viewers get Generate Report, scoped to this
+ *  Workspace and its reporting timezone, and Workspace Reports.
  *
  * @remarks
  *  Lifecycle state and health stay separate: routing health reports the
@@ -46,13 +46,13 @@ import {
   AnalyticsRangeControls,
   CallTrendsChart,
   CallTrendsSkeleton,
-  GenerateReportButton,
   RegionRetry,
   useAnalyticsNavigation,
 } from "@/components/tracer/analytics-panels";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock } from "@/components/tracer/call-format";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
+import GenerateReportButton from "@/components/tracer/generate-report-dialog";
 import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import type { AnalyticsSummary, WebhookHealth, WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
@@ -230,10 +230,10 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
             </>
           ) : (
             <>
-              <Button variant="outline" render={<Link href="/reports" prefetch />}>
+              <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/reports`} prefetch />}>
                 Reports
               </Button>
-              <GenerateReportButton />
+              <GenerateReportButton scope={{ kind: "workspace", workspace: { id: workspace.id, name: workspace.name, reportingTimezone: workspace.reportingTimezone } }} />
             </>
           )}
         </div>

@@ -1,0 +1,29 @@
+{
+  "accountId": "0123456789abcdef0123456789abcdef",
+  "bucket": "tracer-recordings-staging",
+  "key": "reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip",
+  "uploadId": "AE8wTcAd1Fq7mXm3_q2VbQx0bHkS9vR4ZtWgYc6LpNj5eUoDiK",
+  "staleUploadIds": ["AFf3Lq9mRZbX2kVt7nWcJ0yHs4GpUd8aEoQi1BlMxTzCvN", "AGk7Pb2wQsNc5ZrY8mVfH3dJx0LtUe6aKoRi9TnBgWpEyS"],
+  "createMultipartUpload": {
+    "status": 200,
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>tracer-recordings-staging</Bucket><Key>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Key><UploadId>AE8wTcAd1Fq7mXm3_q2VbQx0bHkS9vR4ZtWgYc6LpNj5eUoDiK</UploadId></InitiateMultipartUploadResult>"
+  },
+  "uploadPart": {
+    "status": 200,
+    "etags": ["\"7c2e1f0a9b4d63e85a17c0d2f9b3e641\"", "\"e41b8c3d07f2a95b6c18d4e0a73f92c5\"", "\"0d9a6f3c2b81e47d5f60a1c9e8b27d34\""]
+  },
+  "completeMultipartUpload": {
+    "status": 200,
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Location>tracer-recordings-staging/reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Location><Bucket>tracer-recordings-staging</Bucket><Key>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Key><ETag>\"b3f19c07d2e84a6f15c0e9a2d7b4f613-3\"</ETag></CompleteMultipartUploadResult>"
+  },
+  "completeMultipartUploadError": {
+    "status": 200,
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidPart</Code><Message>One or more of the specified parts could not be found.</Message></Error>"
+  },
+  "abortMultipartUpload": { "status": 204 },
+  "listMultipartUploads": {
+    "status": 200,
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListMultipartUploadsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>tracer-recordings-staging</Bucket><Prefix>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Prefix><IsTruncated>false</IsTruncated><Upload><Key>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Key><UploadId>AFf3Lq9mRZbX2kVt7nWcJ0yHs4GpUd8aEoQi1BlMxTzCvN</UploadId><Initiated>2026-10-14T15:39:48.517Z</Initiated></Upload><Upload><Key>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip.old</Key><UploadId>AHq0Wm4nTzXc7VbR2kLfJ9yGs5PpUd3aEoNi8BlMxRtCvK</UploadId><Initiated>2026-10-14T15:38:02.144Z</Initiated></Upload><Upload><Key>reports/5c0e9d2a-7b41-4f6e-a3d8-91f2c47b6e05/recordings.zip</Key><UploadId>AGk7Pb2wQsNc5ZrY8mVfH3dJx0LtUe6aKoRi9TnBgWpEyS</UploadId><Initiated>2026-10-14T15:40:31.902Z</Initiated></Upload></ListMultipartUploadsResult>"
+  },
+  "serviceUnavailable": { "status": 503 }
+}

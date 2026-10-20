@@ -34,6 +34,7 @@ export default defineConfig({
     env: {
       E2E_AUTH_FAKE: "true",
       E2E_TWILIO_FAKE: "true",
+      E2E_TRIGGER_FAKE: "true",
       NODE_ENV: "development",
       DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
       AUTH_EMAIL_FROM: "auth@example.com",

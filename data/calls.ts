@@ -65,7 +65,7 @@
 import type { Pool } from "pg";
 
 import type { Actor } from "@/data/authorization";
-import { connectedSecondsSql, recordingAvailability, type CallDetail, type RecordingAvailability, type RecordingAvailabilityRow } from "@/data/call-details";
+import { connectedSecondsSql, downloadableMp3RecordingId, recordingAvailability, type CallDetail, type RecordingAvailability, type RecordingAvailabilityRow } from "@/data/call-details";
 import type { OutcomeKind } from "@/data/call-flow";
 import { callPageSize, flatCallFilterConditions, type CallFilterCondition, type CallFilterGroup, type CallFilters, type CallListQuery, type CallSortColumn } from "@/data/call-list-query";
 import { effectiveLeadClassification, type EffectiveLeadClassification, type LeadClassification } from "@/data/lead-classification";
@@ -83,6 +83,7 @@ export interface CallListItem {
   effectiveLeadClassification: EffectiveLeadClassification;
   leadScore: number | null;
   recording: RecordingAvailability["state"];
+  mp3RecordingId: string | null;
 }
 
 export interface CallListResult {
@@ -127,6 +128,7 @@ export type CallListRow = {
   duration_seconds: number | null;
   transfer_state: RecordingAvailabilityRow["transfer_state"];
   waveform_state: RecordingAvailabilityRow["waveform_state"];
+  mp3_state: RecordingAvailabilityRow["mp3_state"];
   expires_at: Date;
   expired: boolean;
   assessment_classification: LeadClassification | null;
@@ -148,7 +150,7 @@ const sortExpressions: Readonly<Record<CallSortColumn, string>> = {
 
 export function callListItem(row: CallListRow): CallListItem {
   const recording: RecordingAvailabilityRow | undefined = row.recording_id
-    ? { id: row.recording_id, channels: row.channels, duration_seconds: row.duration_seconds, transfer_state: row.transfer_state, waveform_state: row.waveform_state, expires_at: row.expires_at, expired: row.expired }
+    ? { id: row.recording_id, channels: row.channels, duration_seconds: row.duration_seconds, transfer_state: row.transfer_state, waveform_state: row.waveform_state, mp3_state: row.mp3_state, expires_at: row.expires_at, expired: row.expired }
     : undefined;
   return {
     id: row.id,
@@ -161,13 +163,14 @@ export function callListItem(row: CallListRow): CallListItem {
     effectiveLeadClassification: effectiveLeadClassification({ review: row.review_classification, assessment: row.assessment_classification }),
     leadScore: row.lead_score,
     recording: recordingAvailability(recording, null).state,
+    mp3RecordingId: downloadableMp3RecordingId(recording),
   };
 }
 
 export const callSource = `call c
            join workspace w on w.id = c.workspace_id and w.organization_id = c.organization_id
            left join lateral (
-             select r.id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.transcript_state, r.lead_assessment_state,
+             select r.id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state, r.mp3_object_key, r.transcript_state, r.lead_assessment_state,
                     ${recordingMediaExpiresAtSql("c.started_at")} as expires_at,
                     ${recordingMediaExpiredSql("c.started_at", "now()")} as expired
                from recording r
@@ -180,7 +183,7 @@ export const callSource = `call c
 
 export const callListColumns = `c.id, c.workspace_id, w.name as workspace_name, c.caller_number, c.state, c.outcome, c.started_at,
                 ${connectedSecondsSql} as connected_seconds,
-                r.id as recording_id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.expires_at, r.expired,
+                r.id as recording_id, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state, r.expires_at, r.expired,
                 la.classification as assessment_classification, la.score as lead_score,
                 lr.classification as review_classification`;
 

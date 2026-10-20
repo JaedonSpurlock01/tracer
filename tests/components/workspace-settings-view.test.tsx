@@ -167,7 +167,7 @@ describe("WorkspaceSettingsView", () => {
     const nav = screen.getByRole("navigation", { name: "Workspace" });
     expect(screen.getByRole("heading", { level: 1 }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(nav.compareDocumentPosition(screen.getByRole("navigation", { name: "Workspace settings sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Settings"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
     expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
   });
 

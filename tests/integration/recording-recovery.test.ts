@@ -49,6 +49,8 @@ async function recording(state: {
   waveform?: string;
   transcript?: string;
   leadAssessment?: string;
+  mp3?: string;
+  callId?: string;
   createdAt: Date;
   updatedAt: Date;
 }): Promise<string> {
@@ -56,10 +58,12 @@ async function recording(state: {
   const id = randomUUID();
   const stored = state.transfer === "Stored";
   const waveformStored = state.waveform === "Stored";
+  const mp3 = state.mp3 ?? (stored ? "Stored" : "Pending");
   await pool!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, twilio_cleanup_state,
-                            r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at, created_at, updated_at)
-     values ($1, $2, 'recovery-workspace', 'recovery-call', $3, 'voicemail', 1, $4, $5, $6, $7, $8, $9, $12, $13, $14, $10, $11)`,
+                            r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at,
+                            mp3_state, mp3_object_key, mp3_size_bytes, mp3_generated_at, created_at, updated_at)
+     values ($1, $2, 'recovery-workspace', $15, $3, 'voicemail', 1, $4, $5, $6, $7, $8, $9, $12, $13, $14, $16, $17, $18, $19, $10, $11)`,
     [
       id,
       organizationId,
@@ -75,6 +79,11 @@ async function recording(state: {
       state.waveform ?? "Pending",
       waveformStored ? `recordings/${id}.peaks.json` : null,
       waveformStored ? state.updatedAt : null,
+      state.callId ?? "recovery-call",
+      mp3,
+      mp3 === "Stored" ? `recordings/${id}.mp3` : null,
+      mp3 === "Stored" ? 64 : null,
+      mp3 === "Stored" ? state.updatedAt : null,
     ],
   );
   if (state.transcript) {
@@ -103,9 +112,10 @@ function sweep(
   waveform: RecordingProcessing = recordingProcessing(),
   transcription: RecordingProcessing = recordingProcessing(),
   leadAssessment: RecordingProcessing = recordingProcessing(),
+  mp3: RecordingProcessing = recordingProcessing(),
 ) {
   return sweepStuckRecordings(
-    { pool: pool!, recordingProcessing: processing, recordingWaveform: waveform, recordingTranscription: transcription, recordingLeadAssessment: leadAssessment },
+    { pool: pool!, recordingProcessing: processing, recordingWaveform: waveform, recordingTranscription: transcription, recordingLeadAssessment: leadAssessment, recordingMp3: mp3 },
     now,
   );
 }
@@ -150,8 +160,9 @@ beforeAll(async () => {
   );
   await pool.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
-     values ('recovery-call', $1, 'recovery-workspace', 'recovery-assignment', 'recovery-flow-version', 'CArecovery', '+14155550112', now(), now(), now())`,
-    [organizationId],
+     values ('recovery-call', $1, 'recovery-workspace', 'recovery-assignment', 'recovery-flow-version', 'CArecovery', '+14155550112', $2, $2, $2),
+            ('recovery-expired-call', $1, 'recovery-workspace', 'recovery-assignment', 'recovery-flow-version', 'CArecoveryexpired', '+14155550112', $3, $3, $3)`,
+    [organizationId, hours(24 * 60), new Date("2025-10-16T11:59:59.000Z")],
   );
 }, 120_000);
 
@@ -290,5 +301,48 @@ describe("Recording recovery sweep", () => {
     await expect(sweep(recordingProcessing(), waveform)).resolves.toEqual({ requested: 1, failed: 1 });
 
     expect(waveform.requests.map((request) => request.id)).toEqual([first, second]);
+  });
+
+  it("backfills MP3s for Stored Recordings of any age within media retention whose MP3 is Pending, and retries recent Failed MP3s", async () => {
+    const backfill = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Pending", createdAt: hours(24 * 50), updatedAt: hours(24 * 50) });
+    const pending = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Pending", createdAt: hours(30), updatedAt: hours(2) });
+    const failed = await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Failed", createdAt: hours(20), updatedAt: hours(2) });
+    const processing = recordingProcessing();
+    const waveform = recordingProcessing();
+    const mp3 = recordingProcessing();
+
+    await expect(sweep(processing, waveform, recordingProcessing(), recordingProcessing(), mp3)).resolves.toEqual({ requested: 3, failed: 0 });
+
+    expect(mp3.requests).toEqual([backfill, pending, failed].map((id) => ({ id, organizationId, idempotencyKey: `recording-mp3:${id}` })));
+    expect(processing.requests).toEqual([]);
+    expect(waveform.requests).toEqual([]);
+  });
+
+  it("skips MP3s that are fresh, Stored, Failed for over 7 days, past media retention, or whose Recording is not Stored", async () => {
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Pending", createdAt: hours(3), updatedAt: hours(0.5) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Stored", createdAt: hours(24 * 50), updatedAt: hours(24 * 50) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Failed", createdAt: hours(7 * 24 + 1), updatedAt: hours(7 * 24) });
+    await recording({ transfer: "Stored", cleanup: "Deleted", waveform: "Stored", mp3: "Pending", callId: "recovery-expired-call", createdAt: hours(24 * 300), updatedAt: hours(24 * 300) });
+    await recording({ transfer: "Failed", cleanup: "Pending", mp3: "Pending", createdAt: hours(24 * 50), updatedAt: hours(24 * 50) });
+    const processing = recordingProcessing();
+    const mp3 = recordingProcessing();
+
+    await expect(sweep(processing, recordingProcessing(), recordingProcessing(), recordingProcessing(), mp3)).resolves.toEqual({ requested: 0, failed: 0 });
+
+    expect(mp3.requests).toEqual([]);
+    expect(processing.requests).toEqual([]);
+  });
+
+  it("backfills only the MP3 for a Recording older than 7 days whose other stages also stalled", async () => {
+    const id = await recording({ transfer: "Stored", cleanup: "Failed", waveform: "Failed", transcript: "Failed", mp3: "Pending", createdAt: hours(24 * 50), updatedAt: hours(24 * 50) });
+    const processing = recordingProcessing();
+    const waveform = recordingProcessing();
+    const transcription = recordingProcessing();
+    const mp3 = recordingProcessing();
+
+    await expect(sweep(processing, waveform, transcription, recordingProcessing(), mp3)).resolves.toEqual({ requested: 1, failed: 0 });
+
+    expect(mp3.requests.map((request) => request.id)).toEqual([id]);
+    expect([...processing.requests, ...waveform.requests, ...transcription.requests]).toEqual([]);
   });
 });

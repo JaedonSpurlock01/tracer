@@ -75,6 +75,8 @@ export async function provisionRuntimeRole(
   await connection.query(`GRANT SELECT, INSERT ON TABLE public.lead_assessment TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.lead_review TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT ON TABLE public.call_event TO ${runtimeRole}`);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.report_job TO ${runtimeRole}`);
+  await connection.query(`GRANT SELECT, INSERT ON TABLE public.report_artifact TO ${runtimeRole}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public."user" TO ${runtimeRole}`);
   await connection.query(`REVOKE CREATE ON SCHEMA public FROM ${runtimeRole}`);
 }

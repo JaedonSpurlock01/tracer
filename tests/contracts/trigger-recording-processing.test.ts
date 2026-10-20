@@ -5,8 +5,9 @@
  *
  * @description
  *  Checks that a Recording processing request triggers the Recording
- *  transfer, waveform, or transcription task through the Trigger.dev REST
- *  API with the exact URL, authorization, payload, and idempotency key, and
+ *  transfer, waveform, transcription, Lead Assessment, or MP3 task through
+ *  the Trigger.dev REST API with the exact URL, authorization, payload, and
+ *  idempotency key, and
  *  that failures reject without exposing the secret key.
  *
  * @remarks
@@ -21,7 +22,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
+import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingMp3TaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
 
 import fixture from "./fixtures/trigger/trigger-task.json";
 
@@ -80,6 +81,17 @@ describe("Trigger.dev Recording processing", () => {
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://trigger.test/api/v1/tasks/recording-lead-assessment/trigger");
     expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-lead-assessment:${recordingId}`, ttl: "7d" } });
+  });
+
+  it("triggers one Recording MP3 run on the MP3 task with its own idempotency key", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(fixture.response));
+    const processing = createTriggerRecordingProcessing({ secretKey, fetch, baseUrl: "https://trigger.test", taskId: recordingMp3TaskId });
+
+    await processing.request({ ...recording, idempotencyKey: `recording-mp3:${recordingId}` });
+
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://trigger.test/api/v1/tasks/recording-mp3/trigger");
+    expect(JSON.parse(init.body as string)).toEqual({ payload: { recordingId }, options: { idempotencyKey: `recording-mp3:${recordingId}`, ttl: "7d" } });
   });
 
   it("rejects a non-success response without exposing the secret key", async () => {

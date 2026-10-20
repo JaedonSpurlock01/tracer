@@ -1,22 +1,25 @@
 /**
  * -------------------------------------------------------------------------
  * @file   recording-media.ts
- * @brief  Finds a Recording's available private media and serves its peaks.
+ * @brief  Finds a Recording's available private media and serves its peaks and MP3.
  *
  * @description
  *  Owns the media expiry rule: Recording media counts as Expired 12 months
  *  after its Call started. Loads a Recording scoped to its Organization and
  *  Workspace only while its WAV is Stored and its media has not expired,
- *  returning the WAV and, once the waveform is Stored, its peaks object.
+ *  returning the WAV and, once each is Stored, its peaks and MP3 objects.
  *  Serves the peaks JSON from the R2 binding as a private, uncached
- *  response. Callers authorize the Workspace first. Also states Recording
+ *  response, and the MP3 as a private, uncached attachment named
+ *  `tracer-call-{callId}.mp3`. Callers authorize the Workspace first. Also states Recording
  *  availability in SQL so lists can filter on the same Ready, Processing,
  *  Failed, Unavailable, or Expired state that Call Detail derives.
  *
  * @remarks
  *  Expiry is derived from the Call's start rather than stored, so no row is
  *  written or deleted when media expires; the Call, its facts, and the
- *  Recording metadata remain. Object keys never leave the server. The SQL
+ *  Recording metadata remain. Object keys never leave the server, and the
+ *  download filename uses the Call's id rather than the caller's number so
+ *  no personal data lands in a browser's download history. The SQL
  *  availability state follows the same precedence as `recordingAvailability`
  *  in data/call-details.ts: no Recording, then Expired, then a failed or
  *  pending transfer, then a pending waveform.
@@ -24,6 +27,7 @@
  * @see
  *  data/recording-audio.ts
  *  data/recording-waveform.ts
+ *  data/recording-mp3.ts
  *  data/workspaces-handler.ts
  *  data/call-details.ts
  *
@@ -39,6 +43,7 @@ export interface RecordingMediaBucket {
 export interface AvailableRecordingMedia {
   audio: { key: string; sizeBytes: number };
   peaksKey: string | null;
+  mp3: { key: string; sizeBytes: number; callId: string } | null;
 }
 
 export function recordingMediaExpiresAtSql(callStartedAt: string): string {
@@ -63,8 +68,9 @@ export async function findAvailableRecordingMedia(
   pool: Pool,
   scope: { organizationId: string; workspaceId: string; recordingId: string },
 ): Promise<AvailableRecordingMedia | null> {
-  const result = await pool.query<{ r2_object_key: string; size_bytes: string; waveform_object_key: string | null }>(
-    `select r.r2_object_key, r.size_bytes, case when r.waveform_state = 'Stored' then r.waveform_object_key end as waveform_object_key
+  const result = await pool.query<{ r2_object_key: string; size_bytes: string; waveform_object_key: string | null; call_id: string; mp3_object_key: string | null; mp3_size_bytes: string | null }>(
+    `select r.r2_object_key, r.size_bytes, case when r.waveform_state = 'Stored' then r.waveform_object_key end as waveform_object_key,
+            r.call_id, case when r.mp3_state = 'Stored' then r.mp3_object_key end as mp3_object_key, r.mp3_size_bytes
        from recording r
        join call c on c.id = r.call_id
       where r.id = $1 and r.organization_id = $2 and r.workspace_id = $3 and r.transfer_state = 'Stored'
@@ -72,11 +78,29 @@ export async function findAvailableRecordingMedia(
     [scope.recordingId, scope.organizationId, scope.workspaceId],
   );
   const row = result.rows[0];
-  return row ? { audio: { key: row.r2_object_key, sizeBytes: Number(row.size_bytes) }, peaksKey: row.waveform_object_key } : null;
+  if (!row) return null;
+  return {
+    audio: { key: row.r2_object_key, sizeBytes: Number(row.size_bytes) },
+    peaksKey: row.waveform_object_key,
+    mp3: row.mp3_object_key ? { key: row.mp3_object_key, sizeBytes: Number(row.mp3_size_bytes), callId: row.call_id } : null,
+  };
 }
 
 export async function recordingPeaksResponse(bucket: RecordingMediaBucket, peaksKey: string): Promise<Response | null> {
   const object = await bucket.get(peaksKey);
   if (!object) return null;
   return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+}
+
+export async function recordingMp3Response(bucket: RecordingMediaBucket, mp3: NonNullable<AvailableRecordingMedia["mp3"]>): Promise<Response | null> {
+  const object = await bucket.get(mp3.key);
+  if (!object) return null;
+  return new Response(object.body, {
+    headers: {
+      "content-type": "audio/mpeg",
+      "content-length": String(mp3.sizeBytes),
+      "content-disposition": `attachment; filename="tracer-call-${mp3.callId}.mp3"`,
+      "cache-control": "private, no-store",
+    },
+  });
 }

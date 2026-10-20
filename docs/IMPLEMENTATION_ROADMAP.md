@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None; M16 is next
-- **Next milestone:** M16 - Reports and Recording Exports
+- **Current milestone:** None; M17 is next
+- **Next milestone:** M17 - Retention, Purge, and Lifecycle Automation
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-18
+- **Last roadmap review:** 2026-10-19
 
-M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. No milestone is In Progress.
+M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. M16 is Complete. It delivered scoped PDF and CSV reports generated in Trigger.dev, Calls Export CSV and Recording ZIP exports with a CSV manifest and a 500-Recording limit, a precomputed stereo MP3 per Stored Recording with Download MP3 and single-Call Export Call, requester-only Report history and the notification popover with downloads that recheck access to the whole Workspace scope, and seven-day artifact expiry through the `report-artifacts` R2 lifecycle rule with a 6-hour sweep that fails stuck jobs and deletes metadata after 90 days.
 
 ## Status model
 
@@ -183,7 +183,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M13 | Transcript, Lead Assessment, and Lead Review | Complete | Staging | M12 |
 | M14 | Calls and Activity Operations | Complete | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Complete | Preview and Staging | M14 |
-| M16 | Reports and Recording Exports | Not Started | Staging | M15 |
+| M16 | Reports and Recording Exports | Complete | Staging | M15 |
 | M17 | Retention, Purge, and Lifecycle Automation | Not Started | Staging | M16 |
 | M18 | Production Hardening and Acceptance | Not Started | Staging | M17 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
@@ -937,10 +937,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M16 - Reports and Recording Exports
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Outcome:** Authorized users can request, monitor, and download scoped PDF, CSV, and Recording ZIP artifacts.
 - **Depends on:** M15
 - **Target environment:** Staging
+- **Execution note:** Stored Recordings are dual-channel WAV, which the Worker cannot transcode, so a Trigger.dev ffmpeg task derives one stereo MP3 per Stored Recording in R2 alongside its waveform peaks, and the recovery sweep backfills Recordings Stored before M16; the MP3 expires with the Recording, and M17 purges it with the WAV and peaks. Download MP3 streams that MP3 through the same Workspace authorization and media expiry as the M11 Recording route, on Call Detail and as the Calls row action M14 deferred. Export Call on Call Detail is a single-Call Recording ZIP built by the same export path, holding the MP3, its CSV manifest row, and the Transcript and Lead Assessment when present. Report and export jobs are visible only to their requester in Report history and the notification popover, and every download rechecks the requester's current access to every Workspace in the job's scope, so losing access to any one of them blocks the whole artifact. A Recording ZIP is limited to 500 retained Recordings; the export confirmation blocks a larger match and asks for narrower filters, and the ZIP streams to R2 through a multipart upload. The PDF is rendered in Trigger.dev with `@react-pdf/renderer` and embedded Geist, without a headless browser. A duplicate submission with the same requester and parameters returns the existing unexpired job. Generated artifacts expire through an R2 lifecycle rule on their prefix after 7 days, and a scheduled Trigger.dev task deletes job metadata after 90 days. That task runs every 6 hours, also marks a job still Queued or Generating 6 hours after its request as Failed so Retry is offered, and deletes a purged job's R2 objects first as a backup to the lifecycle rule; the rule was applied to `tracer-recordings-staging` on 2026-10-18 with Wrangler, and `scripts/configure-report-lifecycle.ts` applies the same rule idempotently, which M19 uses for Production. Every job's Calls are frozen at its request time, so generation matches the counts the confirmation showed, a report or export that matches no Calls is refused, and a ZIP with no retained Recordings is refused. A Calls export uses the Calls page's timezone, the account timezone on global Calls and the Workspace reporting timezone on Workspace Calls, and a global Calls export's scope is the Workspaces of the Calls it matches, so losing access to an unrelated Workspace does not block its download. Regenerate, which is also Retry for a Failed job, reproduces the original job's resolved window as a Custom Range rather than re-resolving a preset. The PDF uses light content pages after a dark cover so it prints well. The Recording ZIP stores MP3s without recompression in a ZIP64-capable archive that streams to R2 through a multipart upload, its `manifest.csv` lists every matched Call with whether its Recording was included or why it was omitted, and the report task allows one hour on a 1 GB machine. Download MP3 needs only a Stored MP3 and retained media, independent of waveform peaks. The CSV neutralizes spreadsheet formulas except plain E.164 numbers and starts with a UTF-8 byte-order mark for Excel.
 
 #### Vertical slices
 
@@ -951,6 +952,9 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 5. Generate a Recording ZIP with CSV manifest from current filters.
 6. Authorize every download and expose job history.
 7. Expire generated artifacts after seven days and metadata after ninety days.
+8. Derive a stereo MP3 for each Stored Recording and backfill existing Recordings.
+9. Download MP3 from Call Detail and the Calls row actions.
+10. Export Call as a single-Call Recording ZIP.
 
 #### Test-first behaviors
 
@@ -968,12 +972,16 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Reports page and generation Dialog
 - Report history and notification popover
 - Sixth Playwright journey for report generation and download
+- Precomputed Recording MP3, Download MP3, and Export Call
+- Report lifecycle sweep and the `reports/` R2 lifecycle rule
 
 #### Verification gate
 
 - Domain, task, integration, authorization, and report Playwright tests pass.
 - Generated files are inspected for expected metadata and representative content.
 - Staging artifacts expire through the configured lifecycle path.
+
+- The Product Owner marked M16 Complete on 2026-10-19 after the domain, task, integration, authorization, component, typecheck, lint, build, and Playwright gates passed locally and in the Verification workflow, including the report generation journey; the workflow's Staging gate applied migrations 0017 and 0018, reran the runtime grants, deployed `tracer-staging`, and passed the database smoke check; and the Product Owner verified Reports PDF and CSV, Calls Export CSV and Export Recordings, Export Call, Download MP3 with the MP3 backfill, and the notification popover on Staging using existing Staging Calls. The `report-artifacts` lifecycle rule is applied to `tracer-recordings-staging`; observing the first Staging artifacts expire after 7 days moves to M17, which owns lifecycle verification.
 
 #### Exit criteria
 
@@ -1018,6 +1026,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - Domain, task, integration, and component tests pass.
 - Staging uses shortened test fixtures to demonstrate each lifecycle safely.
 - R2 and PostgreSQL state agree after cleanup.
+- Staging report artifacts generated during M16 verification are confirmed expired by the `report-artifacts` R2 lifecycle rule.
 
 #### Exit criteria
 
@@ -1076,6 +1085,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 1. Freeze roadmap scope for the deployment.
 2. Confirm `verify:full` and Staging acceptance evidence.
 3. Confirm backup, migration, rollback, secrets, and bindings.
+   Apply the `report-artifacts` R2 lifecycle rule to `tracer-recordings-production` with `scripts/configure-report-lifecycle.ts`, as M16 applied it to `tracer-recordings-staging`.
 4. Apply Production migrations through the documented path.
 5. Deploy the Cloudflare Worker application.
 6. Deploy the matching Trigger.dev task version.

@@ -6,7 +6,9 @@
  * @description
  *  Resolves the current actor, redirects unauthenticated requests, and wraps
  *  authenticated pages in the responsive Sidebar shell with the actor's
- *  account menu and current Organization.
+ *  account menu and current Organization. The header holds the report and
+ *  export notification popover, and one jobs provider spans the header and
+ *  page so a job a page requests appears in the popover at once.
  *
  * @remarks
  *  Route authorization remains server-side before shell content renders. The
@@ -23,6 +25,8 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import AppSidebar from "@/components/tracer/app-sidebar";
+import { ReportJobsProvider } from "@/components/tracer/report-jobs";
+import ReportNotifications from "@/components/tracer/report-notifications";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { resolveRequestActor } from "@/app/(app)/actor";
 import { createOrganizationRepository } from "@/data/organization-repository";
@@ -46,10 +50,13 @@ export default async function AppLayout({ children }: AppLayoutProps) {
         organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
       />
       <SidebarInset className="min-w-0">
-        <header className="flex h-12 items-center gap-2 border-b border-border px-4">
-          <SidebarTrigger />
-        </header>
-        <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
+        <ReportJobsProvider>
+          <header className="flex h-12 items-center justify-between gap-2 border-b border-border px-4">
+            <SidebarTrigger />
+            <ReportNotifications />
+          </header>
+          <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
+        </ReportJobsProvider>
       </SidebarInset>
     </SidebarProvider>
   );
