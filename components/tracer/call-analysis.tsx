@@ -3,30 +3,36 @@
 /**
  * -------------------------------------------------------------------------
  * @file   call-analysis.tsx
- * @brief  Renders a Call's Transcript, Lead Review, and Lead Assessment.
+ * @brief  Renders a Call's Transcript, Lead Review, and Lead Assessment bodies.
  *
  * @description
- *  Shows the Transcript as timestamped Caller and Business turns that seek
- *  the Recording player, highlights the active turn, follows playback until
- *  the user scrolls away with a Resume Follow action, and searches turn
- *  text with highlighted matches. Shows the current Lead Review as the
- *  reporting result with an Operator form to add or update it, and the
- *  automated Lead Assessment whose evidence seeks and emphasizes its turn.
+ *  TranscriptBody shows timestamped Caller and Business turns that seek the
+ *  Recording player, highlights the active turn, follows playback until the
+ *  user scrolls away with a Resume Follow action, and searches turn text
+ *  with highlighted matches. LeadReviewBody shows the current Lead Review
+ *  as the reporting result with an Operator form to add or update it, and
+ *  AssessmentBody the automated Lead Assessment whose evidence seeks and
+ *  emphasizes its turn. useCallAnalysis owns the state they share: the
+ *  Transcript and Lead Assessment after a local Retry, the Retry action,
+ *  the evidence emphasis, and what Transcript content was removed.
  *  Transcript and Lead Assessment processing states render on their own,
  *  with an Operator-only Retry for a failed stage. After media expiry or a
  *  purge the Transcript explains which, and the assessment keeps its
  *  summary, classification, and score without a Rationale or evidence.
  *
  * @remarks
- *  The Lead Assessment stays labeled as an automated estimate and never
- *  reads as final. Failure reasons arrive only in Operator payloads, and
- *  Client Viewers see neutral unavailable messages. A successful write
- *  refreshes the client cache; until the refreshed Call arrives, the saved
- *  Lead Review or the retried stage shows locally. Follow and evidence
+ *  These are bodies without chrome: Call Detail places them under its own
+ *  Frames and sections, so the page decides the layout. The Lead
+ *  Assessment stays labeled as an automated estimate and never reads as
+ *  final. Failure reasons arrive only in Operator payloads, and Client
+ *  Viewers see neutral unavailable messages. A successful write refreshes
+ *  the client cache; until the refreshed Call arrives, the saved Lead
+ *  Review or the retried stage shows locally. Follow and evidence
  *  scrolling move only the Transcript list, never the page, and respect
  *  reduced motion.
  *
  * @see
+ *  components/tracer/call-detail-view.tsx
  *  components/tracer/playback.tsx
  *  data/call-details.ts
  *  DESIGN.md
@@ -38,7 +44,6 @@ import { cn } from "cn";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -293,21 +298,6 @@ export function TranscriptBody({ transcript, operator, retry, emphasis, listClas
   }
 }
 
-function TranscriptSection({ transcript, operator, retry, emphasis }: { transcript: CallDetail["transcript"]; operator: boolean; retry: RetryState; emphasis: Emphasis }) {
-  return (
-    <section aria-labelledby="call-transcript-title">
-      <Frame>
-        <FrameHeader>
-          <FrameTitle><h2 id="call-transcript-title">Transcript</h2></FrameTitle>
-        </FrameHeader>
-        <FramePanel>
-          <TranscriptBody transcript={transcript} operator={operator} retry={retry} emphasis={emphasis} />
-        </FramePanel>
-      </Frame>
-    </section>
-  );
-}
-
 export type ContentRemoval = "Purged" | "Expired" | null;
 
 const removedEvidence: Record<NonNullable<ContentRemoval>, string> = {
@@ -378,21 +368,6 @@ export function AssessmentBody(props: { assessment: CallDetail["leadAssessment"]
     case "Unavailable":
       return <Notice title="Lead Assessment unavailable" detail="No Lead Assessment exists for this Call." />;
   }
-}
-
-function LeadAssessmentSection(props: Parameters<typeof AssessmentBody>[0]) {
-  return (
-    <section aria-labelledby="call-lead-assessment-title">
-      <Frame>
-        <FrameHeader>
-          <FrameTitle><h2 id="call-lead-assessment-title">Lead Assessment</h2></FrameTitle>
-        </FrameHeader>
-        <FramePanel>
-          <AssessmentBody {...props} />
-        </FramePanel>
-      </Frame>
-    </section>
-  );
 }
 
 function reviewError(status: number): string {
@@ -511,22 +486,6 @@ export function LeadReviewBody({ call, operator, actionClassName }: { call: Call
   );
 }
 
-function LeadReviewSection({ call, operator }: { call: CallDetail; operator: boolean }) {
-  if (!call.leadReview && !operator) return null;
-  return (
-    <section aria-labelledby="call-lead-review-title">
-      <Frame>
-        <FrameHeader>
-          <FrameTitle><h2 id="call-lead-review-title">Lead Review</h2></FrameTitle>
-        </FrameHeader>
-        <FramePanel>
-          <LeadReviewBody call={call} operator={operator} />
-        </FramePanel>
-      </Frame>
-    </section>
-  );
-}
-
 function useAnalysisRetry(call: CallDetail) {
   const [retried, setRetried] = useState<{ call: CallDetail; stage: string } | null>(null);
   const [pending, setPending] = useState(false);
@@ -574,23 +533,4 @@ export function useCallAnalysis(call: CallDetail) {
   }
 
   return { transcript, assessment, retry, emphasis, contentRemoval, selectEvidence };
-}
-
-export default function CallAnalysis({ call, operator }: { call: CallDetail; operator: boolean }) {
-  const { transcript, assessment, retry, emphasis, contentRemoval, selectEvidence } = useCallAnalysis(call);
-  return (
-    <>
-      <TranscriptSection transcript={transcript} operator={operator} retry={retry} emphasis={emphasis} />
-      <LeadReviewSection call={call} operator={operator} />
-      <LeadAssessmentSection
-        assessment={assessment}
-        operator={operator}
-        retry={retry}
-        timeZone={call.workspace.reportingTimezone}
-        reviewed={call.leadReview !== null}
-        contentRemoval={contentRemoval}
-        onEvidence={selectEvidence}
-      />
-    </>
-  );
 }

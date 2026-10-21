@@ -396,42 +396,51 @@ Provider-specific status remains diagnostic metadata and does not appear as a co
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Frame stack
+2. **Archetype:** Reader with a now-playing bar
 3. **Container family:** Frame-led
 4. **Density:** Default for reading, dense for metadata and controls
-5. **Regions:** Header, waveform player, Transcript, Lead Assessment and Review, call facts, processing timeline
+5. **Regions:** Header, verdict strip, Transcript, rail of Call facts and processing timeline, now-playing bar
 6. **States:** Independent media, Transcript, analysis, and timeline states
-7. **Motion:** No entrance; only playhead, seek, zoom, and installed control feedback
+7. **Motion:** No entrance; only playhead, seek, and installed control feedback
 
 ### Header
 
+One line, the way a reader's title bar reads:
+
+- A back icon link to the list the Call was opened from
 - Primary identity: caller phone number
-- Context: Workspace and Tracking Number
 - Badges: Call Outcome and effective lead classification
-- Previous and next Call navigation preserves the source list's filters
-- Actions: Download MP3, Export Call, and an overflow menu
-- Operator-only actions: Add or Update Lead Review and Purge Media
+- Context: Workspace, Tracking Number, and start time
+- Previous and next Call steps that name the Call they go to, as its caller number and time of day, with the date in the accessible name; a step with no Call reads `None` and is disabled; on phones the steps are icon only; the steps preserve the source list's filters
+- A Call actions menu holding Download MP3, Export Call, and the Operator-only Purge Media
 
-### Interactive waveform
+### Verdict strip
 
-Use a sticky Frame below the header so playback remains available while reading the page.
+A Frame directly under the header that answers "what was this Call" before the reader scrolls:
 
-- Aligned Caller and Business waveform lanes when dual-channel audio exists
-- Shared playhead, time scale, and zoom
-- Single mixed lane fallback when separate channels are unavailable
-- Play and pause
-- Click or keyboard seek
-- Elapsed and total time
-- Playback speed
-- Volume and mute
-- Download MP3
-- Clear speaker labels that match the Transcript
+- The effective lead classification, labeled automated until a Lead Review exists
+- The Lead Assessment score and its one-sentence summary
+- Who reviewed the Call and when, or that the estimate is not yet reviewed
+- A `Details` toggle that expands the strip into the Lead Review and the full Lead Assessment, side by side on wide screens, Lead Review first
+
+### Transcript and rail
+
+The Transcript is the page. It takes the main column, stays pinned while the rail scrolls, and keeps its own bounded, scrolling list. A rail beside it holds Call facts, open by default, and the processing timeline, closed by default, each in a Frame whose header is one line level with the Transcript's.
+
+### Now-playing bar
+
+The Recording player is a bar pinned to the bottom of the content, the way music players keep their transport in reach while reading:
+
+- A compact mirrored waveform, one lane: Caller bars rise above the center line in the first chart color and Business bars fall below it in the second, played bars at full strength, a playhead, and click or drag to seek; a single-channel Recording mirrors its one `Mixed audio` lane
+- Lane labels in the left gutter with each party's share of the spoken time when a Transcript exists
+- A seek control with elapsed and total time at its ends
+- A centered transport: back ten seconds, play or pause, forward ten seconds
+- Who is speaking, from the Transcript, and whether the audio is dual-channel, on the left
+- Playback speed, mute, and volume on the right
 
 Generate waveform peaks in Trigger.dev after a verified R2 Recording upload, using its Audio Waveform build extension. Store derived peak data in R2. Peaks are not authoritative audio and expire or are purged with the Recording. The player must expose equivalent keyboard controls and text labels; the waveform is not the only way to seek.
 
 ### Transcript
-
-The Transcript appears immediately below the player.
 
 - Group text into timestamped speaker turns labeled Caller or Business
 - Selecting a timestamp or turn seeks playback to its start
@@ -444,7 +453,7 @@ The Transcript appears immediately below the player.
 
 ### Lead Assessment
 
-Show the immutable AI result after the Transcript:
+Show the immutable AI result in the verdict strip's details:
 
 - Good Lead, Not Good Lead, or Uncertain
 - Lead score from 0 to 100
@@ -459,7 +468,7 @@ State clearly that the assessment is automated. Pending, failed, skipped, and un
 
 ### Lead Review
 
-When present, place Lead Review directly above the AI assessment and label it as the reporting result.
+When present, place Lead Review beside the AI assessment in the verdict strip's details, before it, and label it as the reporting result:
 
 - Classification: Good Lead, Not Good Lead, or Uncertain
 - Optional Operator note
@@ -470,7 +479,7 @@ When present, place Lead Review directly above the AI assessment and label it as
 
 ### Call facts
 
-Use a dense definition layout for:
+Use a dense definition layout in the rail for:
 
 - Call start and end
 - Total and connected duration
@@ -484,7 +493,7 @@ Use a dense definition layout for:
 
 ### Processing timeline
 
-Use a compact ReUI Timeline for webhook receipt, routing, Recording transfer, waveform generation, transcription, Lead Assessment, and Lead Review. Failures show a concise error and an Operator-only Retry when the operation is recoverable.
+Use a compact ReUI Timeline in the rail, closed by default, for webhook receipt, routing, Recording transfer, waveform generation, transcription, Lead Assessment, and Lead Review. Failures show a concise error and an Operator-only Retry when the operation is recoverable.
 
 ### States
 
@@ -501,7 +510,7 @@ Use a compact ReUI Timeline for webhook receipt, routing, Recording transfer, wa
 
 Purge Media is Operator only and uses an AlertDialog with explicit irreversible confirmation: the destructive Purge Media button stays disabled until the Operator ticks the acknowledgement checkbox "I understand this permanently deletes this Call's media", which is cleared each time the dialog opens. It deletes Recording audio, waveform peaks, the MP3, Transcript content, the evidence snippets and rationale that reproduce Transcript text, any copy of the audio still at Twilio, and any unexpired export ZIPs that include the Recording. It preserves Call metadata, Call Outcome, the Lead Assessment summary, classification, and score, Lead Review, and aggregate analytics. Client Viewers cannot purge content and never see the action.
 
-- Placement: a destructive Button in the Call Detail header actions, shown only while a Recording exists whose media has neither expired nor been purged
+- Placement: a destructive item in the Call actions menu, shown only while a Recording exists whose media has neither expired nor been purged
 - Confirmation: the AlertDialog states that the purge cannot be undone, lists what is deleted and what is kept, and purges nothing until the destructive action is confirmed
 - Pending: the confirm action shows a Spinner and `Purging...` and both actions are disabled
 - Success: the dialog closes and Call Detail shows the purged media state

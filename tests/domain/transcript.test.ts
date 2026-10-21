@@ -18,7 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { normalizeTranscript, parseTranscriptTurns, TranscriptError, transcriptionCostUsd } from "@/data/transcript";
+import { normalizeTranscript, parseTranscriptTurns, speakerAt, speakerShares, TranscriptError, transcriptionCostUsd, type TranscriptTurn } from "@/data/transcript";
 
 describe("Transcript normalization", () => {
   it("interleaves Caller and Business segments by start time with speaker labels from their channels", () => {
@@ -124,5 +124,30 @@ describe("Transcription cost", () => {
     expect(transcriptionCostUsd(60_000)).toBe(0.006);
     expect(transcriptionCostUsd(2 * 90_000)).toBe(0.018);
     expect(transcriptionCostUsd(12_345)).toBe(0.001235);
+  });
+});
+
+describe("Transcript talk share and speaker lookup", () => {
+  const turns: TranscriptTurn[] = [
+    { speaker: "Business", startMs: 0, endMs: 6000, text: "Thanks for calling." },
+    { speaker: "Caller", startMs: 7000, endMs: 11000, text: "My water heater is leaking." },
+  ];
+
+  it("splits the spoken time into whole percentages that sum to 100", () => {
+    expect(speakerShares(turns)).toEqual({ Caller: 40, Business: 60 });
+    expect(speakerShares([{ speaker: "Caller", startMs: 0, endMs: 1000, text: "Hi" }, { speaker: "Business", startMs: 1000, endMs: 3000, text: "Hello there" }])).toEqual({ Caller: 33, Business: 67 });
+  });
+
+  it("has no shares when nobody spoke", () => {
+    expect(speakerShares([])).toBeNull();
+    expect(speakerShares([{ speaker: "Caller", startMs: 5000, endMs: 5000, text: "" }])).toBeNull();
+  });
+
+  it("names the speaker at an instant and nobody during silence", () => {
+    expect(speakerAt(turns, 0)).toBe("Business");
+    expect(speakerAt(turns, 5999)).toBe("Business");
+    expect(speakerAt(turns, 6500)).toBeNull();
+    expect(speakerAt(turns, 7000)).toBe("Caller");
+    expect(speakerAt(turns, 11000)).toBeNull();
   });
 });

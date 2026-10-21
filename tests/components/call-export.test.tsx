@@ -27,7 +27,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ExportCallButton } from "@/components/tracer/call-export";
+import { ExportCallDialog } from "@/components/tracer/call-export";
 import CallsView from "@/components/tracer/calls-view";
 import { ReportJobsProvider } from "@/components/tracer/report-jobs";
 import ReportNotifications from "@/components/tracer/report-notifications";
@@ -173,9 +173,8 @@ describe("Export Call", () => {
   it("confirms and requests a single-Call Recording ZIP", async () => {
     const fetch = routedFetch({ "POST /api/reports/preview": preview({ matchedCalls: 1, retainedRecordings: 1, expiredMedia: 0, callsWithoutRecording: 0 }), "POST /api/reports": () => respond({ job: generatingJob() }, 201) });
     vi.stubGlobal("fetch", fetch);
-    render(<ExportCallButton workspaceId="workspace-1" callId="call-1" />);
+    render(<ExportCallDialog workspaceId="workspace-1" callId="call-1" open onOpenChange={() => undefined} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Export Call" }));
     const dialog = await confirmation("Export Call");
     await waitFor(() => expect(stat(dialog, "Retained Recordings")).toBe("1"));
     expect(lastBody(fetch, "/api/reports/preview")).toEqual({ kind: "call_export", scope: { kind: "workspace", workspaceId: "workspace-1" }, callId: "call-1", file: "zip" });

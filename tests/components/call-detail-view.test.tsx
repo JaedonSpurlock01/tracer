@@ -15,9 +15,9 @@
  *
  * @remarks
  *  The player is covered by recording-player.test.tsx and the Transcript,
- *  Lead Assessment, and Lead Review by call-detail-analysis.test.tsx, so
- *  wavesurfer.js is replaced at its module boundary here only to keep
- *  jsdom quiet.
+ *  Lead Assessment, and Lead Review by call-detail-analysis.test.tsx. The
+ *  header actions live in the Call actions menu and the Lead regions in
+ *  the verdict strip's details, so helpers open those first.
  *
  * @see
  *  components/tracer/call-detail-view.tsx
@@ -31,9 +31,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CallDetailView from "@/components/tracer/call-detail-view";
 import type { CallDetail } from "@/data/call-details";
 import { refreshClientCache } from "@/data/client-cache";
-
-vi.mock("wavesurfer.js", () => ({ default: { create: () => ({ zoom: vi.fn(), destroy: vi.fn() }) } }));
-vi.mock("wavesurfer.js/plugins/timeline", () => ({ default: { create: () => ({}) } }));
 
 const call: CallDetail = {
   id: "call-1",
@@ -61,6 +58,14 @@ const call: CallDetail = {
   effectiveLeadClassification: null,
   twilioCallSid: "CA00000000000000000000000000000001",
 };
+
+function openActions() {
+  fireEvent.click(screen.getByRole("button", { name: "Call actions" }));
+}
+
+function openDetails() {
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+}
 
 function fact(term: string): HTMLElement {
   const facts = screen.getByRole("region", { name: "Call facts" });
@@ -148,6 +153,7 @@ describe("CallDetailView", () => {
 
   it("renders the processing timeline with each entry's status", () => {
     render(<CallDetailView call={call} operator />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Processing timeline" }));
     const timeline = screen.getByRole("region", { name: "Processing timeline" });
     expect(within(timeline).getByText("Call received")).toBeVisible();
     expect(within(timeline).getByText("Recording stored")).toBeVisible();
@@ -163,38 +169,45 @@ describe("CallDetailView", () => {
     play.mockRestore();
   });
 
-  it("offers Download MP3 in the header whenever the read model gives a downloadable MP3, even while the waveform is Pending", () => {
+  it("offers Download MP3 in the Call actions menu whenever the read model gives a downloadable MP3, even while the waveform is Pending", async () => {
     const { rerender } = render(<CallDetailView call={{ ...call, mp3RecordingId: "recording-1" }} operator={false} />);
-    const header = () => screen.getByRole("heading", { level: 1 }).closest("header")!;
-    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
-    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("download");
+    openActions();
+    const download = await screen.findByRole("menuitem", { name: "Download MP3" });
+    expect(download).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    expect(download).toHaveAttribute("download");
     rerender(<CallDetailView call={{ ...call, recording: { state: "Processing", stage: "waveform" }, mp3RecordingId: "recording-1" }} operator={false} />);
-    expect(within(header()).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
+    expect(screen.getByRole("menuitem", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
     for (const recording of [call.recording, { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" }] as CallDetail["recording"][]) {
       rerender(<CallDetailView call={{ ...call, recording, mp3RecordingId: null }} operator={false} />);
-      expect(screen.queryByRole("link", { name: "Download MP3" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Download MP3" })).not.toBeInTheDocument();
     }
   });
 
-  it("offers Export Call in the header", () => {
+  it("offers Export Call in the Call actions menu", async () => {
     render(<CallDetailView call={call} operator />);
-    expect(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Export Call" })).toBeEnabled();
+    openActions();
+    expect(await screen.findByRole("menuitem", { name: "Export Call" })).toBeEnabled();
   });
 
-  it("offers Operators Purge Media only while the Recording's media can be purged, and never to Client Viewers", () => {
+  it("offers Operators Purge Media only while the Recording's media can be purged, and never to Client Viewers", async () => {
     const purgeable: CallDetail["recording"][] = [call.recording, { state: "Processing", stage: "transfer" }, { state: "Failed" }];
     const kept: CallDetail["recording"][] = [{ state: "Unavailable", reason: "not_captured" }, { state: "Expired", expiredAt: "2026-10-16T20:04:05.000Z" }, { state: "Purged", purgedAt: "2026-10-17T14:30:00.000Z" }];
     for (const recording of purgeable) {
       render(<CallDetailView call={{ ...call, recording }} operator />);
-      expect(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Purge Media" })).toBeEnabled();
+      openActions();
+      expect(await screen.findByRole("menuitem", { name: "Purge Media" })).toBeEnabled();
       cleanup();
       render(<CallDetailView call={{ ...call, recording, twilioCallSid: undefined }} operator={false} />);
-      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      openActions();
+      await screen.findByRole("menuitem", { name: "Export Call" });
+      expect(screen.queryByRole("menuitem", { name: "Purge Media" })).not.toBeInTheDocument();
       cleanup();
     }
     for (const recording of kept) {
       render(<CallDetailView call={{ ...call, recording }} operator />);
-      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      openActions();
+      await screen.findByRole("menuitem", { name: "Export Call" });
+      expect(screen.queryByRole("menuitem", { name: "Purge Media" })).not.toBeInTheDocument();
       cleanup();
     }
   });
@@ -211,9 +224,10 @@ describe("CallDetailView", () => {
       return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     }
 
-    function openConfirmation(): HTMLElement {
-      fireEvent.click(within(screen.getByRole("heading", { level: 1 }).closest("header")!).getByRole("button", { name: "Purge Media" }));
-      return screen.getByRole("alertdialog", { name: "Purge this Call's media?" });
+    async function openConfirmation(): Promise<HTMLElement> {
+      openActions();
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Purge Media" }));
+      return screen.findByRole("alertdialog", { name: "Purge this Call's media?" });
     }
 
     function confirmPurge(dialog: HTMLElement) {
@@ -223,11 +237,11 @@ describe("CallDetailView", () => {
 
     beforeEach(() => vi.mocked(refreshClientCache).mockClear());
 
-    it("states exactly what an irreversible purge deletes and keeps, and purges nothing until confirmed", () => {
+    it("states exactly what an irreversible purge deletes and keeps, and purges nothing until confirmed", async () => {
       const fetch = vi.fn(() => new Promise<Response>(() => undefined));
       vi.stubGlobal("fetch", fetch);
       render(<CallDetailView call={analyzed} operator />);
-      const dialog = openConfirmation();
+      const dialog = await openConfirmation();
       expect(dialog).toHaveTextContent("This cannot be undone.");
       for (const deleted of ["Recording audio", "waveform", "MP3", "Transcript", "Transcript-derived evidence", "rationale", "any copy of the audio still at Twilio", "unexpired export ZIPs that include this Recording"]) expect(dialog).toHaveTextContent(deleted);
       for (const kept of ["Call facts", "Call Outcome", "Lead Assessment summary, classification, and score", "Lead Review", "analytics"]) expect(dialog).toHaveTextContent(kept);
@@ -235,17 +249,17 @@ describe("CallDetailView", () => {
       expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/media/purge"), expect.anything());
     });
 
-    it("keeps Purge Media disabled until the Operator acknowledges the irreversible deletion, and asks again each time it opens", () => {
+    it("keeps Purge Media disabled until the Operator acknowledges the irreversible deletion, and asks again each time it opens", async () => {
       vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
       render(<CallDetailView call={analyzed} operator />);
-      let dialog = openConfirmation();
+      let dialog = await openConfirmation();
       const acknowledgement = within(dialog).getByRole("checkbox", { name: "I understand this permanently deletes this Call's media" });
       expect(acknowledgement).not.toBeChecked();
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeDisabled();
       fireEvent.click(acknowledgement);
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
       fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-      dialog = openConfirmation();
+      dialog = await openConfirmation();
       expect(within(dialog).getByRole("checkbox", { name: "I understand this permanently deletes this Call's media" })).not.toBeChecked();
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeDisabled();
     });
@@ -255,7 +269,7 @@ describe("CallDetailView", () => {
       const fetch = vi.fn((url: string) => new Promise<Response>((done) => (url.endsWith("/media/purge") ? (resolve = done) : undefined)));
       vi.stubGlobal("fetch", fetch);
       render(<CallDetailView call={analyzed} operator />);
-      const dialog = openConfirmation();
+      const dialog = await openConfirmation();
       confirmPurge(dialog);
       expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/calls/call-1/media/purge", { method: "POST" });
       expect(within(dialog).getByRole("button", { name: /Purging\.\.\./ })).toBeDisabled();
@@ -264,13 +278,16 @@ describe("CallDetailView", () => {
       expect(fact("Recording")).toHaveTextContent("Purged on Oct 17, 2026, 9:30:00 AM");
       expect(within(screen.getByRole("region", { name: "Recording" })).getByText("Recording purged")).toBeVisible();
       expect(screen.getByRole("region", { name: "Transcript" })).toHaveTextContent("Transcript purged");
+      openDetails();
       const assessment = screen.getByRole("region", { name: "Lead Assessment" });
       expect(assessment).toHaveTextContent("Caller needs a repair today.");
       expect(assessment).not.toHaveTextContent("Urgent, in-scope request.");
       expect(assessment).not.toHaveTextContent("water heater is leaking");
       expect(document.querySelector("audio")).toBeNull();
-      expect(screen.queryByRole("link", { name: "Download MP3" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Purge Media" })).not.toBeInTheDocument();
+      openActions();
+      await screen.findByRole("menuitem", { name: "Export Call" });
+      expect(screen.queryByRole("menuitem", { name: "Download MP3" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Purge Media" })).not.toBeInTheDocument();
       expect(refreshClientCache).toHaveBeenCalledTimes(1);
     });
 
@@ -283,7 +300,7 @@ describe("CallDetailView", () => {
       for (const [error, message] of cases) {
         vi.stubGlobal("fetch", vi.fn(async () => respond({ error }, 409)));
         render(<CallDetailView call={analyzed} operator />);
-        const dialog = openConfirmation();
+        const dialog = await openConfirmation();
         confirmPurge(dialog);
         expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
         await waitFor(() => expect(refreshClientCache).toHaveBeenCalledTimes(1));
@@ -298,7 +315,7 @@ describe("CallDetailView", () => {
       const fetch = vi.fn(async () => respond({ error: "internal" }, 500));
       vi.stubGlobal("fetch", fetch);
       render(<CallDetailView call={analyzed} operator />);
-      const dialog = openConfirmation();
+      const dialog = await openConfirmation();
       confirmPurge(dialog);
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Media could not be purged. Try again.");
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
@@ -316,6 +333,7 @@ describe("CallDetailView", () => {
       { id: "lead-review", label: "Lead Review added", status: "Completed", at: "2026-10-16T20:09:00.000Z" },
     ];
     render(<CallDetailView call={{ ...call, timeline }} operator />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Processing timeline" }));
     const region = screen.getByRole("region", { name: "Processing timeline" });
     for (const label of ["Transcript completed", "Lead Assessment failed", "Lead Review added"]) expect(within(region).getByText(label)).toBeVisible();
     expect(within(region).getByText("Failed")).toBeVisible();
@@ -336,16 +354,19 @@ describe("CallDetailView", () => {
     const header = screen.getByRole("heading", { level: 1 }).closest("header")!;
     expect(within(header).getByRole("link", { name: "Back to Calls" })).toHaveAttribute("href", "/calls?sort=leadScore&order=asc");
     const navigation = within(header).getByRole("group", { name: "Call navigation" });
-    expect(within(navigation).getByRole("link", { name: "Previous Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
-    expect(within(navigation).getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
+    const previous = within(navigation).getByRole("link", { name: "Previous Call: +13125550100, Oct 16, 2026, 2:00:00 PM" });
+    expect(previous).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
+    expect(previous).toHaveTextContent("+13125550100");
+    expect(previous).toHaveTextContent("2:00:00 PM");
+    expect(within(navigation).getByRole("link", { name: "Next Call: Unknown caller, Oct 16, 2026, 4:00:00 PM" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc");
     expect(screen.getByRole("link", { name: "Back to Calls" }).compareDocumentPosition(screen.getByRole("heading", { level: 1 })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("disables previous or next Call at either end of the list", () => {
     render(<CallDetailView call={call} operator navigation={{ back: "/workspaces/workspace-1/calls", previous: null, next: { href: "/workspaces/workspace-1/calls/call-2", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" } }} />);
     expect(screen.getByRole("button", { name: "Previous Call" })).toBeDisabled();
-    expect(screen.queryByRole("link", { name: "Previous Call" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
+    expect(screen.queryByRole("link", { name: /^Previous Call/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /^Next Call/ })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
   });
 
   it("falls back to Workspace Calls for the back link and carries no navigation of its own", () => {

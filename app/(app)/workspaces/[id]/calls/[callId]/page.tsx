@@ -35,8 +35,6 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import CallDetailView from "@/components/tracer/call-detail-view";
-import { demoCallDetail, demoNeighbors } from "@/components/tracer/prototype/call-detail-fixture";
-import CallDetailPrototype from "@/components/tracer/prototype/call-detail-prototype";
 import { createCallDetails } from "@/data/call-details";
 import { callDetailNavigation, callSourceFromBack, callSourceListQuery } from "@/data/call-source";
 import { createCallList } from "@/data/calls";
@@ -55,22 +53,18 @@ export default async function CallDetailPage({
   const { id, callId } = await params;
   const query = await searchParams;
   const source = callSourceFromBack(query.back, id);
-  // PROTOTYPE: ?demo=1 renders the Call Detail fixture instead of a Call.
-  const demo = query.demo === "1" && process.env.NODE_ENV !== "production";
-  const data = demo
-    ? { call: demoCallDetail(id), neighbors: demoNeighbors(id) }
-    : await withTracerRuntime(async ({ pool }) => {
-        const call = await createCallDetails(pool, actor).find(id, callId);
-        if (!call) return null;
-        return { call, neighbors: await createCallList(pool, actor).neighbors(callSourceListQuery(source, id), callId) };
-      });
+  const data = await withTracerRuntime(async ({ pool }) => {
+    const call = await createCallDetails(pool, actor).find(id, callId);
+    if (!call) return null;
+    return { call, neighbors: await createCallList(pool, actor).neighbors(callSourceListQuery(source, id), callId) };
+  });
   if (!data) notFound();
-  const operator = canManageWorkspaces(actor);
-  const autoPlay = query.play === "1";
-  const navigation = callDetailNavigation(source, id, data.neighbors);
   return (
-    <CallDetailPrototype call={data.call} operator={operator} autoPlay={autoPlay} navigation={navigation} demo={demo}>
-      <CallDetailView call={data.call} operator={operator} autoPlay={autoPlay} navigation={navigation} />
-    </CallDetailPrototype>
+    <CallDetailView
+      call={data.call}
+      operator={canManageWorkspaces(actor)}
+      autoPlay={query.play === "1"}
+      navigation={callDetailNavigation(source, id, data.neighbors)}
+    />
   );
 }

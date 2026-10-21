@@ -31,9 +31,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CallDetailView from "@/components/tracer/call-detail-view";
 import type { CallDetail } from "@/data/call-details";
 
-vi.mock("wavesurfer.js", () => ({ default: { create: () => ({ zoom: vi.fn(), destroy: vi.fn() }) } }));
-vi.mock("wavesurfer.js/plugins/timeline", () => ({ default: { create: () => ({}) } }));
-
 const turns: NonNullable<CallDetail["transcript"]["turns"]> = [
   { speaker: "Business", startMs: 0, endMs: 4000, text: "Thanks for calling Acme Plumbing." },
   { speaker: "Caller", startMs: 4500, endMs: 12000, text: "Hi, my water heater is leaking and I need someone today." },
@@ -81,6 +78,12 @@ function transcript(): HTMLElement {
   return screen.getByRole("region", { name: "Transcript" });
 }
 
+/** The Lead regions live in the verdict strip's details, closed by default. */
+function openDetails() {
+  const details = screen.queryByRole("button", { name: "Details" });
+  if (details) fireEvent.click(details);
+}
+
 function turnItems(): HTMLElement[] {
   return within(within(transcript()).getByRole("list", { name: "Transcript turns" })).getAllByRole("listitem");
 }
@@ -115,10 +118,11 @@ afterEach(() => {
 });
 
 describe("Call Detail Transcript", () => {
-  it("shows timestamped Caller and Business turns immediately below the player", () => {
+  it("shows timestamped Caller and Business turns as the page's main region, with the player in the bar below", () => {
     render(<CallDetailView call={call} operator={false} />);
     const regions = screen.getAllByRole("region").map((region) => region.querySelector("h2")?.textContent);
-    expect(regions.indexOf("Transcript")).toBe(regions.indexOf("Recording") + 1);
+    expect(regions[0]).toBe("Transcript");
+    expect(regions[regions.length - 1]).toBe("Recording");
     const items = turnItems();
     expect(items).toHaveLength(4);
     expect(within(items[1]).getByText("Caller")).toBeVisible();
@@ -152,9 +156,10 @@ describe("Call Detail Transcript states", () => {
 
   it("keeps the player and shows Skeleton rows while the Transcript is processing", () => {
     render(<CallDetailView call={withTranscript({ state: "Pending" })} operator={false} />);
-    expect(screen.getByRole("group", { name: "Waveform" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Recording" })).getByRole("button", { name: "Play" })).toBeEnabled();
     expect(within(transcript()).getByRole("status")).toHaveTextContent("Transcript processing");
     expect(transcript().querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    openDetails();
     expect(screen.getByRole("region", { name: "Lead Assessment" })).toHaveTextContent("Analysis pending");
   });
 
@@ -210,13 +215,16 @@ describe("Call Detail Transcript states", () => {
 
 describe("Call Detail Lead Assessment", () => {
   function assessment(): HTMLElement {
+    openDetails();
     return screen.getByRole("region", { name: "Lead Assessment" });
   }
 
-  it("shows the automated classification, score, summary, rationale, and processing time after the Transcript", () => {
+  it("shows the automated classification, score, summary, rationale, and processing time in the verdict strip's details", () => {
     render(<CallDetailView call={call} operator={false} />);
+    expect(screen.queryByRole("region", { name: "Lead Assessment" })).not.toBeInTheDocument();
+    openDetails();
     const regions = screen.getAllByRole("region").map((region) => region.querySelector("h2")?.textContent);
-    expect(regions.indexOf("Lead Assessment")).toBeGreaterThan(regions.indexOf("Transcript"));
+    expect(regions.indexOf("Lead Assessment")).toBeLessThan(regions.indexOf("Transcript"));
     expect(within(assessment()).getByText("Good Lead")).toBeVisible();
     expect(assessment()).toHaveTextContent("86 / 100");
     expect(assessment()).toHaveTextContent("A homeowner requested same-day water heater repair.");
@@ -348,6 +356,7 @@ describe("Call Detail Lead Review", () => {
   const reviewed: CallDetail = { ...call, leadReview, effectiveLeadClassification: { classification: "Not Good Lead", source: "review" } };
 
   function review(): HTMLElement {
+    openDetails();
     return screen.getByRole("region", { name: "Lead Review" });
   }
 
@@ -369,6 +378,7 @@ describe("Call Detail Lead Review", () => {
 
   it("places the Lead Review directly above the Lead Assessment as the reporting result, read only for Client Viewers", () => {
     render(<CallDetailView call={reviewed} operator={false} />);
+    openDetails();
     const regions = screen.getAllByRole("region").map((region) => region.querySelector("h2")?.textContent);
     expect(regions.indexOf("Lead Review")).toBe(regions.indexOf("Lead Assessment") - 1);
     expect(review()).toHaveTextContent("Reporting result");
@@ -381,6 +391,7 @@ describe("Call Detail Lead Review", () => {
 
   it("omits the Lead Review for Client Viewers when none exists", () => {
     render(<CallDetailView call={call} operator={false} />);
+    openDetails();
     expect(screen.queryByRole("region", { name: "Lead Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Lead Review" })).not.toBeInTheDocument();
   });
