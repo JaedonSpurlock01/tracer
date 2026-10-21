@@ -15,7 +15,7 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M23 - Form Submissions
+- **Current milestone:** None
 - **Next milestone:** M18 - Production Hardening and Acceptance, which the Product Owner starts explicitly; it carries the two M17 Staging checks as entry criteria
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
@@ -188,7 +188,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M20 | Sites and Cloudflare Connection | Complete | Preview and Staging | M17 |
 | M21 | Search Rankings | Complete | Preview and Staging | M20 |
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
-| M23 | Form Submissions | In Progress | Preview and Staging | M22 |
+| M23 | Form Submissions | Complete | Preview and Staging | M22 |
 | M18 | Production Hardening and Acceptance | Not Started | Staging | M23 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
 
@@ -1183,7 +1183,7 @@ M22 closed on 2026-10-20 after the domain, integration, component, typecheck, li
 
 ### M23 - Form Submissions
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Every contact form on a rank-and-rent Site posts to Tracer instead of emailing the business directly, so each Form Submission is stored under its Workspace, forwarded by Tracer to the business from the Site's own address, counted beside Good Lead Calls as the Workspace's Leads, and reviewable by an Operator.
 - **Depends on:** M22
 - **Target environment:** Preview and Staging
@@ -1220,6 +1220,8 @@ M22 closed on 2026-10-20 after the domain, integration, component, typecheck, li
 #### Exit criteria
 
 - A submission on a linked Site appears on its Workspace Forms page, reaches the forwarding recipients from the Site's address, and raises Good Leads on Home and the Overview.
+
+M23 closed on 2026-10-21 after the domain, contract, integration, component, Worker, typecheck, lint, build, and Playwright gates passed in CI and the Staging deployment applied migration 0025. The Product Owner verified the Staging gate the same day: a real submission from the Pocatello Site reached its Workspace Forms page and the forwarding recipients. The close-out renamed the dashboard chart from Call trends to Leads generated and added a fourth series, Forms, counting every Form Submission received per bucket beside Total Calls, Answered Calls, and the combined Good Leads; the PDF report keeps its three series. The asphalt, solar, and dumpster site repositories post to the Staging Worker until M19 switches them to Production.
 
 ## Phase 8 - Deployment and operation
 

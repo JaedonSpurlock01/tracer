@@ -110,8 +110,8 @@ const analytics: AnalyticsSummary = {
   trend: {
     interval: "day",
     points: [
-      { start: "2026-10-17", end: "2026-10-17", label: "Oct 17, 2026", totalCalls: 10, answeredCalls: 5, goodLeads: 2 },
-      { start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 7, answeredCalls: 2, goodLeads: 3 },
+      { start: "2026-10-17", end: "2026-10-17", label: "Oct 17, 2026", totalCalls: 10, answeredCalls: 5, goodLeads: 2, formSubmissions: 0 },
+      { start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 7, answeredCalls: 2, goodLeads: 3, formSubmissions: 0 },
     ],
   },
   workspacePerformance: null,
@@ -207,7 +207,7 @@ describe("SiteView", () => {
       { start: "2026-10-18", label: "Oct 18, 2026", visits: 634, calls: 7 },
     ]);
     expect(
-      trafficAndCallsSeries(summary.daily, { interval: "week", points: [{ start: "2026-10-12", end: "2026-10-18", label: "Oct 12 - Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5 }] }),
+      trafficAndCallsSeries(summary.daily, { interval: "week", points: [{ start: "2026-10-12", end: "2026-10-18", label: "Oct 12 - Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5, formSubmissions: 0 }] }),
     ).toEqual([{ start: "2026-10-12", label: "Oct 12 - Oct 18, 2026", visits: 1234, calls: 17 }]);
     renderView();
     const table = within(screen.getByRole("region", { name: "Traffic and Calls" })).getByRole("table", { name: "Traffic and Calls by day" });

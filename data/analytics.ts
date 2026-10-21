@@ -20,7 +20,8 @@
  *  is zero or absent, and Answer Rate changes by the difference in
  *  percentage points, null when either rate is absent, so a view shows a
  *  dash. Trend points count Total Calls, Answered Calls,
- *  and Good Leads per zero-filled bucket. Workspace performance lists Total
+ *  Good Leads (Calls and Form Submissions together), and Form Submissions
+ *  per zero-filled bucket. Workspace performance lists Total
  *  Calls, Answer Rate, Good Leads, and Lead Rate (Good Leads over Total
  *  Calls) per readable Workspace, Total Calls descending, and is withheld
  *  entirely unless the actor reads more than one Workspace. The Workspaces
@@ -110,6 +111,8 @@ export interface AnalyticsTrendPoint extends AnalyticsTrendBucket {
   totalCalls: number;
   answeredCalls: number;
   goodLeads: number;
+  /** Every Form Submission received in the bucket, Held and reviewed ones included. */
+  formSubmissions: number;
 }
 
 export interface WorkspacePerformanceRow {
@@ -248,8 +251,8 @@ function scopeConditions(scope: ScopeSql, values: unknown[], workspaceId: string
 }
 
 // Form Submissions share the Workspace scope and calendar-date window of Calls, keyed on the day they were received.
-function formConditions(scope: ScopeSql, values: unknown[], workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): string {
-  const conditions = [scope(values), formGoodLeadSql];
+function formConditions(scope: ScopeSql, values: unknown[], workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string, goodLeadsOnly = true): string {
+  const conditions = goodLeadsOnly ? [scope(values), formGoodLeadSql] : [scope(values)];
   if (workspaceId) {
     values.push(workspaceId);
     conditions.push(`fs.workspace_id = $${values.length}`);
@@ -290,10 +293,12 @@ async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, wi
     values,
   );
   const formValues: unknown[] = [];
-  const formWhere = formConditions(scope, formValues, workspaceId, window, timeZone);
+  const formWhere = formConditions(scope, formValues, workspaceId, window, timeZone, false);
   formValues.push(timeZone);
-  const formRows = await pool.query<{ day: string; good_leads: number }>(
-    `select to_char((fs.received_at at time zone $${formValues.length})::date, 'YYYY-MM-DD') as day, count(*)::int as good_leads
+  const formRows = await pool.query<{ day: string; good_leads: number; submissions: number }>(
+    `select to_char((fs.received_at at time zone $${formValues.length})::date, 'YYYY-MM-DD') as day,
+            count(*) filter (where ${formGoodLeadSql})::int as good_leads,
+            count(*)::int as submissions
        from ${formSubmissionSource}
       where ${formWhere}
       group by 1
@@ -303,7 +308,7 @@ async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, wi
   const firstDay = [rows.rows[0]?.day, formRows.rows[0]?.day].filter((day): day is string => Boolean(day)).sort()[0];
   const first = firstDay;
   const trendWindow = window ?? { from: first && first < today ? first : today, to: today };
-  const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0 }));
+  const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0, formSubmissions: 0 }));
   const byStart = new Map(points.map((point) => [analyticsBucketStart(interval, point.start), point]));
   for (const row of rows.rows) {
     const point = byStart.get(analyticsBucketStart(interval, row.day));
@@ -314,7 +319,9 @@ async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, wi
   }
   for (const row of formRows.rows) {
     const point = byStart.get(analyticsBucketStart(interval, row.day));
-    if (point) point.goodLeads += row.good_leads;
+    if (!point) continue;
+    point.goodLeads += row.good_leads;
+    point.formSubmissions += row.submissions;
   }
   return { window: trendWindow, points };
 }

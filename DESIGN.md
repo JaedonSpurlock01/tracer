@@ -213,9 +213,9 @@ A second row of three tiles below the KPI row, hidden from Client Viewers:
 
 Workspace performance gains Cost and Revenue columns for Operators.
 
-### Call trends
+### Leads generated
 
-- Three line series: Total Calls, Answered Calls, and Good Leads
+- Four line series: Total Calls, Answered Calls, Good Leads (Calls and Form Submissions together), and Forms (every Form Submission received, M23)
 - Daily points for 7-day and 30-day ranges
 - Weekly points for the 90-day range
 - Monthly points for All Time
@@ -746,7 +746,7 @@ The Workspace date controls, then four tiles:
 
 ### Traffic and Calls
 
-One two-series line chart in the Workspace timezone: Visits in the muted series and Calls in the brand accent, dashed, with the same legend, sr-only table, and daily or weekly interval rules as Call trends.
+One two-series line chart in the Workspace timezone: Visits in the muted series and Calls in the brand accent, dashed, with the same legend, sr-only table, and daily or weekly interval rules as Leads generated.
 
 ### Pages and referrers
 
