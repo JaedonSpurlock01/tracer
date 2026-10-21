@@ -47,7 +47,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createAnalytics, reportAnalyticsSummary, withWorkspaceListStats, type Analytics, type ReportAnalyticsScope } from "@/data/analytics";
+import { createAnalytics, describeWorkspaceAttention, reportAnalyticsSummary, withWorkspaceListStats, type Analytics, type ReportAnalyticsScope } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -443,11 +443,21 @@ describe("Workspaces list stats and routing health", () => {
   it("report 30-day Calls and Good Leads, the last Call, and webhook health from recorded voice webhooks", async () => {
     const stats = await analytics(operator).workspaceListStats(["north", "south", "east", "setup", "other-workspace"]);
     expect(stats).toEqual({
-      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" }, siteHealth: null },
-      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
-      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" }, siteHealth: null },
-      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
+      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" }, siteHealth: null, attention: { status: "Healthy", reason: null } },
+      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Needs attention", reason: "No accepted Twilio webhook yet" } },
+      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" }, siteHealth: null, attention: { status: "Healthy", reason: null } },
+      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Not applicable", reason: null } },
     });
+  });
+
+  it("roll webhook and Site health into one attention reason, Site first", () => {
+    const healthy = { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" };
+    expect(describeWorkspaceAttention(healthy, null)).toEqual({ status: "Healthy", reason: null });
+    expect(describeWorkspaceAttention(healthy, "Unknown")).toEqual({ status: "Healthy", reason: null });
+    expect(describeWorkspaceAttention(healthy, "Down")).toEqual({ status: "Needs attention", reason: "Site Down" });
+    expect(describeWorkspaceAttention({ status: "Warning", lastAcceptedVoiceWebhookAt: null }, "Warning")).toEqual({ status: "Needs attention", reason: "Site Warning" });
+    expect(describeWorkspaceAttention({ status: "Warning", lastAcceptedVoiceWebhookAt: null }, "Healthy")).toEqual({ status: "Needs attention", reason: "No accepted Twilio webhook yet" });
+    expect(describeWorkspaceAttention({ status: "Not applicable", lastAcceptedVoiceWebhookAt: null }, null)).toEqual({ status: "Not applicable", reason: null });
   });
 
   it("omit ungranted Workspaces from a Client Viewer's list stats", async () => {

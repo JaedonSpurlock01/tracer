@@ -321,7 +321,7 @@ Outcome and processing states use one semantic Badge per row. Infrastructure det
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, grid, and pagination
+3. **Container family:** One Frame around toolbar, ledger, and pagination
 4. **Density:** Dense
 5. **Regions:** Header and export actions, search and filters, server-backed Calls grid
 6. **States:** Data Grid Skeleton rows, filter-aware Empty state, and inline Retry
@@ -514,35 +514,40 @@ Purge Media is Operator only and uses an AlertDialog with explicit irreversible 
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, grid, and pagination
+3. **Container family:** One Frame around toolbar, ledger, and pagination
 4. **Density:** Dense
-5. **Regions:** Header, lifecycle filters, server-backed Workspace grid
-6. **States:** Server-rendered first page, in-place refresh after each action, Data Grid Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
+5. **Regions:** Header, Workspace State chips and search, server-backed triage ledger
+6. **States:** Server-rendered first page, in-place refresh after each action, Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
 7. **Motion:** None
 
 ### Header and filters
 
 - Title: `Workspaces`
-- Description: Active and Setup Required Workspace count
+- Description: Setup Required, Active, and Archived Workspace counts
 - Primary action: Create Workspace
 - Search: Workspace name, Tracking Number, or Destination Number
-- Filters: Workspace State and integration health
+- Filter: Workspace State as chips with counts (All, Setup Required, Active, Archived); Client Viewers see no Setup Required chip
 
-### Data grid
+### Triage ledger
+
+One table grouped in triage order, each group with a collapsible heading and count:
+
+1. **Needs attention:** Setup Required Workspaces and Active Workspaces whose attention roll-up asks for an Operator
+2. **Running:** the remaining Active Workspaces
+3. **Archived:** collapsed unless the Archived chip is selected
 
 Columns:
 
-1. Workspace
-2. Workspace State
-3. Tracking Number
-4. Destination Number
-5. Calls, last 30 days
-6. Good Leads, last 30 days
-7. Last Call
-8. Integration health
-9. Row actions
+1. Workspace: name, Workspace State Badge, and the reporting timezone, or `Next: <requirement>` from the setup checklist while Setup Required
+2. Routing: Tracking Number over `→ Destination Number`, in Geist Mono
+3. Calls, last 30 days
+4. Good Leads, last 30 days
+5. Lead rate: Good Leads over Calls as a bar and percentage, blank without Calls
+6. Last Call, in the reporting timezone
+7. Attention: the analytics roll-up (Healthy, Needs attention, or Not applicable) with its reason beneath, such as `Site Down` or `No accepted Twilio webhook yet`
+8. Row action: Resume Setup while Setup Required for Operators, otherwise Open
 
-Workspace State and integration health are separate. State describes lifecycle; health reports whether Twilio, routing, or processing needs attention. Selecting a row opens Workspace Overview.
+Workspace State and attention are separate. State describes lifecycle; attention reports whether Twilio, routing, or the linked Site needs an Operator, and the analytics module owns that rule so every view agrees. Selecting a row opens Workspace Overview.
 
 ### Workspace States
 
@@ -554,7 +559,7 @@ Tracer has no Paused state in the first release.
 
 ### Create Workspace wizard
 
-Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to five labeled steps: Basics, Site, Number, Routing, Review.
+Use a focused wizard Dialog with ReUI Stepper, owned by `components/tracer/workspace-setup-wizard.tsx` and mounted fresh by the list for each creation or resume. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to five labeled steps: Basics, Site, Number, Routing, Review.
 
 #### Step 1: Basics
 
@@ -983,7 +988,7 @@ Rows support Download, Regenerate, and View Parameters while authorization remai
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, grid, and pagination
+3. **Container family:** One Frame around toolbar, ledger, and pagination
 4. **Density:** Dense
 5. **Regions:** Header, role and state filters, server-backed user grid
 6. **States:** Server-rendered user list, in-place refresh after each action, Data Grid Skeleton rows only while reloading after a Retry, first-user protection, and inline Retry

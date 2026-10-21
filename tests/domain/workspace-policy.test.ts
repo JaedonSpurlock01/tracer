@@ -24,6 +24,7 @@ import {
   decideArchive,
   decideRestore,
   describeSetupChecklist,
+  nextSetupStep,
   initialWorkspaceState,
   normalizeWorkspaceName,
   workspaceStates,
@@ -66,6 +67,13 @@ describe("Workspace policy", () => {
       { label: "Destination Number", complete: true },
       { label: "Published Call Flow", complete: true },
     ]);
+  });
+
+  it("names the first incomplete setup requirement", () => {
+    expect(nextSetupStep({ destinationNumber: null, trackingNumber: null, publishedFlowVersion: null })).toBe("Tracking Number");
+    expect(nextSetupStep({ destinationNumber: null, trackingNumber: "+14155550101", publishedFlowVersion: null })).toBe("Destination Number");
+    expect(nextSetupStep({ destinationNumber: "+14155550100", trackingNumber: "+14155550101", publishedFlowVersion: null })).toBe("Published Call Flow");
+    expect(nextSetupStep({ destinationNumber: "+14155550100", trackingNumber: "+14155550101", publishedFlowVersion: { version: 1, publishedAt: "2026-01-01T00:00:00.000Z" } })).toBeNull();
   });
 
   it("accepts new Access Grants only for Active Workspaces", () => {

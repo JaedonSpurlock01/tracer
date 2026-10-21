@@ -140,6 +140,12 @@ export interface WebhookHealth {
   lastAcceptedVoiceWebhookAt: string | null;
 }
 
+/** The one Workspace-level roll-up the list triages by: why an Operator should look. */
+export interface WorkspaceAttention {
+  status: "Healthy" | "Needs attention" | "Not applicable";
+  reason: string | null;
+}
+
 export interface WorkspaceListStats {
   callsLast30Days: number;
   goodLeadsLast30Days: number;
@@ -147,6 +153,14 @@ export interface WorkspaceListStats {
   lastSuccessfulInboundCallAt: string | null;
   integrationHealth: WebhookHealth;
   siteHealth: SiteHealth | null;
+  attention: WorkspaceAttention;
+}
+
+export function describeWorkspaceAttention(integrationHealth: WebhookHealth, siteHealth: SiteHealth | null): WorkspaceAttention {
+  if (siteHealth === "Warning" || siteHealth === "Down") return { status: "Needs attention", reason: `Site ${siteHealth}` };
+  if (integrationHealth.status === "Warning") return { status: "Needs attention", reason: "No accepted Twilio webhook yet" };
+  if (integrationHealth.status === "Healthy") return { status: "Healthy", reason: null };
+  return { status: "Not applicable", reason: null };
 }
 
 export type WorkspaceListWithStats = WorkspaceListResult & { stats: Record<string, WorkspaceListStats> };
@@ -351,13 +365,16 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
     const callsByWorkspace = new Map(calls.rows.map((row) => [row.workspace_id, row]));
     return Object.fromEntries(health.rows.map((row) => {
       const stats = callsByWorkspace.get(row.id);
+      const integrationHealth = webhookHealth(row.state, row.last_accepted_voice_at);
+      const siteHealth = siteHealthByWorkspace[row.id] ?? null;
       return [row.id, {
         callsLast30Days: stats?.calls ?? 0,
         goodLeadsLast30Days: stats?.good_leads ?? 0,
         lastCallAt: stats?.last_call_at?.toISOString() ?? null,
         lastSuccessfulInboundCallAt: stats?.last_successful_at?.toISOString() ?? null,
-        integrationHealth: webhookHealth(row.state, row.last_accepted_voice_at),
-        siteHealth: siteHealthByWorkspace[row.id] ?? null,
+        integrationHealth,
+        siteHealth,
+        attention: describeWorkspaceAttention(integrationHealth, siteHealth),
       }];
     }));
   }
