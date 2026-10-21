@@ -567,7 +567,7 @@ export default function WorkspacesView({
         </FramePanel>
       </Frame>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{workspace ? `Resume setup for ${workspace.name}` : "Create Workspace"}</DialogTitle>
             <DialogDescription>Complete the setup steps before activating this Workspace.</DialogDescription>
