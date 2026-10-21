@@ -22,8 +22,10 @@
  *  recorded. `pool.end()` resolves before its clients' sockets close, so
  *  stopping the container right after it can send a pooled client
  *  PostgreSQL's administrator shutdown (57P01) after the pool has dropped
- *  its error listener; each client therefore ignores that one shutdown
- *  error, and any other client error is still thrown.
+ *  its error listener. Teardown therefore remembers every client the pool
+ *  opens, waits for each socket to close after `pool.end()`, and only then
+ *  stops the container; a client still ignores that one shutdown error in
+ *  case the server closes first, and any other client error is thrown.
  *
  * @see
  *  data/report-jobs.ts
@@ -34,7 +36,7 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Actor } from "@/data/authorization";
@@ -59,6 +61,7 @@ import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+const clients: PoolClient[] = [];
 
 function actor(input: { userId: string; role: Actor["role"]; timezone: string }): Actor {
   return { ...input, organizationId: "fleet", name: input.userId, email: `${input.userId}@example.com`, state: "Active" };
@@ -128,11 +131,12 @@ async function grant(userId: string, workspaceId: string): Promise<void> {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
-  pool.on("connect", (client) =>
+  pool.on("connect", (client) => {
+    clients.push(client);
     client.on("error", (error: Error & { code?: string }) => {
       if (error.code !== "57P01") throw error;
-    }),
-  );
+    });
+  });
   await migrateDatabase(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York");
@@ -145,7 +149,12 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  const closed = clients.map((client) => {
+    const stream = (client as unknown as { connection?: { stream?: { destroyed: boolean; once: (event: "close", listener: () => void) => void } } }).connection?.stream;
+    return !stream || stream.destroyed ? Promise.resolve() : new Promise<void>((resolve) => stream.once("close", resolve));
+  });
   await pool?.end();
+  await Promise.all(closed);
   await container?.stop();
 });
 
