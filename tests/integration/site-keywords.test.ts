@@ -1,0 +1,286 @@
+/**
+ * -------------------------------------------------------------------------
+ * @file   site-keywords.test.ts
+ * @brief  Verifies Service Area, Keywords, and the Search read model.
+ *
+ * @description
+ *  Exercises the Workspace Site routes for the Service Area and Keywords:
+ *  phrases unique per Site case-insensitively, weights within 1 to 5, at
+ *  most 25 live Keywords, soft removal, Operator-only writes, Client
+ *  Viewer reads through an Access Grant, and the Search read model with
+ *  its score, 30-day trend, per-Keyword positions, and 7-day change from
+ *  stored rank days.
+ *
+ * @remarks
+ *  The suite uses one PostgreSQL container and real Better Auth sessions;
+ *  rank days are seeded directly because the daily check has its own
+ *  suite.
+ *
+ * @see
+ *  data/site-keywords.ts
+ *  data/site-search.ts
+ *  data/workspaces-handler.ts
+ *
+ * @author Jaedon Spurlock
+ * -------------------------------------------------------------------------
+ */
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
+import { createIntegrations } from "@/data/integrations";
+import { migrateDatabase } from "@/data/migrate";
+import { schema } from "@/data/schema";
+import { siteSearch } from "@/data/site-search";
+import { createTracerAuth } from "@/data/tracer-auth";
+import type { TwilioClient } from "@/data/twilio-client";
+import { createWorkspacesHandler } from "@/data/workspaces-handler";
+
+let container: StartedPostgreSqlContainer | undefined;
+let pool: Pool | undefined;
+let organizationId = "";
+let operatorId = "";
+const viewerId = "viewer-user-id";
+const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const backgroundTasks: Promise<unknown>[] = [];
+const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const keywordIds: Record<string, string> = {};
+
+const fakeTwilio: TwilioClient = {
+  async fetchAccount() { throw new Error("not implemented"); },
+  async listIncomingPhoneNumbers() { throw new Error("not implemented"); },
+  async fetchIncomingPhoneNumber() { throw new Error("not implemented"); },
+  async updateIncomingPhoneNumberVoice() { throw new Error("not implemented"); },
+};
+
+const database = () => drizzle(pool!, { schema });
+const auth = () => createTracerAuth({
+  database: database(),
+  email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
+  emailFrom: "auth@example.com",
+  allowedRecipients: new Set(["operator@example.com", "viewer@example.com"]),
+  backgroundTask: (promise) => backgroundTasks.push(promise),
+  secret: "integration-only-secret",
+  baseURL: "http://localhost:3000",
+});
+
+function handler() {
+  return createWorkspacesHandler({
+    auth: auth(),
+    database: database(),
+    pool: pool!,
+    twilio: fakeTwilio,
+    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    baseURL: "http://localhost:3000",
+  });
+}
+
+async function signIn(email: string): Promise<string> {
+  const before = messages.length;
+  const taskCount = backgroundTasks.length;
+  const instance = auth();
+  const send = await instance.handler(new Request("http://localhost:3000/api/auth/email-otp/send-verification-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, type: "sign-in" }) }));
+  expect(send.status).toBe(200);
+  await Promise.all(backgroundTasks.splice(taskCount));
+  const code = messages.slice(before).at(-1)?.text.match(/\d{6}/)?.[0];
+  const verify = await instance.handler(new Request("http://localhost:3000/api/auth/sign-in/email-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, otp: code }) }));
+  expect(verify.status).toBe(200);
+  return (verify.headers.get("set-cookie") ?? "").split(";", 1)[0];
+}
+
+async function json(request: Request): Promise<{ response: Response; body: Record<string, unknown> }> {
+  const response = await handler()(request);
+  return { response, body: response.status === 204 ? {} : await response.json() as Record<string, unknown> };
+}
+
+function send(cookie: string, method: string, route: string, body?: unknown): Request {
+  return new Request(`http://localhost:3000/api/workspaces/${route}`, { method, headers: { cookie, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+}
+
+function utcDay(offset: number): string {
+  return new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+}
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:17-alpine").start();
+  pool = new Pool({ connectionString: container.getConnectionUri() });
+  await migrateDatabase(container.getConnectionUri());
+  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  organizationId = bootstrapped.organizationId;
+  operatorId = bootstrapped.userId;
+  await pool.query(
+    `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
+     values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
+    [viewerId],
+  );
+  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await pool.query(
+    `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
+       ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
+       ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Active', now(), now()),
+       ('workspace-c', $1, 'Blackfoot Paving', 'America/Boise', 'Setup Required', now(), now())`,
+    [organizationId],
+  );
+  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await pool.query(
+    `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at) values
+       ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now()),
+       ('site-st-george', $1, 'asphalt-paving-st-george', 'asphaltpavingstgeorge.com', 'zone-2', now(), now(), now(), now())`,
+    [organizationId],
+  );
+  await pool.query(
+    `insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values
+       ('link-a', $1, 'site-pocatello', 'workspace-a', now(), $2),
+       ('link-b', $1, 'site-st-george', 'workspace-b', now(), $2)`,
+    [organizationId, operatorId],
+  );
+}, 120_000);
+
+afterAll(async () => {
+  await pool?.end();
+  await container?.stop();
+});
+
+describe.sequential("Site Keywords and Service Area", () => {
+  it("answers Not Found for a Workspace without a Site and starts with an empty Service Area", async () => {
+    const cookie = await signIn("operator@example.com");
+    expect((await json(send(cookie, "GET", "workspace-c/site/keywords"))).response.status).toBe(404);
+    const empty = await json(send(cookie, "GET", "workspace-a/site/keywords"));
+    expect(empty.response.status).toBe(200);
+    expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States" }, keywords: [] });
+  });
+
+  it("saves the Service Area with PUT, trimming values and defaulting the country", async () => {
+    const cookie = await signIn("operator@example.com");
+    const saved = await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "  Pocatello ", region: "Idaho", country: "" }));
+    expect(saved.response.status).toBe(200);
+    expect(saved.body).toEqual({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" } });
+    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: 12, region: "Idaho", country: "United States" }))).response.status).toBe(400);
+    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "x".repeat(81), region: "Idaho", country: "United States" }))).response.status).toBe(400);
+    const stored = await pool!.query("select service_area_city, service_area_region, service_area_country from site where id = 'site-pocatello'");
+    expect(stored.rows[0]).toEqual({ service_area_city: "Pocatello", service_area_region: "Idaho", service_area_country: "United States" });
+  });
+
+  it("adds Keywords with a trimmed phrase, a default weight, unique phrases per Site, and weights within 1 to 5", async () => {
+    const cookie = await signIn("operator@example.com");
+    const added = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "  Asphalt Paving Pocatello  " }));
+    expect(added.response.status).toBe(201);
+    expect(added.body.keyword).toEqual({ id: expect.any(String), phrase: "Asphalt Paving Pocatello", weight: 1, createdAt: expect.any(String) });
+    keywordIds.paving = (added.body.keyword as { id: string }).id;
+    const weighted = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "driveway paving pocatello", weight: 5 }));
+    expect(weighted.response.status).toBe(201);
+    keywordIds.driveway = (weighted.body.keyword as { id: string }).id;
+    const duplicate = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "asphalt paving POCATELLO", weight: 2 }));
+    expect(duplicate.response.status).toBe(409);
+    expect(duplicate.body).toEqual({ error: "duplicate_phrase" });
+    for (const body of [{ phrase: "   " }, { phrase: "x", weight: 0 }, { phrase: "x", weight: 6 }, { phrase: "x", weight: 1.5 }, { phrase: "x", weight: "3" }, { phrase: "y".repeat(121) }]) {
+      expect((await json(send(cookie, "POST", "workspace-a/site/keywords", body))).response.status, JSON.stringify(body)).toBe(400);
+    }
+    const elsewhere = await json(send(cookie, "POST", "workspace-b/site/keywords", { phrase: "asphalt paving pocatello" }));
+    expect(elsewhere.response.status).toBe(201);
+    keywordIds.elsewhere = (elsewhere.body.keyword as { id: string }).id;
+    const listed = await json(send(cookie, "GET", "workspace-a/site/keywords"));
+    expect((listed.body.keywords as Array<{ phrase: string; weight: number }>)).toEqual([
+      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, createdAt: expect.any(String) },
+      { id: keywordIds.driveway, phrase: "driveway paving pocatello", weight: 5, createdAt: expect.any(String) },
+    ]);
+  });
+
+  it("changes a weight with PATCH, soft-removes with DELETE, and frees the phrase for reuse", async () => {
+    const cookie = await signIn("operator@example.com");
+    const patched = await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.driveway}`, { weight: 3 }));
+    expect(patched.response.status).toBe(200);
+    expect(patched.body.keyword).toMatchObject({ id: keywordIds.driveway, weight: 3 });
+    expect((await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.driveway}`, { weight: 9 }))).response.status).toBe(400);
+    expect((await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.elsewhere}`, { weight: 2 }))).response.status).toBe(404);
+    const removed = await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.driveway}`));
+    expect(removed.response.status).toBe(204);
+    const row = await pool!.query<{ removed_at: Date | null }>("select removed_at from site_keyword where id = $1", [keywordIds.driveway]);
+    expect(row.rows[0].removed_at).not.toBeNull();
+    expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.driveway}`))).response.status).toBe(404);
+    const again = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "Driveway Paving Pocatello", weight: 2 }));
+    expect(again.response.status).toBe(201);
+    keywordIds.driveway = (again.body.keyword as { id: string }).id;
+    expect((await json(send(cookie, "GET", "workspace-a/site/keywords"))).body.keywords).toHaveLength(2);
+  });
+
+  it("keeps at most 25 live Keywords per Site", async () => {
+    const cookie = await signIn("operator@example.com");
+    for (let index = 3; index <= 25; index += 1) {
+      expect((await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: `filler phrase ${index}` }))).response.status).toBe(201);
+    }
+    const overflow = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "one too many" }));
+    expect(overflow.response.status).toBe(409);
+    expect(overflow.body).toEqual({ error: "keyword_limit" });
+    const fillers = await pool!.query<{ id: string }>("select id from site_keyword where site_id = 'site-pocatello' and phrase like 'filler phrase %'");
+    for (const filler of fillers.rows) expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${filler.id}`))).response.status).toBe(204);
+    expect((await json(send(cookie, "GET", "workspace-a/site/keywords"))).body.keywords).toHaveLength(2);
+  });
+
+  it("lets a Client Viewer read Keywords and Search inside a granted Workspace but never edit them", async () => {
+    const cookie = await signIn("viewer@example.com");
+    const keywords = await json(send(cookie, "GET", "workspace-a/site/keywords"));
+    expect(keywords.response.status).toBe(200);
+    expect(keywords.body.keywords).toHaveLength(2);
+    expect((await json(send(cookie, "GET", "workspace-a/site/search"))).response.status).toBe(200);
+    expect((await json(send(cookie, "GET", "workspace-b/site/keywords"))).response.status).toBe(404);
+    expect((await json(send(cookie, "GET", "workspace-b/site/search"))).response.status).toBe(404);
+    expect((await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "viewer phrase" }))).response.status).toBe(403);
+    expect((await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.paving}`, { weight: 4 }))).response.status).toBe(403);
+    expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.paving}`))).response.status).toBe(403);
+    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "Boise", region: "Idaho", country: "United States" }))).response.status).toBe(403);
+    expect((await pool!.query("select count(*) from site_keyword where site_id = 'site-pocatello' and removed_at is null")).rows[0]).toEqual({ count: "2" });
+  });
+
+  it("reads Search with no score before any check and with the weighted score, trend, and 7-day change afterwards", async () => {
+    const cookie = await signIn("operator@example.com");
+    const before = await json(send(cookie, "GET", "workspace-a/site/search"));
+    expect(before.response.status).toBe(200);
+    expect(before.body).toMatchObject({ score: null, checkedAt: null, serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" } });
+    expect((before.body.trend as unknown[])).toHaveLength(30);
+    expect((before.body.trend as Array<{ score: number | null }>).every((point) => point.score === null)).toBe(true);
+    expect(before.body.keywords).toEqual([
+      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: null },
+      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: null },
+    ]);
+
+    const top = JSON.stringify([{ position: 1, domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving" }, { position: 2, domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" }]);
+    await pool!.query(
+      `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at) values
+         ('rank-paving-7', $1, $3::date, 5, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '7 days'),
+         ('rank-paving-1', $1, $4::date, 3, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '1 day'),
+         ('rank-paving-0', $1, $5::date, 2, 'https://pocatelloasphaltpaving.com/', $6::jsonb, now()),
+         ('rank-driveway-0', $2, $5::date, null, null, '[]'::jsonb, now())`,
+      [keywordIds.paving, keywordIds.driveway, utcDay(7), utcDay(1), utcDay(0), top],
+    );
+    const after = await json(send(cookie, "GET", "workspace-a/site/search"));
+    expect(after.response.status).toBe(200);
+    expect(after.body.score).toBe(20);
+    expect(after.body.checkedAt).toEqual(expect.any(String));
+    expect(after.body.keywords).toEqual([
+      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, position: 2, change7d: 3, rankingUrl: "https://pocatelloasphaltpaving.com/", topResults: JSON.parse(top), checkedAt: expect.any(String) },
+      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: expect.any(String) },
+    ]);
+    const trend = after.body.trend as Array<{ day: string; score: number | null }>;
+    expect(trend).toHaveLength(30);
+    expect(trend.at(-1)).toEqual({ day: utcDay(0), score: 20 });
+    expect(trend.at(-2)).toEqual({ day: utcDay(1), score: 45 });
+    expect(trend.at(-8)).toEqual({ day: utcDay(7), score: 25 });
+    expect(trend.at(-9)).toEqual({ day: utcDay(8), score: null });
+    expect(trend[0]).toEqual({ day: utcDay(29), score: null });
+  });
+
+  it("reads a rank day stored on the UTC date just after UTC midnight while the Workspace timezone is still on the previous day", async () => {
+    const now = new Date("2026-10-21T00:30:00Z");
+    await pool!.query(
+      "insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at) values ('rank-elsewhere-utc', $1, '2026-10-21', 4, 'https://asphaltpavingstgeorge.com/', '[]'::jsonb, $2)",
+      [keywordIds.elsewhere, now],
+    );
+    const search = await siteSearch(pool!, "site-st-george", "America/Denver", now);
+    expect(search?.checkedAt).toBe(now.toISOString());
+    expect(search?.score).toBe(35);
+    expect(search?.trend.at(-1)).toEqual({ day: "2026-10-21", score: 35 });
+  });
+});

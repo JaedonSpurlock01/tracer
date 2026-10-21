@@ -4,10 +4,15 @@
  * @brief  Renders one Workspace settings section behind a vertical rail.
  *
  * @description
- *  Provides General, Number, Recording and AI, Access, and Danger settings,
- *  each on its own page linked from the rail. The Number page replaces or
+ *  Provides General, Site, Number, Recording and AI, Access, and Danger
+ *  settings, each on its own page linked from the rail. The Site page shows
+ *  the linked Site with its preview thumbnail, hostname, and Site Link
+ *  start, replaces it through the Site picker, or detaches it after
+ *  confirmation without changing Cloudflare, edits the Site's Service
+ *  Area, Keywords, and Domain renewal, and adds, edits, or ends the
+ *  Workspace's Deal. The Number page replaces or
  *  detaches the Tracking Number. An Archived Workspace keeps only Access and
- *  Restore editable. The Workspace tabs sit below the header.
+ *  Restore editable.
  *
  * @remarks
  *  Each section is a separate route so it can be linked and bookmarked.
@@ -44,10 +49,15 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { EmptyState } from "@/components/tracer/empty-state";
+import { formatCallTime } from "@/components/tracer/call-format";
+import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
+import { DealSettings, DomainRenewalSettings } from "@/components/tracer/site-deal-settings";
+import SiteSearchSettings, { type SiteSearchSettingsData } from "@/components/tracer/site-search-settings";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
-import WorkspaceTabs from "@/components/tracer/workspace-tabs";
+import type { DealRecord } from "@/data/deals";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -60,12 +70,22 @@ export default function WorkspaceSettingsView({
   initialWorkspace,
   section,
   initialAccessUsers,
+  initialSite = null,
+  initialKeywords = null,
+  initialDeal,
 }: {
   initialWorkspace: WorkspaceRecord;
   section: WorkspaceSettingsSection;
   initialAccessUsers?: OperatorRecord[];
+  initialSite?: SiteResponse | null;
+  initialKeywords?: SiteSearchSettingsData | null;
+  initialDeal?: DealRecord | null;
 }) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [site, setSite] = useState<SiteResponse | null>(initialSite);
+  const [sitePicker, setSitePicker] = useState<SitePickerMode | null>(null);
+  const [confirmDetachSite, setConfirmDetachSite] = useState(false);
+  const [siteError, setSiteError] = useState("");
   const [name, setName] = useState(initialWorkspace.name);
   const [timezone, setTimezone] = useState(initialWorkspace.reportingTimezone);
   const [message, setMessage] = useState("");
@@ -212,6 +232,20 @@ export default function WorkspaceSettingsView({
     setBusy(false);
   }
 
+  async function detachSite() {
+    setBusy(true);
+    setSiteError("");
+    const response = await mutationFetch(`/api/workspaces/${workspace.id}/site/detach`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) {
+      setSiteError("The Site could not be detached.");
+    } else {
+      setSite(null);
+      setMessage("Site detached.");
+    }
+    setConfirmDetachSite(false);
+    setBusy(false);
+  }
+
   async function restore() {
     setBusy(true);
     setDangerError("");
@@ -241,7 +275,6 @@ export default function WorkspaceSettingsView({
           {message ? <p role="status" className="text-sm">{message}</p> : null}
         </div>
       </div>
-      <WorkspaceTabs workspaceId={workspace.id} operator current="settings" />
       <Frame>
         <FramePanel className="grid gap-6 md:grid-cols-[12rem_1fr]">
           <nav aria-label="Workspace settings sections" className="flex gap-1 overflow-x-auto md:flex-col">
@@ -296,6 +329,64 @@ export default function WorkspaceSettingsView({
                     </Button>
                   </div>
                 </div>
+              </section>
+            ) : null}
+            {section === "site" ? (
+              <section id="site">
+                <h2 className="font-semibold">Site</h2>
+                <p className="mb-4 text-sm text-muted-foreground">The Cloudflare Site linked to this Workspace. Linking, replacing, and detaching never change Cloudflare.</p>
+                {siteError ? <p role="alert" className="mb-3 text-sm">{siteError}</p> : null}
+                {site ? (
+                  <div className="grid gap-4">
+                    <div className="grid gap-4 sm:grid-cols-[14rem_1fr]">
+                      <SitePreviewThumbnail src={site.latestPreview ? previewImageSrc(workspace.id, site.latestPreview.capturedAt) : null} alt={`Preview of ${site.primaryHostname}`} />
+                      <div className="grid content-start gap-3 text-sm">
+                        <p>
+                          <span className="font-medium">Primary hostname: </span>
+                          <span className="font-mono">{site.primaryHostname}</span>
+                        </p>
+                        <p>
+                          <span className="font-medium">Site Link since: </span>
+                          {formatCallTime(site.linkedAt, workspace.reportingTimezone)}
+                        </p>
+                        <p className="flex items-center gap-2">
+                          <span className="font-medium">Site Health: </span>
+                          <Badge variant={siteHealthBadges[site.health][1]}>{siteHealthBadges[site.health][0]}</Badge>
+                        </p>
+                        <Link className="underline" href={`/workspaces/${workspace.id}/site`} prefetch>
+                          View Site
+                        </Link>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" disabled={busy} onClick={() => setSitePicker("replace")}>
+                        Replace Site
+                      </Button>
+                      <Button type="button" variant="destructive" disabled={busy} onClick={() => setConfirmDetachSite(true)}>
+                        Detach Site
+                      </Button>
+                    </div>
+                    {initialKeywords && initialSite?.id === site.id ? (
+                      <SiteSearchSettings key={site.id} workspaceId={workspace.id} initial={initialKeywords} onMessage={setMessage} />
+                    ) : null}
+                    {site.domain && initialSite?.id === site.id ? <DomainRenewalSettings key={`domain-${site.id}`} workspaceId={workspace.id} initial={site.domain} onMessage={setMessage} /> : null}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No Site is linked to this Workspace"
+                    description="Link one of the connected Cloudflare account's Sites to see its preview, traffic, performance, and health in this Workspace."
+                    action={
+                      <Button type="button" onClick={() => setSitePicker("link")}>
+                        Link Site
+                      </Button>
+                    }
+                  />
+                )}
+                {initialDeal !== undefined ? (
+                  <div className="mt-8">
+                    <DealSettings workspaceId={workspace.id} initial={initialDeal} onMessage={setMessage} />
+                  </div>
+                ) : null}
               </section>
             ) : null}
             {section === "number" ? (
@@ -443,6 +534,35 @@ export default function WorkspaceSettingsView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SitePickerDialog
+        open={sitePicker !== null}
+        onOpenChange={(open) => setSitePicker(open ? (sitePicker ?? "link") : null)}
+        workspaceId={workspace.id}
+        mode={sitePicker ?? "link"}
+        timeZone={workspace.reportingTimezone}
+        onLinked={(linked) => {
+          setSite(linked);
+          setMessage(sitePicker === "replace" ? "Site replaced." : "Site linked.");
+        }}
+      />
+
+      <AlertDialog open={confirmDetachSite} onOpenChange={setConfirmDetachSite}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Detach {site?.primaryHostname}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The Site Link ends and this Workspace stops showing the Site. Cloudflare is not changed, the Site stays on the connected account, and it can be linked again later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void detachSite()}>
+              Detach Site
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmDetach} onOpenChange={setConfirmDetach}>
         <AlertDialogContent>

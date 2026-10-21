@@ -155,6 +155,27 @@
       "when": 1792464974596,
       "tag": "0021_modern_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792524911632,
+      "tag": "0022_melted_maddog",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792539148023,
+      "tag": "0023_brave_silk_fever",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792540906813,
+      "tag": "0024_dear_arachne",
+      "breakpoints": true
     }
   ]
 }

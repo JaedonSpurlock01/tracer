@@ -10,7 +10,16 @@
  *  Calls, for any actor who can currently read its Workspace. The Workspace list carries each
  *  listed Workspace's analytics list stats. Saves an Operator's Lead Review,
  *  accepts an Operator's Retry of a failed Transcript or Lead Assessment,
- *  and purges a Call's Recording media for an Operator.
+ *  and purges a Call's Recording media for an Operator. Reads the linked
+ *  Site with its traffic summary for any reader of the Workspace, streams
+ *  the Site's newest preview from the R2 binding under the same Workspace
+ *  authorization, and lets an Operator pick, link, replace, and detach a
+ *  Site and force a preview capture with Refresh Preview. Reads the Site's
+ *  Service Area, Keywords, and Search read model for any reader of the
+ *  Workspace, and lets an Operator set the Service Area and add, reweight,
+ *  and remove Keywords. Lets an Operator record the Site's Domain renewal
+ *  and create, edit, and end the Workspace's Deal; Client Viewers get 403
+ *  on every Deal and Domain route.
  *
  * @remarks
  *  Routing mutations remain in workspace-routing.ts rather than the Workspace
@@ -33,13 +42,21 @@ import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
 import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { createCallDetails } from "@/data/call-details";
+import { createDeals, DealsError } from "@/data/deals";
+import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { Integrations } from "@/data/integrations";
+import { IntegrationsError } from "@/data/integrations-error";
 import { parseLeadReviewInput } from "@/data/lead-classification";
 import { saveLeadReview } from "@/data/lead-reviews";
 import { purgeCallMedia } from "@/data/media-purge";
 import type { RecordingProcessing } from "@/data/recording";
 import { recordingAudioResponse } from "@/data/recording-audio";
 import { findAvailableRecordingMedia, recordingMp3Response, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
+import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
+import { captureSitePreview, sitePreviewResponse, type SitePreviewBucket } from "@/data/site-preview";
+import { createSiteKeywords, SiteKeywordsError } from "@/data/site-keywords";
+import { siteSearch } from "@/data/site-search";
+import { createSites, siteResponseForActor, SitesError, summaryResponseForActor } from "@/data/sites";
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
 import type { TwilioClient, TwilioRecordingMedia } from "@/data/twilio-client";
@@ -56,6 +73,8 @@ export interface WorkspacesHandlerOptions {
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
   recordingBucket?: RecordingMediaBucket;
+  sitePreviews?: SitePreviewBucket;
+  cloudflare?: CloudflareClient;
   masterKey?: string;
   twilioMedia?: TwilioRecordingMedia;
   recordingTranscription?: RecordingProcessing;
@@ -71,7 +90,11 @@ function errorResponse(error: unknown): Response {
     return response({ error: error.status === 401 ? "unauthenticated" : "forbidden" }, error.status);
   }
   if (error instanceof AnalysisRetryError) return response({ error: "provider_unavailable" }, 502);
-  if (error instanceof WorkspacesError) {
+  if (error instanceof IntegrationsError) {
+    const status = error.code === "master_key_missing" ? 503 : error.code === "not_connected" ? 404 : 502;
+    return response(error.detail ? { error: error.code, detail: error.detail } : { error: error.code }, status);
+  }
+  if (error instanceof WorkspacesError || error instanceof SitesError || error instanceof SiteKeywordsError || error instanceof DealsError) {
     const status = error.code === "invalid_input" ? 400 : error.code === "not_found" ? 404 : 409;
     return response({ error: error.code }, status);
   }
@@ -167,7 +190,37 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         if (!call) throw new WorkspacesError("not_found");
         return Response.json({ call }, { headers: { "cache-control": "private, no-store" } });
       }
-      if (request.method === "GET" && (route === "" || (route !== "numbers" && /^[^/]+$/.test(route)))) {
+      const previewMatch = route.match(/^([^/]+)\/site\/preview$/);
+      if (request.method === "GET" && previewMatch) {
+        const workspace = await createReadableWorkspaces(options.pool, actor).find(previewMatch[1]);
+        if (!workspace) throw new WorkspacesError("not_found");
+        const site = await createSites(options.pool, actor).findLinked(workspace.id);
+        const served = site?.latestPreview && options.sitePreviews ? await sitePreviewResponse(options.sitePreviews, site.latestPreview.objectKey) : null;
+        if (!served) throw new WorkspacesError("not_found");
+        return served;
+      }
+      const siteReadMatch = route.match(/^([^/]+)\/site\/(keywords|search)$/);
+      if (request.method === "GET" && siteReadMatch) {
+        const workspace = await createReadableWorkspaces(options.pool, actor).find(siteReadMatch[1]);
+        if (!workspace) throw new WorkspacesError("not_found");
+        const site = await createSites(options.pool, actor).findLinked(workspace.id);
+        if (!site) throw new WorkspacesError("not_found");
+        if (siteReadMatch[2] === "keywords") return response(await createSiteKeywords(options.pool, actor).list(site.id));
+        const search = await siteSearch(options.pool, site.id, workspace.reportingTimezone);
+        if (!search) throw new WorkspacesError("not_found");
+        return response(search);
+      }
+      const siteMatch = route.match(/^([^/]+)\/site$/);
+      if (request.method === "GET" && siteMatch) {
+        const workspace = await createReadableWorkspaces(options.pool, actor).find(siteMatch[1]);
+        if (!workspace) throw new WorkspacesError("not_found");
+        const sites = createSites(options.pool, actor);
+        const site = await sites.findLinked(workspace.id);
+        if (!site) return response({ site: null, summary: null });
+        const summary = await sites.summary(site.id, analyticsRangeFromSearchParams(new URL(request.url).searchParams), workspace.reportingTimezone);
+        return response({ site: siteResponseForActor(actor, site), summary: summaryResponseForActor(actor, summary) });
+      }
+      if (request.method === "GET" && (route === "" || (route !== "numbers" && route !== "sites" && /^[^/]+$/.test(route)))) {
         const readable = createReadableWorkspaces(options.pool, actor);
         if (route !== "") {
           const workspace = await readable.find(route);
@@ -227,6 +280,14 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         );
       }
       if (request.method === "GET" && route === "numbers") return response({ numbers: await routing.listAvailableNumbers() });
+      if (request.method === "GET" && route === "sites") {
+        const url = new URL(request.url);
+        return response(await createSites(options.pool, actor).listForPicker({
+          search: url.searchParams.get("search") ?? undefined,
+          page: parsePositiveInteger(url.searchParams.get("page")),
+          pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
+        }));
+      }
       const match = route.match(/^([^/]+)(?:\/(.*))?$/);
       if (!match) return response({ error: "not_found" }, 404);
       const id = match[1];
@@ -271,6 +332,73 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         return response({ workspace: await routing.replaceNumber(id, { twilioNumberId: body.twilioNumberId }) });
       }
       if (request.method === "POST" && subroute === "detach-number") return response({ workspace: await routing.detachNumber(id) });
+      if (request.method === "POST" && (subroute === "site/link" || subroute === "site/replace")) {
+        const body = await readBody(request);
+        if (typeof body.siteId !== "string") throw new SitesError("invalid_input");
+        const sites = createSites(options.pool, actor);
+        const site = subroute === "site/link" ? await sites.link(id, body.siteId, actor.userId) : await sites.replace(id, body.siteId, actor.userId);
+        return response({ site: siteResponseForActor(actor, site) });
+      }
+      if (request.method === "POST" && subroute === "site/detach") {
+        await createSites(options.pool, actor).detach(id);
+        return response({ detached: true });
+      }
+      if (subroute === "site/keywords" || subroute === "site/service-area" || subroute.startsWith("site/keywords/")) {
+        const linked = await createSites(options.pool, actor).findLinked(id);
+        if (!linked) throw new WorkspacesError("not_found");
+        const keywords = createSiteKeywords(options.pool, actor);
+        if (request.method === "POST" && subroute === "site/keywords") {
+          const body = await readBody(request);
+          return response({ keyword: await keywords.add(linked.id, { phrase: body.phrase, weight: body.weight }) }, 201);
+        }
+        if (request.method === "PUT" && subroute === "site/service-area") {
+          const body = await readBody(request);
+          return response({ serviceArea: await keywords.setServiceArea(linked.id, { city: body.city, region: body.region, country: body.country }) });
+        }
+        const keywordMatch = subroute.match(/^site\/keywords\/([^/]+)$/);
+        if (request.method === "PATCH" && keywordMatch) {
+          const body = await readBody(request);
+          return response({ keyword: await keywords.update(linked.id, keywordMatch[1], { weight: body.weight }) });
+        }
+        if (request.method === "DELETE" && keywordMatch) {
+          await keywords.remove(linked.id, keywordMatch[1]);
+          return new Response(null, { status: 204 });
+        }
+      }
+      if (request.method === "PUT" && subroute === "site/domain") {
+        const body = await readBody(request);
+        return response({ domain: await createSites(options.pool, actor).setDomainRenewal(id, { registrar: body.registrar, renewalCents: body.renewalCents, renewsOn: body.renewsOn }) });
+      }
+      if (subroute === "deal" || subroute.startsWith("deal/")) {
+        const deals = createDeals(options.pool, actor);
+        if (request.method === "GET" && subroute === "deal") {
+          const [deal, history] = await Promise.all([deals.current(id), deals.history(id)]);
+          return response({ deal, history });
+        }
+        if (request.method === "POST" && subroute === "deal") {
+          const body = await readBody(request);
+          return response({ deal: await deals.create({ workspaceId: id, kind: body.kind, amountCents: body.amountCents, startedOn: body.startedOn }) }, 201);
+        }
+        const dealMatch = subroute.match(/^deal\/([^/]+)(\/end)?$/);
+        if (request.method === "PATCH" && dealMatch && !dealMatch[2]) {
+          const body = await readBody(request);
+          return response({ deal: await deals.update(dealMatch[1], { workspaceId: id, kind: body.kind, amountCents: body.amountCents, startedOn: body.startedOn }) });
+        }
+        if (request.method === "POST" && dealMatch?.[2]) {
+          const body = await readBody(request);
+          return response({ deal: await deals.end(dealMatch[1], { workspaceId: id, endedOn: body.endedOn }) });
+        }
+      }
+      if (request.method === "POST" && subroute === "site/preview/refresh") {
+        const sites = createSites(options.pool, actor);
+        const linked = await sites.findLinked(id);
+        if (!linked) throw new WorkspacesError("not_found");
+        if (!options.cloudflare || !options.sitePreviews) return response({ error: "preview_unavailable" }, 503);
+        await captureSitePreview({ pool: options.pool, cloudflare: options.cloudflare, objects: options.sitePreviews, masterKey: options.masterKey, siteId: linked.id, now: new Date(), force: true });
+        const refreshed = await sites.findLinked(id);
+        if (!refreshed) throw new WorkspacesError("not_found");
+        return response({ site: siteResponseForActor(actor, refreshed) });
+      }
       if (request.method === "POST" && subroute === "archive") return response({ workspace: await routing.archive(id) });
       if (request.method === "POST" && subroute === "restore") return response({ workspace: await workspaces.restore(id) });
       return response({ error: "not_found" }, 404);

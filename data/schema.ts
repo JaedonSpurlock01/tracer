@@ -21,6 +21,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -728,6 +729,263 @@ export const reportArtifacts = pgTable(
   ],
 );
 
+export const cloudflareConnections = pgTable(
+  "cloudflare_connection",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .unique(),
+    accountId: text("account_id").notNull(),
+    apiTokenCiphertext: text("api_token_ciphertext").notNull(),
+    masterKeyVersion: integer("master_key_version").notNull().default(1),
+    connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull(),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastFailureDetail: text("last_failure_detail"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("cloudflare_connection_organization_id_idx").on(table.organizationId)],
+);
+
+export const sites = pgTable(
+  "site",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    scriptName: text("script_name").notNull(),
+    primaryHostname: text("primary_hostname").notNull(),
+    zoneId: text("zone_id").notNull(),
+    rumSiteTag: text("rum_site_tag"),
+    liveVersionId: text("live_version_id"),
+    lastDeployedAt: timestamp("last_deployed_at", { withTimezone: true }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    serviceAreaCity: text("service_area_city"),
+    serviceAreaRegion: text("service_area_region"),
+    serviceAreaCountry: text("service_area_country").default("United States"),
+    domainRegistrar: text("domain_registrar"),
+    domainRenewalCents: integer("domain_renewal_cents"),
+    domainRenewsOn: date("domain_renews_on"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("site_organization_script_name_idx").on(table.organizationId, table.scriptName),
+    index("site_organization_id_idx").on(table.organizationId),
+  ],
+);
+
+export const siteHostnames = pgTable(
+  "site_hostname",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    hostname: text().notNull(),
+    zoneId: text("zone_id").notNull(),
+    certificateId: text("certificate_id"),
+    enabled: boolean().notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [uniqueIndex("site_hostname_site_hostname_idx").on(table.siteId, table.hostname)],
+);
+
+export const siteLinks = pgTable(
+  "site_link",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "restrict" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    startedByUserId: text("started_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("site_link_open_site_idx").on(table.siteId).where(sql`${table.endedAt} is null`),
+    uniqueIndex("site_link_open_workspace_idx").on(table.workspaceId).where(sql`${table.endedAt} is null`),
+    index("site_link_organization_id_idx").on(table.organizationId),
+    index("site_link_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export const siteMetricDays = pgTable(
+  "site_metric_day",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    day: date().notNull(),
+    visits: integer().notNull().default(0),
+    pageViews: integer("page_views").notNull().default(0),
+    requests: integer().notNull().default(0),
+    errors: integer().notNull().default(0),
+    topPaths: jsonb("top_paths").notNull().default(sql`'[]'::jsonb`),
+    referrers: jsonb().notNull().default(sql`'[]'::jsonb`),
+    devices: jsonb().notNull().default(sql`'[]'::jsonb`),
+    lcpMs: integer("lcp_ms"),
+    inpMs: integer("inp_ms"),
+    cls: numeric({ precision: 6, scale: 3 }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [uniqueIndex("site_metric_day_site_day_idx").on(table.siteId, table.day)],
+);
+
+export const siteDeployments = pgTable(
+  "site_deployment",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    versionId: text("version_id").notNull(),
+    source: text().notNull(),
+    authorEmail: text("author_email"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [uniqueIndex("site_deployment_site_version_idx").on(table.siteId, table.versionId)],
+);
+
+export const siteChecks = pgTable(
+  "site_check",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    statusCode: integer("status_code"),
+    responseMs: integer("response_ms"),
+    ok: boolean().notNull(),
+    error: text(),
+  },
+  (table) => [index("site_check_site_checked_at_idx").on(table.siteId, table.checkedAt.desc())],
+);
+
+export const sitePreviews = pgTable(
+  "site_preview",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    versionId: text("version_id"),
+    objectKey: text("object_key").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    byteSize: integer("byte_size").notNull(),
+  },
+  (table) => [index("site_preview_site_captured_at_idx").on(table.siteId, table.capturedAt.desc())],
+);
+
+export const dataforseoConnections = pgTable(
+  "dataforseo_connection",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .unique(),
+    login: text().notNull(),
+    passwordCiphertext: text("password_ciphertext").notNull(),
+    masterKeyVersion: integer("master_key_version").notNull().default(1),
+    connectedByUserId: text("connected_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull(),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastFailureDetail: text("last_failure_detail"),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    lookupsThisMonth: integer("lookups_this_month").notNull().default(0),
+    lookupsMonth: date("lookups_month"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("dataforseo_connection_organization_id_idx").on(table.organizationId)],
+);
+
+export const siteKeywords = pgTable(
+  "site_keyword",
+  {
+    id: text().primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    phrase: text().notNull(),
+    weight: integer().notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+  },
+  (table) => [
+    check("site_keyword_weight_check", sql`${table.weight} between 1 and 5`),
+    uniqueIndex("site_keyword_site_phrase_idx").on(table.siteId, sql`lower(${table.phrase})`).where(sql`${table.removedAt} is null`),
+    index("site_keyword_site_id_idx").on(table.siteId),
+  ],
+);
+
+export const keywordRankDays = pgTable(
+  "keyword_rank_day",
+  {
+    id: text().primaryKey(),
+    siteKeywordId: text("site_keyword_id")
+      .notNull()
+      .references(() => siteKeywords.id, { onDelete: "cascade" }),
+    day: date().notNull(),
+    position: integer(),
+    rankingUrl: text("ranking_url"),
+    topResults: jsonb("top_results").notNull().default(sql`'[]'::jsonb`),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("keyword_rank_day_keyword_day_idx").on(table.siteKeywordId, table.day),
+    check("keyword_rank_day_position_check", sql`${table.position} is null or ${table.position} >= 1`),
+  ],
+);
+
+export const deals = pgTable(
+  "deal",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    startedOn: date("started_on").notNull(),
+    endedOn: date("ended_on"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("deal_kind_check", sql`${table.kind} in ('Monthly', 'Weekly', 'Per Lead')`),
+    check("deal_amount_check", sql`${table.amountCents} > 0`),
+    check("deal_period_check", sql`${table.endedOn} is null or ${table.endedOn} >= ${table.startedOn}`),
+    uniqueIndex("deal_open_workspace_idx").on(table.workspaceId).where(sql`${table.endedOn} is null`),
+    index("deal_organization_id_idx").on(table.organizationId),
+    index("deal_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -753,4 +1011,16 @@ export const schema = {
   callEvent: callEvents,
   reportJob: reportJobs,
   reportArtifact: reportArtifacts,
+  cloudflareConnection: cloudflareConnections,
+  site: sites,
+  siteHostname: siteHostnames,
+  siteLink: siteLinks,
+  siteMetricDay: siteMetricDays,
+  siteDeployment: siteDeployments,
+  siteCheck: siteChecks,
+  sitePreview: sitePreviews,
+  dataforseoConnection: dataforseoConnections,
+  siteKeyword: siteKeywords,
+  keywordRankDay: keywordRankDays,
+  deal: deals,
 };

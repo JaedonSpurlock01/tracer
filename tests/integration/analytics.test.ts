@@ -443,10 +443,10 @@ describe("Workspaces list stats and routing health", () => {
   it("report 30-day Calls and Good Leads, the last Call, and webhook health from recorded voice webhooks", async () => {
     const stats = await analytics(operator).workspaceListStats(["north", "south", "east", "setup", "other-workspace"]);
     expect(stats).toEqual({
-      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" } },
-      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null } },
-      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" } },
-      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } },
+      north: { callsLast30Days: 23, goodLeadsLast30Days: 7, lastCallAt: "2026-10-18T16:55:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T16:55:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-18T16:55:00.000Z" }, siteHealth: null },
+      south: { callsLast30Days: 4, goodLeadsLast30Days: 1, lastCallAt: "2026-10-18T10:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-18T10:00:00.000Z", integrationHealth: { status: "Warning", lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
+      east: { callsLast30Days: 5, goodLeadsLast30Days: 3, lastCallAt: "2026-10-17T15:00:00.000Z", lastSuccessfulInboundCallAt: "2026-10-17T15:00:00.000Z", integrationHealth: { status: "Healthy", lastAcceptedVoiceWebhookAt: "2026-10-17T15:00:00.000Z" }, siteHealth: null },
+      setup: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
     });
   });
 

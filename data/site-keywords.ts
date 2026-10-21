@@ -1,0 +1,212 @@
+/**
+ * -------------------------------------------------------------------------
+ * @file   site-keywords.ts
+ * @brief  Edits a Site's Service Area and Keywords under authorization.
+ *
+ * @description
+ *  Lists a Site's Service Area and live Keywords for anyone who can read
+ *  its linked Workspace, and lets an Operator set the Service Area, add a
+ *  Keyword with a phrase and a weight from 1 to 5, change a weight, and
+ *  remove a Keyword. Phrases are trimmed and unique per Site without
+ *  regard to case, and a Site keeps at most 25 live Keywords.
+ *
+ * @remarks
+ *  Removal sets `removed_at` rather than deleting, so stored rank days
+ *  stay as history and the runtime role needs no DELETE grant; the
+ *  partial unique index frees the phrase for a new Keyword. The country
+ *  defaults to United States because every Site serves one. Adds are
+ *  serialized per Site with an advisory lock so the limit holds under
+ *  concurrent requests.
+ *
+ * @see
+ *  data/site-search.ts
+ *  data/rank-check.ts
+ *  data/workspace-authorization.ts
+ *
+ * @author Jaedon Spurlock
+ * -------------------------------------------------------------------------
+ */
+import { randomUUID } from "node:crypto";
+
+import type { Pool, PoolClient } from "pg";
+
+import { AuthorizationError, type Actor } from "@/data/authorization";
+import { canManageWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
+
+export interface ServiceArea {
+  city: string | null;
+  region: string | null;
+  country: string | null;
+}
+
+export interface SiteKeywordRecord {
+  id: string;
+  phrase: string;
+  weight: number;
+  createdAt: string;
+}
+
+export type SiteKeywordsErrorCode = "invalid_input" | "not_found" | "duplicate_phrase" | "keyword_limit";
+
+export class SiteKeywordsError extends Error {
+  constructor(public readonly code: SiteKeywordsErrorCode) {
+    super(code);
+    this.name = "SiteKeywordsError";
+  }
+}
+
+export interface SiteKeywords {
+  list(siteId: string): Promise<{ serviceArea: ServiceArea; keywords: SiteKeywordRecord[] }>;
+  add(siteId: string, input: { phrase: unknown; weight?: unknown }): Promise<SiteKeywordRecord>;
+  update(siteId: string, keywordId: string, input: { weight: unknown }): Promise<SiteKeywordRecord>;
+  remove(siteId: string, keywordId: string): Promise<void>;
+  setServiceArea(siteId: string, input: { city: unknown; region: unknown; country: unknown }): Promise<ServiceArea>;
+}
+
+export const siteKeywordLimit = 25;
+export const defaultServiceAreaCountry = "United States";
+const phraseMaxLength = 120;
+const serviceAreaMaxLength = 80;
+
+type KeywordRow = { id: string; phrase: string; weight: number; created_at: Date };
+type ServiceAreaRow = { service_area_city: string | null; service_area_region: string | null; service_area_country: string | null };
+
+function toKeyword(row: KeywordRow): SiteKeywordRecord {
+  return { id: row.id, phrase: row.phrase, weight: row.weight, createdAt: row.created_at.toISOString() };
+}
+
+function toServiceArea(row: ServiceAreaRow): ServiceArea {
+  return { city: row.service_area_city, region: row.service_area_region, country: row.service_area_country ?? defaultServiceAreaCountry };
+}
+
+function parseWeight(value: unknown, fallback?: number): number {
+  if (value === undefined && fallback !== undefined) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 5) throw new SiteKeywordsError("invalid_input");
+  return value;
+}
+
+function parsePhrase(value: unknown): string {
+  if (typeof value !== "string") throw new SiteKeywordsError("invalid_input");
+  const phrase = value.trim().replace(/\s+/g, " ");
+  if (!phrase || phrase.length > phraseMaxLength) throw new SiteKeywordsError("invalid_input");
+  return phrase;
+}
+
+function parseAreaValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") throw new SiteKeywordsError("invalid_input");
+  const trimmed = value.trim();
+  if (trimmed.length > serviceAreaMaxLength) throw new SiteKeywordsError("invalid_input");
+  return trimmed || null;
+}
+
+export function readableSiteSql(actor: Actor, siteAlias: string, scope: unknown[]): string {
+  if (canManageWorkspaces(actor)) {
+    scope.push(actor.organizationId);
+    return `${siteAlias}.organization_id = $${scope.length}`;
+  }
+  return `exists (select 1 from site_link l join workspace w on w.id = l.workspace_id where l.site_id = ${siteAlias}.id and l.ended_at is null and ${readableWorkspaceSql(actor, scope)})`;
+}
+
+async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await operation(client);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
+  const organizationId = actor.organizationId;
+
+  function requireOperator(): void {
+    if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
+  }
+
+  async function requireOperatorSite(client: Pool | PoolClient, siteId: string): Promise<void> {
+    requireOperator();
+    const site = await client.query("select 1 from site where id = $1 and organization_id = $2 and removed_at is null", [siteId, organizationId]);
+    if (!site.rowCount) throw new SiteKeywordsError("not_found");
+  }
+
+  async function requireKeyword(siteId: string, keywordId: string): Promise<void> {
+    requireOperator();
+    const result = await pool.query(
+      `select 1 from site_keyword k join site s on s.id = k.site_id
+        where k.id = $1 and k.site_id = $2 and s.organization_id = $3 and k.removed_at is null`,
+      [keywordId, siteId, organizationId],
+    );
+    if (!result.rowCount) throw new SiteKeywordsError("not_found");
+  }
+
+  return {
+    async list(siteId) {
+      const scope: unknown[] = [siteId];
+      const site = await pool.query<ServiceAreaRow>(
+        `select s.service_area_city, s.service_area_region, s.service_area_country from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
+        scope,
+      );
+      if (!site.rows[0]) throw new SiteKeywordsError("not_found");
+      const keywords = await pool.query<KeywordRow>("select id, phrase, weight, created_at from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
+      return { serviceArea: toServiceArea(site.rows[0]), keywords: keywords.rows.map(toKeyword) };
+    },
+
+    async add(siteId, input) {
+      requireOperator();
+      const phrase = parsePhrase(input.phrase);
+      const weight = parseWeight(input.weight, 1);
+      return withTransaction(pool, async (client) => {
+        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`tracer:site-keywords:${siteId}`]);
+        await requireOperatorSite(client, siteId);
+        const live = await client.query<{ count: string; duplicate: boolean }>(
+          "select count(*)::text as count, bool_or(lower(phrase) = lower($2)) as duplicate from site_keyword where site_id = $1 and removed_at is null",
+          [siteId, phrase],
+        );
+        if (live.rows[0].duplicate) throw new SiteKeywordsError("duplicate_phrase");
+        if (Number(live.rows[0].count) >= siteKeywordLimit) throw new SiteKeywordsError("keyword_limit");
+        const now = new Date();
+        const inserted = await client.query<KeywordRow>(
+          "insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values ($1, $2, $3, $4, $5, $5) returning id, phrase, weight, created_at",
+          [randomUUID(), siteId, phrase, weight, now],
+        );
+        return toKeyword(inserted.rows[0]);
+      });
+    },
+
+    async update(siteId, keywordId, input) {
+      const weight = parseWeight(input.weight);
+      await requireKeyword(siteId, keywordId);
+      const updated = await pool.query<KeywordRow>("update site_keyword set weight = $2, updated_at = $3 where id = $1 and removed_at is null returning id, phrase, weight, created_at", [keywordId, weight, new Date()]);
+      if (!updated.rows[0]) throw new SiteKeywordsError("not_found");
+      return toKeyword(updated.rows[0]);
+    },
+
+    async remove(siteId, keywordId) {
+      await requireKeyword(siteId, keywordId);
+      const now = new Date();
+      const removed = await pool.query("update site_keyword set removed_at = $2, updated_at = $2 where id = $1 and removed_at is null", [keywordId, now]);
+      if (!removed.rowCount) throw new SiteKeywordsError("not_found");
+    },
+
+    async setServiceArea(siteId, input) {
+      await requireOperatorSite(pool, siteId);
+      const city = parseAreaValue(input.city);
+      const region = parseAreaValue(input.region);
+      const country = parseAreaValue(input.country) ?? defaultServiceAreaCountry;
+      const updated = await pool.query<ServiceAreaRow>(
+        `update site set service_area_city = $2, service_area_region = $3, service_area_country = $4, updated_at = $5
+          where id = $1 and organization_id = $6 returning service_area_city, service_area_region, service_area_country`,
+        [siteId, city, region, country, new Date(), organizationId],
+      );
+      if (!updated.rows[0]) throw new SiteKeywordsError("not_found");
+      return toServiceArea(updated.rows[0]);
+    },
+  };
+}

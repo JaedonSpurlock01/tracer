@@ -29,7 +29,6 @@ import CallsView from "@/components/tracer/calls-view";
 import { callListQueryFromSearchParams } from "@/data/call-list-query";
 import { createCallList } from "@/data/calls";
 import { withTracerRuntime } from "@/data/tracer-runtime";
-import { canManageWorkspaces } from "@/data/workspace-authorization";
 
 export default async function WorkspaceCallsPage({
   params,
@@ -44,5 +43,5 @@ export default async function WorkspaceCallsPage({
   const query = callListQueryFromSearchParams(await searchParams);
   const initialResult = await withTracerRuntime(({ pool }) => createCallList(pool, actor).list({ ...query, workspaceId: id }));
   if (!initialResult?.workspace) notFound();
-  return <CallsView initialResult={initialResult} initialQuery={query} workspace={initialResult.workspace} operator={canManageWorkspaces(actor)} />;
+  return <CallsView initialResult={initialResult} initialQuery={query} workspace={initialResult.workspace} />;
 }

@@ -115,13 +115,16 @@ The Sidebar has no Workspace switcher; the Workspaces page owns Workspace select
 
 ### Workspace navigation
 
-Workspace detail uses horizontally scrollable tabs below its header:
+Inside a Workspace (any route under `/workspaces/[id]` except Call Detail's breadcrumb context, which also counts) the Sidebar keeps the account menu and swaps its navigation for that Workspace's pages, so the shell scales as Business HQ domains arrive:
 
-1. Overview
-2. Calls
-3. Flow, Operator only
-4. Reports
-5. Settings
+1. **All Workspaces**, a muted back link with a left arrow
+2. The Workspace name as a group heading, then **Overview**
+3. **Website** group: Site, with Forms and Business Profile shown disabled with a `Soon` Badge once those milestones are scheduled, never before
+4. **Phone** group: Calls, Flow (Operator only), with Messages disabled the same way
+5. **Reports**
+6. **Settings**, Operator only
+
+The Workspace Sidebar replaced the Workspace tabs in M20. Every Workspace page marks its own item as current; Workspace Settings sections all mark Settings. Call Detail keeps the Workspace Sidebar with Calls current. The content header breadcrumbs are unchanged. Outside a Workspace the global navigation above applies. The Workspace layout registers the Workspace name, state, and the actor's role for the Sidebar the way it registers the breadcrumb label.
 
 Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Viewer lands on that Workspace Overview. A multi-Workspace Client Viewer lands on a Home dashboard scoped to granted Workspaces. Operators land on the global Home dashboard.
 
@@ -154,6 +157,7 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 ### Workspace
 
 - Overview
+- Site
 - Calls
 - Flow
 - Reports
@@ -162,6 +166,10 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 ### Record detail
 
 - Call Detail
+
+### Reference
+
+- Pricing guide, Operator only
 
 Workspace creation, user provisioning, report generation, and export requests use dialogs or focused wizards. Export progress and completed downloads appear in a notification popover rather than a separate page.
 
@@ -193,6 +201,16 @@ Workspace creation, user provisioning, report generation, and export requests us
 4. **Average Duration:** Average connected talk time, excluding prompts and ringing
 
 Each KPI includes a comparison with the immediately preceding period of equal length. The value is the focal point; comparison and definition remain secondary.
+
+### Money row (M22, Operator only)
+
+A second row of three tiles below the KPI row, hidden from Client Viewers:
+
+1. **Monthly Cost:** this calendar month's projected cost across the Workspaces in scope, with the yearly projection beneath
+2. **Monthly Revenue:** the projected revenue of open Deals in scope
+3. **Profit:** revenue minus cost, shown in the success color when positive and the destructive color when negative
+
+Workspace performance gains Cost and Revenue columns for Operators.
 
 ### Call trends
 
@@ -536,14 +554,22 @@ Tracer has no Paused state in the first release.
 
 ### Create Workspace wizard
 
-Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to four labeled steps.
+Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to five labeled steps: Basics, Site, Number, Routing, Review.
 
 #### Step 1: Basics
 
 - Workspace name
 - Reporting timezone
 
-#### Step 2: Number
+#### Step 2: Site
+
+- List the connected account's Sites with a preview thumbnail, primary hostname, last deployment, and 30-day visits, five per page with Previous and Next and a hostname search
+- Each Site is Available or shows `Linked to <Workspace>` and cannot be chosen
+- Skip is always available; a Workspace needs no Site to activate
+- When Cloudflare is not connected, the step explains that and links Operators to Integrations
+- Resume Setup shows the current Site Link read-only with a Change action
+
+#### Step 3: Number
 
 - Refresh United States and Canadian numbers from the connected Twilio account
 - Select one number not actively assigned to another Workspace
@@ -552,7 +578,7 @@ Use a focused wizard Dialog with ReUI Stepper. The visual direction starts from 
 - Explain that Tracer will manage the selected number's voice webhook
 - Snapshot the number's existing voice configuration for later restoration
 
-#### Step 3: Routing
+#### Step 4: Routing
 
 - Destination Number
 - Recording enabled or disabled
@@ -564,7 +590,7 @@ These options generate the initial constrained Call Flow. The visual Flow canvas
 
 When Resume Setup reopens a Workspace that already has a published Flow Version, such as after Detach Number, the wizard keeps that Flow. A new Destination Number is written into its Forward Call step in a draft, so activation dials the new number and keeps the rest of the Flow. Spam gate and whisper show the Flow's state read-only with an Edit Flow link, as in Workspace Settings.
 
-#### Step 4: Review
+#### Step 5: Review
 
 - Summarize all settings and the generated Call Flow
 - Validate number assignment, Destination Number, and publishability
@@ -614,6 +640,23 @@ If the Workspace record is created but external configuration does not complete,
 - Client Viewer primary action: Generate Report
 - Secondary action: Workspace Settings for Operators or Reports for Client Viewers
 
+### Scorecard
+
+Above the Call analytics, one row of six dense tiles summarizes the business (the row the shell prototype settled on). Tiles whose milestone has not shipped are omitted, never shown empty:
+
+1. **Visits** over the range, from the linked Site
+2. **Calls**
+3. **Visit-to-Call:** Calls divided by Visits, in the brand accent
+4. **Search Visibility** (M21), with `of 100`
+5. **Monthly Cost** (M22, Operator only), with the yearly projection beneath
+6. **Profit** (M22, Operator only), with the Deal beneath
+
+Without a linked Site the row shows only the tiles that need no Site, and the Site summary panel offers Link Site.
+
+### Site summary
+
+One compact panel between the Scorecard and the analytics: the preview thumbnail, primary hostname, Site Health Badge, uptime over 30 days, and last deployment, linking to the Site page. Without a Site Link it is an Empty state with Link Site for Operators and a one-line explanation for Client Viewers.
+
 ### Analytics
 
 Use the same definitions and visual order as Home:
@@ -654,6 +697,69 @@ Show the five newest Calls with Call Outcome, caller, start time, connected dura
 - **No Calls:** Keep configuration visible and show zero-value analytics with an explanatory Empty state.
 - **Routing warning:** Keep analytics usable and isolate the warning in routing health with an Operator-only recovery action.
 - **Archived:** Keep historical analytics and Calls readable, label the archived period, and remove live-routing actions.
+
+## Site
+
+### Composition plan
+
+1. **Surface:** Operational
+2. **Archetype:** Dashboard stack with a hero
+3. **Container family:** Frame-led
+4. **Density:** Dense
+5. **Regions:** Workspace header, hero preview, KPI row, traffic chart, pages and referrers, performance and search, deal and cost, hosting
+6. **States:** Region-level Skeleton, Empty, and Retry states; No Site; Preview pending; Syncing; Cloudflare disconnected
+7. **Motion:** None
+
+The Site page is `/workspaces/[id]/site`, reachable from the Website group of the Workspace Sidebar and from the Overview Site summary. It shows the linked Site; Workspaces without a Site Link show an Empty state with Link Site for Operators.
+
+### Header
+
+The Workspace header (name, state, Tracking Number, primary hostname, timezone) with Replace Site for Operators and Open Site, which opens the apex URL in a new tab.
+
+### Hero preview
+
+One panel. Left, the preview image at 16:10 inside a hairline rounded-md frame, object-fit cover aligned to the top, linking to the Site in a new tab with an `Open` affordance on hover. Right, a dense definition list: Site Health Badge, Uptime over 30 days with the median response time, Last deploy, Hostnames (apex, then www), and for Operators the Worker name. Beneath, the capture time: `Preview captured 2 hours ago` or `Preview pending` while the first capture runs. Health rules are in the roadmap M20 note and the Warning or Down reason appears as one sentence next to the Badge.
+
+### Date controls and KPI row
+
+The Workspace date controls, then four tiles:
+
+1. **Visits:** sessions on the Site
+2. **Page Views**
+3. **Calls:** Calls to the Tracking Number over the same range
+4. **Visit-to-Call:** Calls divided by Visits, in the brand accent
+
+### Traffic and Calls
+
+One two-series line chart in the Workspace timezone: Visits in the muted series and Calls in the brand accent, dashed, with the same legend, sr-only table, and daily or weekly interval rules as Call trends.
+
+### Pages and referrers
+
+Two panels side by side. Top pages lists up to eight paths with page views as a muted proportional bar behind the mono path; Referrers lists up to eight hosts the same way, with `(direct)` for empty referrers and the device split in one line beneath.
+
+### Performance
+
+Largest Contentful Paint, Interaction to Next Paint, and Cumulative Layout Shift at the 75th percentile over the range, each with a Good or Needs work Badge at the Core Web Vitals thresholds (2.5 s, 200 ms, 0.1).
+
+### Search (M21)
+
+Beside Performance: the Search Visibility score as `42` with a muted `/100`, a 30-day sparkline, and a table of Keywords with weight, position, and 7-day change (green up, red down, muted zero, `Not ranking`). Before M21 ships the panel is omitted, never shown empty.
+
+### Deal and cost (M22, Operator only)
+
+Deal, Cost, and Profit per month in a three-column definition list with Edit Deal, and one line naming what cost includes. Hidden from Client Viewers.
+
+### Hosting (Operator only)
+
+Requests and errors over 7 days, hostname certificates as a count Badge, Refresh Preview, and the last ten deployments with short version, source, time, and a `Live` Badge on the current one. Hidden from Client Viewers.
+
+### States
+
+- **No Site:** Empty state with the No Workspaces line art, Link Site for Operators, and `No Site is linked to this Workspace` for Client Viewers.
+- **Syncing:** before the first sync, tiles and chart show Skeletons with `First sync in progress`.
+- **Preview pending:** the hero shows a Skeleton at 16:10 with the capture status.
+- **Cloudflare disconnected:** keep the last synced data and show a warning line in the hero with a link to Integrations for Operators.
+- **Down:** the hero Badge reads Down with the last check time; analytics stay readable.
 
 ## Workspace Flow
 
@@ -1065,7 +1171,15 @@ There is no password section. Revoking the current session redirects to Sign In.
 
 ### Access and secrets
 
-Integrations is visible to Operators only. R2, Hyperdrive, OpenAI, Trigger.dev, and Cloudflare Email Service credentials are deployment secrets or bindings. Twilio is the exception: its API key is an encrypted Organization credential entered and rotated in this page. Tracer never reveals a stored secret value.
+Integrations is visible to Operators only. R2, Hyperdrive, OpenAI, Trigger.dev, and Cloudflare Email Service credentials are deployment secrets or bindings. Twilio, Cloudflare, and DataForSEO are the exceptions: their credentials are encrypted Organization credentials entered, tested, rotated, and disconnected in this page through a Connect dialog. Tracer never reveals a stored secret value.
+
+### Cloudflare
+
+The Cloudflare Frame holds Connect (Account ID and API token, with a link to Cloudflare's token page and the four permissions the token needs listed), then once connected the account identifier, Connected by and time, Last verified, Test, Rotate Token, Disconnect (blocked while any Site Link is open, with the count), Last sync time with an Operator Sync now action, and a Sites table: preview thumbnail, primary hostname, Site Health Badge, last deployment, 30-day visits, and `Linked to <Workspace>` or `Not linked`. Workers without a custom domain never appear.
+
+### DataForSEO (M21)
+
+Connect (API login and password), the login shown once connected, Test, Rotate, Disconnect, last check time, lookups this month, and Keywords tracked.
 
 Each provider Frame shows:
 
@@ -1147,11 +1261,21 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 2. **Archetype:** Vertical rail settings
 3. **Container family:** Frame-led
 4. **Density:** Default forms with dense metadata
-5. **Regions:** General, Number, Recording and AI, Access, Danger
+5. **Regions:** General, Site, Number, Recording and AI, Access, Danger
 6. **States:** Server-rendered section data, inline validation, save success, and Retry
 7. **Motion:** Installed section control behavior only
 
-Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
+Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `site`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
+
+### Site
+
+- Linked Site with preview thumbnail, primary hostname, and Site Link start time, or an Empty state with Link Site
+- Replace Site opens the same Site picker as the wizard and ends the current Site Link before starting the new one
+- Detach Site ends the Site Link after confirmation and never changes Cloudflare
+- Service Area (M21): city, region, and country
+- Keywords (M21): phrase and weight from 1 to 5, add and remove, at most 25
+- Domain renewal (M22): registrar, annual price, and renewal date
+- Deal (M22): Monthly, Weekly, or Per Lead with an amount, start date, and optional end date; ending a Deal keeps it in history
 
 ### General
 

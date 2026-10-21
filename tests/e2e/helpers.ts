@@ -5,9 +5,12 @@
  *
  * @description
  *  Signs users in through the visible email-code flow and the gated E2E OTP
- *  endpoint, connects the fake Twilio account, creates or archives Active
- *  Workspaces through the same pages and server interfaces a browser
- *  journey uses, and delivers Twilio webhooks signed with the fake
+ *  endpoint, connects the fake Twilio account, connects the fake Cloudflare
+ *  account and syncs its Sites, connects the fake DataForSEO account,
+ *  releases a Site from an earlier run,
+ *  creates or archives Active Workspaces through the same pages and server
+ *  interfaces a browser journey uses, optionally linking a Site at the
+ *  wizard's Site step, and delivers Twilio webhooks signed with the fake
  *  account's Auth Token.
  *
  * @remarks
@@ -64,6 +67,46 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
   await expect(page.getByText(/Synced/).first()).toBeVisible();
 }
 
+export async function ensureCloudflareSites(page: Page): Promise<void> {
+  await page.goto("/integrations");
+  await expect(page.getByRole("button", { name: /^(Connect Cloudflare|Sync now)$/ }).first()).toBeVisible();
+  const connectButton = page.getByRole("button", { name: "Connect Cloudflare" });
+  if ((await connectButton.count()) > 0) {
+    await connectButton.click();
+    await page.getByLabel("Account ID").fill("a".repeat(32));
+    await page.getByLabel("API Token").fill("e2e-cloudflare-token");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Sync now" })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Sync now" }).click();
+  await expect(page.getByText(/Synced \d+ Sites\./)).toBeVisible();
+}
+
+export async function ensureDataForSeo(page: Page): Promise<void> {
+  await page.goto("/integrations");
+  await expect(page.getByRole("button", { name: /^(Connect DataForSEO|Rotate Password)$/ }).first()).toBeVisible();
+  const connectButton = page.getByRole("button", { name: "Connect DataForSEO" });
+  if ((await connectButton.count()) > 0) {
+    await connectButton.click();
+    await page.getByLabel("API login").fill("operator@example.com");
+    await page.getByLabel("API password").fill("e2e-dataforseo-password");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText("DataForSEO connected.");
+  }
+  await expect(page.getByRole("button", { name: "Rotate Password" })).toBeVisible();
+}
+
+export async function releaseSite(page: Page, hostname: string): Promise<void> {
+  await page.evaluate(async (host) => {
+    const response = await fetch(`/api/workspaces/sites?search=${encodeURIComponent(host)}&pageSize=5`);
+    if (!response.ok) return;
+    const body = (await response.json()) as { sites: Array<{ primaryHostname: string; linkedWorkspace: { id: string } | null }> };
+    for (const site of body.sites) {
+      if (site.primaryHostname === host && site.linkedWorkspace) await fetch(`/api/workspaces/${site.linkedWorkspace.id}/site/detach`, { method: "POST" });
+    }
+  }, hostname);
+}
+
 export async function archiveActiveWorkspaces(page: Page, namePrefix: string): Promise<void> {
   await page.evaluate(async (prefix) => {
     const response = await fetch(`/api/workspaces?search=${encodeURIComponent(prefix)}&state=Active&pageSize=50`);
@@ -75,11 +118,18 @@ export async function archiveActiveWorkspaces(page: Page, namePrefix: string): P
   }, namePrefix);
 }
 
-export async function createActiveWorkspace(page: Page, name: string, options: { recording?: boolean } = {}): Promise<string> {
+export async function createActiveWorkspace(page: Page, name: string, options: { recording?: boolean; site?: string } = {}): Promise<string> {
   await page.goto("/workspaces");
   await page.getByRole("button", { name: "Create Workspace" }).first().click();
   await page.getByLabel("Workspace name").fill(name);
   await page.getByRole("button", { name: "Create Workspace" }).last().click();
+  if (options.site) {
+    await page.getByRole("searchbox", { name: "Search Sites" }).fill(options.site);
+    await page.getByRole("radio", { name: options.site }).check();
+    await page.getByRole("button", { name: "Link Site" }).click();
+  } else {
+    await page.getByRole("button", { name: "Skip" }).click();
+  }
   await page.getByRole("radio", { disabled: false }).first().check();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Destination Number").fill("+14155550199");

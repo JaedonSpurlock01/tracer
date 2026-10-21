@@ -35,7 +35,7 @@ import {
 import { IntegrationsError, type Integrations } from "@/data/integrations";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
 import { TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioVoiceConfiguration } from "@/data/twilio-client";
-import { type WorkspaceRecord, type Workspaces } from "@/data/workspaces";
+import { endOpenSiteLinkSql, type WorkspaceRecord, type Workspaces } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
 
 export type RoutingErrorCode =
@@ -776,10 +776,12 @@ export function createWorkspaceRouting(options: {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
           if (workspace.state === "Setup Required") {
+            const now = new Date();
             await client.query(
               "update workspace set state = 'Archived', archived_at = $3, updated_at = $3 where organization_id = $1 and id = $2",
-              [options.organizationId, workspaceId, new Date()],
+              [options.organizationId, workspaceId, now],
             );
+            await client.query(endOpenSiteLinkSql, [options.organizationId, workspaceId, now]);
             return;
           }
           const assignment = await findActiveAssignment(client, workspaceId);
@@ -796,6 +798,7 @@ export function createWorkspaceRouting(options: {
                 "update workspace set state = 'Archived', archived_at = $3, updated_at = $3 where organization_id = $1 and id = $2",
                 [options.organizationId, workspaceId, now],
               );
+              await client.query(endOpenSiteLinkSql, [options.organizationId, workspaceId, now]);
             },
             { client, deferFailureRecording: true },
           );

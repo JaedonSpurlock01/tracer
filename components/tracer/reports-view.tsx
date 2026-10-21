@@ -15,8 +15,8 @@
  *  Report, an inline Retry when it fails to load, Generating rows that
  *  never block the page, a Failed row's concise reason, and Expired rows
  *  kept during metadata retention. Workspace Reports fixes the Generate
- *  Report scope to its Workspace and reporting timezone, keeps the
- *  Workspace tabs, and lists only jobs whose scope covers that Workspace.
+ *  Report scope to its Workspace and reporting timezone and lists only
+ *  jobs whose scope covers that Workspace.
  *
  * @remarks
  *  History comes from the shared jobs provider, which this view refreshes
@@ -68,7 +68,6 @@ import {
   useReportJobs,
   type ReportJobItem,
 } from "@/components/tracer/report-jobs";
-import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import type { CallFilters } from "@/data/call-list-query";
 
 const pageSize = 25;
@@ -157,7 +156,7 @@ function ParametersDialog({ job, timeZone, checkedAt, onClose }: { job: ReportJo
   );
 }
 
-export default function ReportsView({ scope, operator = false }: { scope: GenerateReportScope; operator?: boolean }) {
+export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
   const { jobs, checkedAt, failed, refresh, addJob } = useReportJobs();
   const [generateOpen, setGenerateOpen] = useState(false);
   const [parametersJob, setParametersJob] = useState<ReportJobItem | null>(null);
@@ -309,7 +308,6 @@ export default function ReportsView({ scope, operator = false }: { scope: Genera
           Generate Report
         </Button>
       </div>
-      {workspace ? <WorkspaceTabs workspaceId={workspace.id} operator={operator} current="reports" /> : null}
       <Frame>
         <FramePanel className="flex flex-col gap-4">
           {actionError ? (

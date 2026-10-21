@@ -348,7 +348,7 @@ describe("CallDetailView", () => {
     expect(screen.getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
   });
 
-  it("falls back to Workspace Calls for the back link and renders no Workspace tabs", () => {
+  it("falls back to Workspace Calls for the back link and carries no navigation of its own", () => {
     render(<CallDetailView call={call} operator />);
     expect(screen.getByRole("link", { name: "Back to Calls" })).toHaveAttribute("href", "/workspaces/workspace-1/calls");
     expect(screen.getByRole("button", { name: "Previous Call" })).toBeDisabled();

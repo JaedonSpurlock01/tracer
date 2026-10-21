@@ -19,10 +19,11 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-export type WorkspaceSettingsSection = "general" | "number" | "recording" | "access" | "danger";
+export type WorkspaceSettingsSection = "general" | "site" | "number" | "recording" | "access" | "danger";
 
 export const workspaceSettingsSections: ReadonlyArray<{ slug: WorkspaceSettingsSection; label: string }> = [
   { slug: "general", label: "General" },
+  { slug: "site", label: "Site" },
   { slug: "number", label: "Number" },
   { slug: "recording", label: "Recording and AI" },
   { slug: "access", label: "Access" },

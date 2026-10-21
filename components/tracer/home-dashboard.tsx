@@ -5,9 +5,11 @@
  *
  * @description
  *  Shows the Home header with its scope, date controls, and Generate
- *  Report, then the KPI row, the Call trends chart, Workspace performance
- *  when the user reads more than one Workspace, and the five newest Calls
- *  in scope. A Workspace performance row opens that Workspace Overview. A
+ *  Report, then the KPI row, the Operator-only Money row (this month's
+ *  cost with its yearly projection, the revenue of open Deals, and the
+ *  profit), the Call trends chart, Workspace performance when the user
+ *  reads more than one Workspace (with Cost and Revenue columns for
+ *  Operators), and the five newest Calls in scope. A Workspace performance row opens that Workspace Overview. A
  *  Recent Calls row opens Call Detail with the global Calls list as its
  *  source, and View Calls opens Calls with the dashboard range as the
  *  Started filter. An Operator without Workspaces sees why Tracer needs an
@@ -62,6 +64,14 @@ import type { AnalyticsSummary, WorkspacePerformanceRow } from "@/data/analytics
 import type { AnalyticsRange } from "@/data/analytics-range";
 import { callDetailHref } from "@/data/call-source";
 import type { CallListItem, CallListResult } from "@/data/calls";
+import type { CostRevenueTotals } from "@/data/cost-revenue";
+import { formatUsdCents } from "@/data/pricing";
+
+export interface HomeMoney {
+  month: string;
+  totals: CostRevenueTotals;
+  byWorkspace: Record<string, { costCents: number; revenueCents: number }>;
+}
 
 const recentCallCount = 5;
 const callsSource = "/calls";
@@ -75,9 +85,10 @@ interface HomeDashboardProps {
   recentCalls: CallListResult | null;
   callsHref: string;
   reportScope: GenerateReportScope;
+  money?: HomeMoney | null;
 }
 
-function WorkspacePerformance({ rows }: { rows: WorkspacePerformanceRow[] }) {
+function WorkspacePerformance({ rows, money }: { rows: WorkspacePerformanceRow[]; money: HomeMoney["byWorkspace"] | undefined }) {
   const router = useRouter();
   const columns = useMemo<ColumnDef<DataGridFeatures, WorkspacePerformanceRow>[]>(
     () => [
@@ -96,8 +107,14 @@ function WorkspacePerformance({ rows }: { rows: WorkspacePerformanceRow[] }) {
       { id: "answerRate", header: "Answer Rate", cell: ({ row }) => <span className="tabular-nums">{formatRate(row.original.answerRate)}</span>, size: 120 },
       { id: "goodLeads", header: "Good Leads", cell: ({ row }) => <span className="tabular-nums">{row.original.goodLeads}</span>, size: 120 },
       { id: "leadRate", header: "Lead Rate", cell: ({ row }) => <span className="tabular-nums">{formatRate(row.original.leadRate)}</span>, size: 120 },
+      ...(money
+        ? [
+            { id: "cost", header: "Cost", cell: ({ row }) => <span className="font-mono tabular-nums">{formatUsdCents(money[row.original.workspace.id]?.costCents ?? 0)}</span>, size: 120 },
+            { id: "revenue", header: "Revenue", cell: ({ row }) => <span className="font-mono tabular-nums">{formatUsdCents(money[row.original.workspace.id]?.revenueCents ?? 0)}</span>, size: 120 },
+          ] satisfies ColumnDef<DataGridFeatures, WorkspacePerformanceRow>[]
+        : []),
     ],
-    [],
+    [money],
   );
   const table = useTable({ features: dataGridFeatures, data: rows, columns, getRowId: (row) => row.workspace.id });
   return (
@@ -159,6 +176,51 @@ function RecentCallsGrid({ calls, timeZone, hasCalls }: { calls: CallListItem[];
   );
 }
 
+function MoneyTile({ id, label, value, definition, footer, valueClass = "" }: { id: string; label: string; value: string; definition: string; footer?: React.ReactNode; valueClass?: string }) {
+  return (
+    <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
+      <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
+      <p className={`font-mono text-2xl font-semibold tracking-tight tabular-nums ${valueClass}`}>{value}</p>
+      <p className="text-xs text-muted-foreground">{definition}</p>
+      {footer ? <p className="text-xs text-muted-foreground">{footer}</p> : null}
+    </FramePanel>
+  );
+}
+
+function MoneyRow({ money, pending, onRetry }: { money: HomeMoney | null; pending: boolean; onRetry: () => void }) {
+  if (!money) {
+    return (
+      <Frame>
+        <FramePanel>
+          <RegionRetry message="Cost and revenue are unavailable." pending={pending} onRetry={onRetry} />
+        </FramePanel>
+      </Frame>
+    );
+  }
+  const { totals } = money;
+  return (
+    <Frame className="grid gap-2 sm:grid-cols-3">
+      <MoneyTile
+        id="money-cost"
+        label="Monthly Cost"
+        value={formatUsdCents(totals.costCents)}
+        definition={`Projected ${formatUsdCents(totals.yearlyCostCents)} per year`}
+        footer={
+          <>
+            Rates in the{" "}
+            <Link className="underline" href="/pricing" prefetch>
+              Pricing guide
+            </Link>
+            .
+          </>
+        }
+      />
+      <MoneyTile id="money-revenue" label="Monthly Revenue" value={formatUsdCents(totals.revenueCents)} definition={`Open Deals for ${money.month}`} />
+      <MoneyTile id="money-profit" label="Profit" value={formatUsdCents(totals.profitCents)} definition="Revenue minus cost this month" valueClass={totals.profitCents < 0 ? "text-destructive" : "text-success"} />
+    </Frame>
+  );
+}
+
 function RegionTitle({ id, title, description, action }: { id: string; title: string; description?: string; action?: React.ReactNode }) {
   return (
     <FrameHeader className="flex-row items-center justify-between gap-2">
@@ -173,7 +235,7 @@ function RegionTitle({ id, title, description, action }: { id: string; title: st
   );
 }
 
-export default function HomeDashboard({ operator, workspaceCount, range, summary, recentCalls, callsHref, reportScope }: HomeDashboardProps) {
+export default function HomeDashboard({ operator, workspaceCount, range, summary, recentCalls, callsHref, reportScope, money }: HomeDashboardProps) {
   const { pending, changeRange, retry } = useAnalyticsNavigation();
   const scope = operator ? "All Workspaces" : `${workspaceCount} ${workspaceCount === 1 ? "Workspace" : "Workspaces"}`;
   const noWorkspaces = operator && workspaceCount === 0;
@@ -212,6 +274,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
               </FramePanel>
             </Frame>
           )}
+          {operator && money !== undefined ? <MoneyRow money={money} pending={pending} onRetry={retry} /> : null}
           {summary || pending ? (
             <Frame stacked>
               <FramePanel className="p-0" role="region" aria-labelledby="call-trends-title">
@@ -226,7 +289,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
             <Frame stacked>
               <FramePanel className="flex flex-col gap-3 p-0" role="region" aria-labelledby="workspace-performance-title">
                 <RegionTitle id="workspace-performance-title" title="Workspace performance" />
-                <WorkspacePerformance rows={summary.workspacePerformance} />
+                <WorkspacePerformance rows={summary.workspacePerformance} money={operator && money ? money.byWorkspace : undefined} />
               </FramePanel>
             </Frame>
           ) : null}

@@ -1,0 +1,33 @@
+{
+  "result": {
+    "deployments": [
+      {
+        "id": "7a1b2c3d-0000-4000-8000-000000000003",
+        "source": "wrangler",
+        "strategy": "percentage",
+        "author_email": "operator@example.com",
+        "created_on": "2026-10-11T23:12:59.296842Z",
+        "versions": [{ "version_id": "9f8e7d6c-5b4a-4321-8765-4321fedcba98", "percentage": 100 }]
+      },
+      {
+        "id": "7a1b2c3d-0000-4000-8000-000000000002",
+        "source": "dash",
+        "strategy": "percentage",
+        "author_email": null,
+        "created_on": "2026-10-10T18:40:11.000000Z",
+        "versions": [{ "version_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "percentage": 100 }]
+      },
+      {
+        "id": "7a1b2c3d-0000-4000-8000-000000000001",
+        "source": "wrangler",
+        "strategy": "percentage",
+        "author_email": "operator@example.com",
+        "created_on": "2026-10-10T04:58:22.779174Z",
+        "versions": [{ "version_id": "0011aabb-ccdd-4eef-8001-223344556677", "percentage": 100 }]
+      }
+    ]
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

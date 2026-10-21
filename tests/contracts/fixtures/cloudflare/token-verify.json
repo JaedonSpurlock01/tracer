@@ -1,0 +1,13 @@
+{
+  "result": {
+    "id": "f1e2d3c4b5a6978877665544332211aa",
+    "status": "active",
+    "not_before": "2026-10-01T00:00:00Z",
+    "expires_on": "2027-10-01T00:00:00Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": [
+    { "code": 10000, "message": "This API Token is valid and active", "type": null }
+  ]
+}

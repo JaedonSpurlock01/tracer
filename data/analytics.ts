@@ -81,6 +81,8 @@ import { outcomeKinds, type OutcomeKind } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { callSource, effectiveClassificationSql, filterConditions } from "@/data/calls";
 import { leadClassifications, type LeadClassification } from "@/data/lead-classification";
+import type { SiteHealth } from "@/data/site-health";
+import { siteHealthForWorkspaces } from "@/data/site-health-query";
 import type { WorkspaceListResult } from "@/data/workspaces";
 import type { WorkspaceState } from "@/data/workspace-policy";
 import { createReadableWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
@@ -144,6 +146,7 @@ export interface WorkspaceListStats {
   lastCallAt: string | null;
   lastSuccessfulInboundCallAt: string | null;
   integrationHealth: WebhookHealth;
+  siteHealth: SiteHealth | null;
 }
 
 export type WorkspaceListWithStats = WorkspaceListResult & { stats: Record<string, WorkspaceListStats> };
@@ -320,7 +323,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
     const [ids, at, daysBack] = [`$${values.length - 2}`, `$${values.length - 1}::timestamptz`, `$${values.length}::int`];
     const localToday = `(${at} at time zone w.reporting_timezone)::date`;
     const recent = `c.started_at >= (${localToday} - ${daysBack})::timestamp at time zone w.reporting_timezone and c.started_at < (${localToday} + 1)::timestamp at time zone w.reporting_timezone`;
-    const [health, calls] = await Promise.all([
+    const [health, calls, siteHealthByWorkspace] = await Promise.all([
       pool.query<{ id: string; state: WorkspaceState; last_accepted_voice_at: Date | null }>(
         `select w.id, w.state,
                 (select max(pe.received_at)
@@ -343,6 +346,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
           group by c.workspace_id`,
         values,
       ),
+      siteHealthForWorkspaces(pool, actor.organizationId, workspaceIds),
     ]);
     const callsByWorkspace = new Map(calls.rows.map((row) => [row.workspace_id, row]));
     return Object.fromEntries(health.rows.map((row) => {
@@ -353,6 +357,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
         lastCallAt: stats?.last_call_at?.toISOString() ?? null,
         lastSuccessfulInboundCallAt: stats?.last_successful_at?.toISOString() ?? null,
         integrationHealth: webhookHealth(row.state, row.last_accepted_voice_at),
+        siteHealth: siteHealthByWorkspace[row.id] ?? null,
       }];
     }));
   }

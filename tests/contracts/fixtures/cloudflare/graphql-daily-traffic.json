@@ -1,0 +1,51 @@
+{
+  "data": {
+    "viewer": {
+      "accounts": [
+        {
+          "traffic": [
+            { "count": 48, "sum": { "visits": 31 }, "dimensions": { "date": "2026-10-18" } },
+            { "count": 62, "sum": { "visits": 40 }, "dimensions": { "date": "2026-10-19" } }
+          ],
+          "paths": [
+            { "count": 30, "dimensions": { "date": "2026-10-18", "requestPath": "/" } },
+            { "count": 10, "dimensions": { "date": "2026-10-18", "requestPath": "/services" } },
+            { "count": 8, "dimensions": { "date": "2026-10-18", "requestPath": "/contact" } },
+            { "count": 20, "dimensions": { "date": "2026-10-19", "requestPath": "/" } },
+            { "count": 9, "dimensions": { "date": "2026-10-19", "requestPath": "/services" } },
+            { "count": 8, "dimensions": { "date": "2026-10-19", "requestPath": "/contact" } },
+            { "count": 7, "dimensions": { "date": "2026-10-19", "requestPath": "/about" } },
+            { "count": 6, "dimensions": { "date": "2026-10-19", "requestPath": "/driveways" } },
+            { "count": 5, "dimensions": { "date": "2026-10-19", "requestPath": "/parking-lots" } },
+            { "count": 3, "dimensions": { "date": "2026-10-19", "requestPath": "/sealcoating" } },
+            { "count": 2, "dimensions": { "date": "2026-10-19", "requestPath": "/reviews" } },
+            { "count": 1, "dimensions": { "date": "2026-10-19", "requestPath": "/privacy" } },
+            { "count": 1, "dimensions": { "date": "2026-10-19", "requestPath": "/terms" } }
+          ],
+          "referrers": [
+            { "count": 40, "dimensions": { "date": "2026-10-18", "refererHost": "" } },
+            { "count": 8, "dimensions": { "date": "2026-10-18", "refererHost": "www.google.com" } },
+            { "count": 50, "dimensions": { "date": "2026-10-19", "refererHost": "" } },
+            { "count": 12, "dimensions": { "date": "2026-10-19", "refererHost": "www.google.com" } }
+          ],
+          "devices": [
+            { "count": 30, "dimensions": { "date": "2026-10-18", "deviceType": "mobile" } },
+            { "count": 18, "dimensions": { "date": "2026-10-18", "deviceType": "desktop" } },
+            { "count": 44, "dimensions": { "date": "2026-10-19", "deviceType": "mobile" } },
+            { "count": 18, "dimensions": { "date": "2026-10-19", "deviceType": "desktop" } }
+          ],
+          "vitals": [
+            { "count": 20, "quantiles": { "largestContentfulPaintP75": 256000, "cumulativeLayoutShiftP75": 0.012, "interactionToNextPaintP75": -1 }, "dimensions": { "date": "2026-10-18" } },
+            { "count": 25, "quantiles": { "largestContentfulPaintP75": 1840000, "cumulativeLayoutShiftP75": 0.04, "interactionToNextPaintP75": 96000 }, "dimensions": { "date": "2026-10-19" } }
+          ],
+          "workers": [
+            { "sum": { "requests": 120, "errors": 0 }, "dimensions": { "date": "2026-10-18" } },
+            { "sum": { "requests": 3, "errors": 3 }, "dimensions": { "date": "2026-10-18" } },
+            { "sum": { "requests": 150, "errors": 0 }, "dimensions": { "date": "2026-10-19" } }
+          ]
+        }
+      ]
+    }
+  },
+  "errors": null
+}

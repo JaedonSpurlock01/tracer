@@ -15,9 +15,7 @@
  *  Call Detail can return to it and step through it. Download MP3 appears
  *  only when the row's Recording has a retained MP3 and downloads it
  *  through the Workspace-authorized MP3 route. Workspace Calls fixes the
- *  Workspace scope, omits
- *  the Workspace column and filter, and shows the Workspace tabs below the
- *  header.
+ *  Workspace scope and omits the Workspace column and filter.
  *
  * @remarks
  *  Export Recordings and Export CSV confirm and export the current scope
@@ -63,7 +61,6 @@ import CallFilterToolbar, { callFiltersFromTrees, filterTreesFromCallFilters, ty
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallTime, formatClock } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
-import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import { callListSearchParams, callPageSize, defaultCallSort, emptyCallFilters, type CallListQuery, type CallSort, type CallSortColumn } from "@/data/call-list-query";
 import { callDetailHref } from "@/data/call-source";
 import type { CallListItem, CallListResult } from "@/data/calls";
@@ -95,13 +92,11 @@ export default function CallsView({
   initialResult,
   initialQuery,
   workspace,
-  operator = false,
   workspaceOptions,
 }: {
   initialResult: CallListResult;
   initialQuery: CallListQuery;
   workspace?: { id: string; name: string };
-  operator?: boolean;
   workspaceOptions?: { id: string; name: string }[];
 }) {
   const router = useRouter();
@@ -337,7 +332,6 @@ export default function CallsView({
         </div>
         <CallsExportActions workspaceId={workspaceId} query={listSearch} />
       </div>
-      {workspace ? <WorkspaceTabs workspaceId={workspace.id} operator={operator} current="calls" /> : null}
       <Frame>
         <FramePanel className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">

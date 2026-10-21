@@ -1,0 +1,12 @@
+{
+  "result": [
+    { "site_tag": "a3000000000000000000000000000003", "ruleset": { "zone_tag": "z3000000000000000000000000000003", "zone_name": "asphaltpavingblackfoot.com", "enabled": true, "id": "r3000000-0000-4000-8000-000000000003", "lite": true } },
+    { "site_tag": "a2000000000000000000000000000002", "ruleset": { "zone_tag": "z2000000000000000000000000000002", "zone_name": "asphaltpavingstgeorge.com", "enabled": true, "id": "r2000000-0000-4000-8000-000000000002", "lite": true } },
+    { "site_tag": "a5000000000000000000000000000005", "ruleset": { "zone_tag": "z5000000000000000000000000000005", "zone_name": "carsoncitysolarinstallation.com", "enabled": true, "id": "r5000000-0000-4000-8000-000000000005", "lite": true } },
+    { "site_tag": "a4000000000000000000000000000004", "ruleset": { "zone_tag": "z4000000000000000000000000000004", "zone_name": "dumpsterrentalhainescity.com", "enabled": true, "id": "r4000000-0000-4000-8000-000000000004", "lite": true } },
+    { "site_tag": "a1000000000000000000000000000001", "ruleset": { "zone_tag": "z1000000000000000000000000000001", "zone_name": "pocatelloasphaltpaving.com", "enabled": true, "id": "r1000000-0000-4000-8000-000000000001", "lite": true } }
+  ],
+  "success": true,
+  "errors": [],
+  "messages": []
+}

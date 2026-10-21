@@ -4,7 +4,9 @@
  * @brief  Verifies Workspace grid and setup dialog interactions.
  *
  * @description
- *  Covers loading, empty, retry, setup state rows, and Workspace creation.
+ *  Covers loading, empty, retry, setup state rows, Workspace creation, the
+ *  Site step with Skip, Link Site, the disconnected Cloudflare account,
+ *  and the read-only Site Link on Resume Setup.
  *
  * @remarks
  *  Requests are faked only at the public HTTP boundary.
@@ -45,6 +47,18 @@ const workspace = {
   archivedAt: null,
 };
 const result = { workspaces: [workspace], total: 1, page: 1, pageSize: 10, counts: { setupRequired: 1, active: 0, archived: 0 }, stats: {} };
+const number = { id: "number-1", twilioSid: "PN1", phoneNumber: "+14155550100", friendlyName: "Support", voiceUrl: null, assignedWorkspace: null };
+const pocatello = {
+  id: "site-1",
+  scriptName: "asphalt-paving-pocatello",
+  primaryHostname: "pocatelloasphaltpaving.com",
+  hostnames: [{ hostname: "pocatelloasphaltpaving.com", certificateId: "cert-1", enabled: true }],
+  lastDeployedAt: "2026-10-11T23:12:59.000Z",
+  liveVersionId: "e2e-version-1",
+  linkedWorkspace: null,
+  visits30d: 1234,
+  health: "Healthy" as const,
+};
 const initial = { initialResult: result, initialQuery: { search: "", state: "All" as const, page: 1 } };
 
 beforeEach(() => {
@@ -72,6 +86,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function skipSite() {
+  fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+}
+
 describe("WorkspacesView", () => {
   it("renders server-provided Workspaces immediately without a loading skeleton", () => {
     vi.stubGlobal(
@@ -91,9 +109,9 @@ describe("WorkspacesView", () => {
       workspaces: [north, south, workspace],
       total: 3,
       stats: {
-        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" } },
-        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null } },
-        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null } },
+        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" }, siteHealth: null },
+        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
+        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
       },
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
@@ -102,6 +120,18 @@ describe("WorkspacesView", () => {
     await waitFor(() => expect(cells(/^North Plumbing/).slice(4, 8)).toEqual(["17", "5", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
     expect(cells(/^South Dental/).slice(4, 8)).toEqual(["0", "0", "-", "Needs attention"]);
     expect(cells(/^Phoenix Office/).slice(4, 8)).toEqual(["0", "0", "-", "Not applicable"]);
+  });
+
+  it("reports Site health that needs attention in the Integration health column", async () => {
+    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const };
+    const south = { ...workspace, id: "south", name: "South Dental", state: "Active" as const };
+    const stat = { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: null } };
+    const listed = { ...result, workspaces: [north, south], total: 2, stats: { north: { ...stat, siteHealth: "Down" as const }, south: { ...stat, siteHealth: "Healthy" as const } } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
+    render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
+    const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
+    await waitFor(() => expect(cells(/^North Plumbing/)[7]).toBe("Needs attentionSite Down"));
+    expect(cells(/^South Dental/)[7]).toBe("Healthy");
   });
 
   it("quietly revalidates the server-provided page without a loading skeleton", async () => {
@@ -158,7 +188,7 @@ describe("WorkspacesView", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 
-  it("renders Setup Required and opens Resume Setup on the Number step", async () => {
+  it("renders Setup Required and opens Resume Setup on the Site step, then Number after Skip", async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
       if (url.endsWith("/api/workspaces/numbers")) {
@@ -185,7 +215,9 @@ describe("WorkspacesView", () => {
     expect(await screen.findByText("Setup Required")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Resume Setup" }));
     expect(screen.getByText("Basics")).toBeVisible();
+    expect(screen.getByText("Site")).toBeVisible();
     expect(screen.getByText("Number")).toBeVisible();
+    await skipSite();
     expect(await screen.findByText("+14155550100")).toBeVisible();
     expect(screen.getByText("Routing")).toBeVisible();
     expect(screen.getByText("Review")).toBeVisible();
@@ -207,6 +239,7 @@ describe("WorkspacesView", () => {
     );
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
     await screen.findByText("+16025550199");
     const search = screen.getByRole("searchbox", { name: "Search numbers" });
 
@@ -248,6 +281,7 @@ describe("WorkspacesView", () => {
     );
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(await screen.findByText("Resume setup for Phoenix Office")).toBeVisible();
+    await skipSite();
     expect(await screen.findByText("+14155550100")).toBeVisible();
   });
 
@@ -266,6 +300,7 @@ describe("WorkspacesView", () => {
       }),
     );
     render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [detached] }} initialTimezone="America/Chicago" />);
+    await skipSite();
     fireEvent.click(await screen.findByRole("radio", { name: "+14155550100" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     const destination = await screen.findByLabelText("Destination Number");
@@ -325,6 +360,7 @@ describe("WorkspacesView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
+    await skipSite();
     expect(await screen.findByText("+14155550100")).toBeVisible();
     expect(screen.getByText("New Office")).toBeVisible();
   });
@@ -338,6 +374,7 @@ describe("WorkspacesView", () => {
     vi.stubGlobal("fetch", fetch);
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
     expect(await screen.findByRole("alert")).toHaveTextContent("Connect the Organization Twilio account in Integrations first");
     expect(screen.getByRole("link", { name: "Integrations" })).toHaveAttribute("href", "/integrations");
   });
@@ -395,6 +432,7 @@ describe("WorkspacesView", () => {
     vi.stubGlobal("fetch", fetch);
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
     fireEvent.click(await screen.findByRole("radio", { name: /\+14155550100/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByLabelText("Destination Number")).toBeVisible();
@@ -458,6 +496,7 @@ describe("WorkspacesView", () => {
     vi.stubGlobal("fetch", fetch);
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
     fireEvent.click(await screen.findByRole("radio", { name: /\+14155550100/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
@@ -470,6 +509,88 @@ describe("WorkspacesView", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ twilioNumberId: "number-1" }) }),
       ),
     );
+  });
+
+  it("offers the Site step after Basics and reaches Number on Skip", async () => {
+    const created = { ...workspace, id: "workspace-new", name: "New Office" };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url === "/api/workspaces" && init?.method === "POST") return new Response(JSON.stringify({ workspace: created }), { status: 201 });
+      if (url.startsWith("/api/workspaces/sites?")) return new Response(JSON.stringify({ sites: [pocatello], total: 1, page: 1, pageSize: 5 }), { status: 200 });
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      return new Response(JSON.stringify({ ...result, workspaces: [created], total: 1 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
+    fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
+    expect(await screen.findByRole("radio", { name: "pocatelloasphaltpaving.com" })).toBeVisible();
+    expect(screen.getByText("Site")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("+14155550100")).toBeVisible();
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringMatching(/\/site\/link$/), expect.anything());
+  });
+
+  it("links the chosen Site right after creation and then opens Number", async () => {
+    const created = { ...workspace, id: "workspace-new", name: "New Office" };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url === "/api/workspaces" && init?.method === "POST") return new Response(JSON.stringify({ workspace: created }), { status: 201 });
+      if (url.startsWith("/api/workspaces/sites?")) return new Response(JSON.stringify({ sites: [pocatello], total: 1, page: 1, pageSize: 5 }), { status: 200 });
+      if (url === "/api/workspaces/workspace-new/site/link" && init?.method === "POST") return new Response(JSON.stringify({ site: { id: "site-1", primaryHostname: "pocatelloasphaltpaving.com" } }), { status: 200 });
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      return new Response(JSON.stringify({ ...result, workspaces: [created], total: 1 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
+    fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
+    fireEvent.click(await screen.findByRole("radio", { name: "pocatelloasphaltpaving.com" }));
+    fireEvent.click(screen.getByRole("button", { name: "Link Site" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-new/site/link", expect.objectContaining({ method: "POST", body: JSON.stringify({ siteId: "site-1" }) })));
+    expect(await screen.findByText("+14155550100")).toBeVisible();
+  });
+
+  it("explains a disconnected Cloudflare account on the Site step and still allows Skip", async () => {
+    const created = { ...workspace, id: "workspace-new", name: "New Office" };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url === "/api/workspaces" && init?.method === "POST") return new Response(JSON.stringify({ workspace: created }), { status: 201 });
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      return new Response(JSON.stringify({ ...result, workspaces: [created], total: 1 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" cloudflareConnected={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
+    fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
+    expect(await screen.findByText(/Connect the Organization Cloudflare account/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Integrations" })).toHaveAttribute("href", "/integrations");
+    expect(screen.queryByRole("searchbox", { name: "Search Sites" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("+14155550100")).toBeVisible();
+  });
+
+  it("shows the current Site Link read-only with Change on Resume Setup", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url === "/api/workspaces/workspace-1/site") return new Response(JSON.stringify({ site: { id: "site-1", primaryHostname: "pocatelloasphaltpaving.com", linkedAt: "2026-10-01T00:00:00.000Z" }, summary: null }), { status: 200 });
+      if (url.startsWith("/api/workspaces/sites?")) return new Response(JSON.stringify({ sites: [pocatello], total: 1, page: 1, pageSize: 5 }), { status: 200 });
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      return new Response(JSON.stringify(result), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    expect(await screen.findByText("pocatelloasphaltpaving.com")).toBeVisible();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    expect(await screen.findByRole("radio", { name: "pocatelloasphaltpaving.com" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Replace Site" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("+14155550100")).toBeVisible();
   });
 
   it("hides Workspace management for a Client Viewer", async () => {

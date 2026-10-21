@@ -44,6 +44,7 @@ test.describe.serial("Workspace activation and Flow publication", () => {
     await page.getByRole("button", { name: "Create Workspace" }).first().click();
     await page.getByLabel("Workspace name").fill(workspaceName);
     await page.getByRole("button", { name: "Create Workspace" }).last().click();
+    await page.getByRole("button", { name: "Skip" }).click();
     const selectedNumber = page.getByRole("radio", { disabled: false }).first();
     const selectedTrackingNumber = await selectedNumber.getAttribute("aria-label");
     await selectedNumber.check();

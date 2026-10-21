@@ -7,8 +7,7 @@
  *
  * @description
  *  Provides read-only published views, editable drafts, palette insertion,
- *  autosave, validation, publication, and version history for Operators,
- *  with the Workspace tabs below the Publish toolbar.
+ *  autosave, validation, publication, and version history for Operators.
  *
  * @remarks
  *  Domain graphs remain the source of truth and React Flow is only the canvas
@@ -49,7 +48,6 @@ import { fromReactFlow, toReactFlow } from "@/components/tracer/flow/graph-adapt
 import FlowNodeView from "@/components/tracer/flow/flow-nodes";
 import FlowInspector from "@/components/tracer/flow/flow-inspector";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
-import WorkspaceTabs from "@/components/tracer/workspace-tabs";
 import { validateCallFlow, type CallFlowGraph, type FlowNode, type FlowNodeType, type ValidationIssue } from "@/data/call-flow";
 import type { FlowState } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -298,7 +296,6 @@ function EditorBody({ workspace, initialFlow }: Props) {
         ) : null}
         {status ? <span role="status">{status}</span> : null}
       </div>
-      <WorkspaceTabs workspaceId={workspace.id} operator current="flow" />
       <div className="grid flex-1 gap-3 lg:grid-cols-[13rem_1fr_18rem]">
         <Frame>
           <FramePanel>

@@ -6,6 +6,7 @@
  * @description
  *  Creates, lists, updates, archives, and restores Workspaces while keeping
  *  lifecycle changes independent from Twilio and other provider systems.
+ *  Archiving ends the Workspace's open Site Link.
  *
  * @remarks
  *  Every query includes the owning Organization and mutations use an advisory
@@ -208,6 +209,8 @@ function isNameConflict(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505";
 }
 
+export const endOpenSiteLinkSql = "update site_link set ended_at = $3 where organization_id = $1 and workspace_id = $2 and ended_at is null";
+
 export interface WorkspaceGrantScope {
   grantedToUserId: string;
   readableStates: readonly WorkspaceState[];
@@ -337,6 +340,7 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
         if (!decision.allowed) throw new WorkspacesError(decision.reason);
         const now = new Date();
         await client.query("update workspace set state = $3, archived_at = $4, updated_at = $4 where organization_id = $1 and id = $2", [organizationId, id, decision.nextState, now]);
+        await client.query(endOpenSiteLinkSql, [organizationId, id, now]);
         const updated = await selectRecord(client, id);
         if (!updated) throw new WorkspacesError("not_found");
         return updated;

@@ -15,11 +15,11 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M17 - Retention, Purge, and Lifecycle Automation
-- **Next milestone:** M18 - Production Hardening and Acceptance
+- **Current milestone:** None
+- **Next milestone:** M18 - Production Hardening and Acceptance, which the Product Owner starts explicitly; it carries the two M17 Staging checks as entry criteria
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-19
+- **Last roadmap review:** 2026-10-20
 
 M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. M16 is Complete. It delivered scoped PDF and CSV reports generated in Trigger.dev, Calls Export CSV and Recording ZIP exports with a CSV manifest and a 500-Recording limit, a precomputed stereo MP3 per Stored Recording with Download MP3 and single-Call Export Call, requester-only Report history and the notification popover with downloads that recheck access to the whole Workspace scope, and seven-day artifact expiry through the `report-artifacts` R2 lifecycle rule with a 6-hour sweep that fails stuck jobs and deletes metadata after 90 days.
 
@@ -184,9 +184,14 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M14 | Calls and Activity Operations | Complete | Preview and Staging | M13 |
 | M15 | Dashboard and Workspace Analytics | Complete | Preview and Staging | M14 |
 | M16 | Reports and Recording Exports | Complete | Staging | M15 |
-| M17 | Retention, Purge, and Lifecycle Automation | In Progress | Staging | M16 |
-| M18 | Production Hardening and Acceptance | Not Started | Staging | M17 |
+| M17 | Retention, Purge, and Lifecycle Automation | Deferred | Staging | M16 |
+| M20 | Sites and Cloudflare Connection | Complete | Preview and Staging | M17 |
+| M21 | Search Rankings | Complete | Preview and Staging | M20 |
+| M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
+| M18 | Production Hardening and Acceptance | Not Started | Staging | M22 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
+
+M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M18, M19. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production.
 
 ## Phase 0 - Ideation and governance
 
@@ -990,7 +995,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 
 ### M17 - Retention, Purge, and Lifecycle Automation
 
-- **Status:** In Progress
+- **Status:** Deferred
 - **Outcome:** Media, Transcript content, generated artifacts, and metadata expire or purge according to documented policy without corrupting analytics.
 - **Depends on:** M16
 - **Target environment:** Staging
@@ -1029,20 +1034,161 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 - R2 and PostgreSQL state agree after cleanup.
 - Staging report artifacts generated during M16 verification are confirmed expired by the `report-artifacts` R2 lifecycle rule.
 
-- On 2026-10-19 the Product Owner had M17 merged to `main` while it was still In Progress. By then every slice was implemented, `verify:full` had passed locally, and the Verification workflow had passed. M17 stays In Progress until two things are done: the Product Owner's Staging demonstration with `pnpm fixtures:retention`, which covers purge, expiry, and R2 and PostgreSQL agreement; and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule, which is due around 2026-10-25.
+- On 2026-10-19 the Product Owner had M17 merged to `main` while it was still In Progress. By then every slice was implemented, `verify:full` had passed locally, and the Verification workflow had passed. Two checks remained: the Product Owner's Staging demonstration with `pnpm fixtures:retention`, which covers purge, expiry, and R2 and PostgreSQL agreement; and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule, which is due around 2026-10-25.
+- On 2026-10-20 the Product Owner deferred M17 so that Phase 7 could start. Its code is complete and merged; the two remaining Staging checks moved into the M18 entry criteria, where they are performed before Production hardening begins. Nothing in M17 is reopened for implementation.
 
 #### Exit criteria
 
 - Every retained content type has one tested creation and deletion path.
 
-## Phase 7 - Deployment and operation
+## Phase 7 - Business HQ
+
+Phase 7 turns Tracer from a call-tracking application into the operating console for every rank-and-rent website Spurlock Labs runs. Each Business HQ domain is its own vertical milestone: the website and its hosting (M20), its search rankings (M21), and what it costs and earns (M22). Later domains such as form submissions, SMS, and Business Profile follow the same intake rules after M19. The Product Owner's stress-tested decisions for this phase are recorded in `docs/CHANGELOG.md` under 2026-10-20.
+
+### M20 - Sites and Cloudflare Connection
+
+- **Status:** Complete
+- **Outcome:** An Operator connects the Organization's Cloudflare account on Integrations, links one Site to a Workspace from the wizard or Workspace Settings, and everyone with access sees that Site's preview, traffic, performance, health, and uptime inside the Workspace, with the application shell restructured around a Workspace-scoped sidebar that later domains extend.
+- **Depends on:** M17
+- **Target environment:** Preview and Staging
+- **Execution note:** A Site is a Cloudflare Worker on the connected account that serves at least one custom domain; `tracer` and `tracer-staging` have none and are never Sites. The Cloudflare connection is an Account ID plus a scoped API token (Workers Scripts Read, Workers Custom Domains Read, Account Analytics Read, Browser Rendering Edit) encrypted with the same master key and envelope as the Twilio credentials, verified with the token-verify endpoint on connect and Test, and read by the Worker and by Trigger.dev tasks alike; nothing Cloudflare-related lives in `.env` or Worker secrets besides the master key. Cloudflare has no third-party OAuth, so Connect is a token form with a link to Cloudflare's token page. A Site Link is the period during which one Site is linked to one Workspace, mirroring Number Assignment: at most one open Site Link per Workspace and per Site, ended on replace, detach, or archive, never touching Cloudflare. Traffic is synced, not proxied: the `site-sync` scheduled task runs hourly, pulls every connected Site's per-day Web Analytics (visits, page views, top paths, referrers, device split, Core Web Vitals p75) and Worker invocation counts and errors for today and yesterday into `site_metric_day` through the GraphQL Analytics API, records the Worker's deployments into `site_deployment`, fetches the apex URL and records status and response time into `site_check`, and backfills 30 days when a Site is first seen. The preview is a 1280 by 800 JPEG from the Browser Rendering screenshot endpoint stored in R2 under `sites/{siteId}/preview-{versionId}.jpg`, captured by the `site-preview` task when the sync sees a new live deployment, by the daily sweep, and on the Operator's Refresh Preview, and served through a Workspace-authorized route like Recording media. Site health is derived at read time from the stored rows: Down after two consecutive failed checks; Warning when a hostname's certificate is not active, Worker errors exceed 5 percent of requests over the last 24 hours, or a Site that had visits in the prior 7 days has had none for 48 hours; Healthy otherwise; and Unknown before the first sync. Health shows on the Workspaces grid Integration health column, the Site page header, Workspace Overview, and the Cloudflare card on Integrations. Visit-to-Call is Calls divided by visits over the same range and is the first funnel number in the product. Client Viewers see the Site page read-only without the Hosting panel, deployments, Worker errors, or any Cloudflare identifier. The shell change: the Sidebar inside a Workspace swaps its navigation for that Workspace's pages grouped by domain (Overview; Website: Site; Phone: Calls, Flow; Reports; Settings) with an All Workspaces link at the top, replacing the Workspace tabs; outside a Workspace the global navigation is unchanged. The prototype that settled this (three shells on the Workspace route) is kept as a patch outside `main`; the Product Owner chose the Workspace sidebar from variant B with the scorecard row from variant C.
+
+#### Vertical slices
+
+1. Connect, test, rotate, and disconnect Cloudflare on Integrations with encrypted credentials and the connection shown in provider health.
+2. List Sites from the connected account with their hostnames, last deployment, and link state, and show them on the Cloudflare card.
+3. Link a Site to a Workspace from a Site step in the Create Workspace wizard and from a Site section in Workspace Settings; replace and detach end the Site Link.
+4. Sync per-day traffic, deployments, and uptime checks hourly in Trigger.dev with a 30-day backfill on first sight.
+5. Capture and serve the Site preview on new deployments, daily, and on Refresh Preview.
+6. Render the Site page with preview, facts, Visits, Page Views, Calls, and Visit-to-Call, the traffic and Calls chart, Top pages, Referrers, Performance, and the Operator-only Hosting panel.
+7. Derive Site health and show it on the Workspaces grid, Site page, Workspace Overview, and Integrations.
+8. Replace the Workspace tabs with the Workspace-scoped Sidebar and add a Site summary panel to Workspace Overview.
+
+#### Test-first behaviors
+
+- Cloudflare credentials are stored encrypted, verified on connect, and never returned in any response.
+- Only Workers with at least one custom domain are Sites, and Sites are scoped to the Organization that connected the account.
+- A Workspace has at most one open Site Link and a Site is linked to at most one Workspace at a time.
+- Replace and detach end the open Site Link without a Cloudflare write.
+- Hourly sync is idempotent per Site and day, and the first sync of a Site backfills 30 days.
+- Health follows the documented rules from stored checks, metrics, and hostnames.
+- Visit-to-Call divides Calls by visits over the same resolved range and timezone.
+- Client Viewers never receive hosting data or Cloudflare identifiers.
+- The preview route rechecks Workspace authorization on every request.
+- Inside a Workspace the Sidebar shows that Workspace's pages and hides Flow and Settings from Client Viewers.
+
+#### Deliverables
+
+- `cloudflare_connection`, `site`, `site_hostname`, `site_link`, `site_metric_day`, `site_deployment`, `site_check`, and `site_preview` tables with runtime grants
+- Cloudflare REST and GraphQL client with contract fixtures
+- `site-sync` hourly and `site-preview` tasks
+- Site page, Site step, Site settings section, Site summary panel, Workspace Sidebar
+- Integrations Cloudflare card and Workspaces grid health
+
+#### Verification gate
+
+- Domain, contract, task, integration, and component tests pass.
+- Playwright covers connecting Cloudflare with the fake, linking a Site in the wizard, and opening the Site page as an Operator and a Client Viewer.
+- Staging shows the six live Sites with real previews and traffic.
+
+#### Exit criteria
+
+- One Workspace on Staging is linked to a live Site and its Site page shows a preview captured by Browser Rendering, traffic synced from Web Analytics, and an uptime check.
+- The Workspace Sidebar replaces the tabs on every Workspace page, and the Playwright journeys pass with it.
+
+#### Completion note
+
+M20 closed on 2026-10-20 after the domain, contract, task, integration, component, Worker, typecheck, lint, build, and Playwright gates passed. Playwright covers connecting Cloudflare with the fake, linking a Site in the wizard, skipping the Site step, and opening the Site page as an Operator and as a Client Viewer, and every Workspace journey passes with the Workspace Sidebar. The close-out added the newest ten deployments and 30-day uptime with the median response time to the Site read model and the Site page, kept the health reason in the Client Viewer response, and bounded the Site picker list so the wizard footer stays inside short viewports. The Staging demonstration with real Cloudflare credentials, the six live Sites with real previews and traffic and one linked Workspace showing a Browser Rendering preview, Web Analytics traffic, and an uptime check, is still to be performed by the Product Owner after deployment to Staging.
+
+### M21 - Search Rankings
+
+- **Status:** Complete
+- **Outcome:** Each Site tracks a weighted keyword set from its Service Area, and Operators and Client Viewers see a Search Visibility score, its 30-day trend, per-keyword positions, and the pages that outrank the Site.
+- **Depends on:** M20
+- **Target environment:** Preview and Staging
+- **Execution note:** Rankings come from DataForSEO's Google organic SERP endpoint, connected on Integrations as its own provider (API login and password encrypted like Cloudflare). No Google account is involved and Tracer never scrapes Google: a SERP vendor has no tie to the Site and is the only source of location-specific results. Each Site gets a Service Area (city, region, country, prefilled from the hostname when possible and editable) and Keywords, each with a phrase and a weight from 1 to 5, default 1. The daily `rank-check` task queries every Keyword of every linked Site from its Service Area, stores the position (1 to 100 or Not Ranking), the ranking URL, and the top ten results with their domains into `keyword_rank_day`, and never exceeds one lookup per Keyword per day. Search Visibility is a 0 to 100 score: each position maps to a click-through curve (1 is 100, 2 is 60, 3 is 45, 4 is 35, 5 is 25, 6 to 10 taper to 10, 11 to 20 are 3, beyond 20 and Not Ranking are 0), multiplied by its weight, summed, and divided by the total weight. The Site page gains a Search panel with the score, a 30-day sparkline, and the keyword table with position and 7-day change; Workspace Overview's scorecard shows the score. Expected spend is a few dollars a month at seven Sites and fifteen Keywords each; the Integrations card shows lookups this month.
+
+#### Vertical slices
+
+1. Connect, test, rotate, and disconnect DataForSEO on Integrations.
+2. Edit a Site's Service Area and Keywords in Workspace Settings.
+3. Check every Keyword daily and store positions and top results.
+4. Compute Search Visibility and its trend.
+5. Render the Search panel and the Overview scorecard value.
+
+#### Test-first behaviors
+
+- Keyword phrases are unique per Site, weights stay within 1 to 5, and at most 25 Keywords exist per Site.
+- The daily check is idempotent per Keyword and day and stops when the provider is not connected.
+- Search Visibility matches the documented curve and weighting, and an empty Keyword set yields no score rather than zero.
+- Client Viewers read Search results but cannot edit Keywords.
+
+#### Deliverables
+
+- `dataforseo_connection`, `site_keyword`, and `keyword_rank_day` tables with runtime grants
+- DataForSEO client with contract fixtures and the `rank-check` daily task
+- Search panel, Keywords settings, Integrations card
+
+#### Verification gate
+
+- Domain, contract, task, integration, and component tests pass.
+- Staging checks the live Pocatello Site's Keywords once and shows the score.
+
+#### Exit criteria
+
+- A Staging Site shows a Search Visibility score computed from real DataForSEO positions.
+
+M21 closed on 2026-10-20 after the domain, contract, integration, task, component, typecheck, lint, build, and Playwright gates passed. It delivered the DataForSEO connection on Integrations with its lookups this month and Keywords tracked, the Service Area and Keywords editors in Site settings, the daily `rank-check` task with one lookup per Keyword per day, the `keyword_rank_day` history with the top ten results, the Search Visibility read model with its 30-day trend and 7-day change, the Search panel beside Performance on the Site page, and the Search Visibility tile on the Workspace Overview scorecard. Playwright covers connecting DataForSEO with the fake, setting a Service Area and two Keywords, running the check through the E2E-only check route, and reading the score on the Site page and the Overview. Keyword edits are scoped to the linked Site rather than the Organization so a Keyword id from another Site answers Not Found. The Staging check of the live Pocatello Site's Keywords with real DataForSEO credentials is still to be performed by the Product Owner after deployment to Staging.
+
+### M22 - Cost and Revenue
+
+- **Status:** Complete
+- **Outcome:** Home and every Workspace show what each website costs per month and year, what its Deal earns, and the resulting profit, so the Product Owner can see whether the rank-and-rent model is paying.
+- **Depends on:** M21
+- **Target environment:** Preview and Staging
+- **Execution note:** Prices come from a maintained rate table in `data/pricing.ts`, not provider billing APIs: Twilio number rental, inbound and forwarded minutes, recording minutes, Workers Paid, R2 storage, DataForSEO per lookup, and OpenAI per-token rates for usage rows that lack a stored cost. A Workspace's monthly cost is Telephony (rental plus minutes from Calls and Recordings), Processing (Transcript and Lead Assessment usage), Hosting (an even share of Workers Paid and R2 across Active Workspaces), Search (lookups), and Domain (the Site's annual renewal, entered by hand with registrar and renewal date, amortized monthly). A Deal is a Workspace's agreement with its business: Monthly, Weekly, or Per Lead with an amount, a start date, and an optional end date, at most one open Deal per Workspace. Projected monthly revenue is the amount for Monthly, amount times 52 over 12 for Weekly, and amount times Good Leads in the month for Per Lead; profit is revenue minus cost, and Cost per Good Lead is cost divided by Good Leads. Home gets Monthly Cost (with the yearly projection beneath), Monthly Revenue, and Profit tiles and a cost and revenue column pair in Workspace performance; Workspace Overview's scorecard shows Visits, Calls, Visit-to-Call, Search Visibility, Monthly Cost, and Profit; the Site page gets a Deal and cost panel; a Pricing guide page explains every rate with a worked two-hour Call. Stripe reconciliation of real payments is a backlog connection, not part of M22.
+
+#### Vertical slices
+
+1. Maintain the rate table and compute Telephony, Processing, Hosting, Search, and Domain cost per Workspace and month.
+2. Enter the Site's Domain renewal in Workspace Settings.
+3. Create, edit, and end a Deal per Workspace.
+4. Project revenue, profit, and Cost per Good Lead.
+5. Render the Home tiles and columns, the Overview scorecard, the Site Deal and cost panel, and the Pricing guide.
+
+#### Test-first behaviors
+
+- Cost is computed from persisted usage and the rate table and reproduces the worked example.
+- Shared costs are split evenly across Active Workspaces only.
+- At most one open Deal per Workspace, and Per Lead revenue follows Good Leads with Lead Review precedence.
+- Client Viewers never see cost, Deals, or profit.
+
+#### Deliverables
+
+- `deal` table and Site domain renewal columns with runtime grants
+- Cost and revenue query service shared by Home, Overview, and the Site page
+- Pricing guide page
+
+#### Verification gate
+
+- Domain, integration, and component tests pass.
+- Staging shows cost and profit for the linked Workspace.
+
+#### Exit criteria
+
+- Home shows Monthly Cost, Monthly Revenue, and Profit across Staging Workspaces, and the numbers reconcile with the rate table by hand.
+
+M22 closed on 2026-10-20 after the domain, integration, component, typecheck, lint, build, and Playwright gates passed. It delivered the maintained rate table in `data/pricing.ts` with the date its prices were checked, the `deal` table with at most one open Deal per Workspace and the Site's Domain renewal columns, the Deal routes and the Domain renewal route under the Workspace handler (Operator only, 403 for Client Viewers), the cost and revenue service that prices each Workspace's calendar month from persisted usage (Telephony, Processing, Hosting split evenly across Active Workspaces, Search, and Domain) and projects Monthly, Weekly, and Per Lead revenue with Lead Review precedence, the Home Money row with the yearly projection and the Cost and Revenue columns, the Overview Monthly Cost and Profit tiles, the Site Deal and cost panel with Add, Edit, and End Deal, the Domain renewal and Deal editors in Site settings, and the Pricing guide with the worked two-hour Call ($4.44: 120 inbound, forwarded, and Recording minutes, 240 transcribed channel minutes, and one Lead Assessment). Revenue follows the Deal that is open now, so past months are priced against the current Deal rather than the one open then. Playwright covers adding a Monthly Deal, reading Monthly Cost, Monthly Revenue, and Profit on Home and the Overview as an Operator, and a Client Viewer seeing none of them. The Staging reconciliation by hand, Home's cost and profit across the Staging Workspaces checked against the rate table, is still to be performed by the Product Owner after deployment to Staging.
+
+## Phase 8 - Deployment and operation
 
 ### M18 - Production Hardening and Acceptance
 
 - **Status:** Not Started
 - **Outcome:** The complete first release passes security, reliability, accessibility, cost, and operational acceptance in Staging.
-- **Depends on:** M17
+- **Depends on:** M22
 - **Target environment:** Staging
+- **Entry criteria carried from M17:** the Product Owner's Staging retention demonstration with `pnpm fixtures:retention`, and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule.
 
 #### Vertical slices
 
@@ -1124,7 +1270,10 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 ## Unscheduled backlog
 
 - Google sign-in for provisioned identities, deferred until email-code usage demonstrates a need for another authentication method.
-- Projected monthly cost per Workspace, estimating Twilio number rental, inbound and forwarded call minutes, recording, R2 storage, transcription, and a share of hosting from persisted Call and Recording data, with a pricing guide that explains each rate and an example such as a two-hour Call. Unscheduled because it needs a price-source decision (maintained rate table or provider billing APIs) and accurate usage data that M13 transcription and M16 exports will add.
+- Stripe connection to reconcile real payments against each Workspace's Deal, after M22 ships projected revenue.
+- Site deployment Rollback to the previous version from the Hosting panel, Operator only, with the Archive confirmation pattern.
+- Site traffic and Search Visibility sections in the generated PDF report.
+- Form submissions from the Sites posted to Tracer instead of email, SMS handling, and Google Business Profile tracking, as later Business HQ milestones.
 - Small fixes found during the M17 full verification, none blocking:
   - `components/tracer/workspaces-view.tsx:436` assigns `canActivate` but never uses it.
   - The Workspaces DataGrid renders a Base UI `Button` with `nativeButton` on a non-button element. This logs 34 accessibility warnings during the Playwright run.

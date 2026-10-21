@@ -101,6 +101,7 @@ function handler(overrides: { masterKey?: string; activeWorkspaceCount?: () => P
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
+    cloudflare: { async verifyToken() { throw new Error("not implemented"); }, async listSites() { throw new Error("not implemented"); }, async listDeployments() { throw new Error("not implemented"); }, async fetchDailyTraffic() { throw new Error("not implemented"); }, async captureScreenshot() { throw new Error("not implemented"); } },
     masterKey: configuredMasterKey,
     configuration: {
       twilioMasterKey: Boolean(configuredMasterKey),
@@ -221,7 +222,7 @@ describe.sequential("Organization integrations", () => {
     expect(result.response.status).toBe(200);
     expect(result.body.twilio).toBeNull();
     const providers = result.body.providers as Array<{ id: string; state: string }>;
-    expect(providers.map((provider) => provider.id)).toEqual(["twilio", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
+    expect(providers.map((provider) => provider.id)).toEqual(["twilio", "cloudflare", "dataforseo", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
     expect(providers[0]).toMatchObject({ state: "not_configured" });
   });
 

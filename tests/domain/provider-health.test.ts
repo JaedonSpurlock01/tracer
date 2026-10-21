@@ -57,7 +57,7 @@ describe("provider health", () => {
   it("describes configured platform providers in the stable order", () => {
     const health = describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle);
 
-    expect(health.map((provider) => provider.id)).toEqual(["twilio", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
+    expect(health.map((provider) => provider.id)).toEqual(["twilio", "cloudflare", "dataforseo", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
     expect(health).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "hyperdrive", state: "configured", identifier: "HYPERDRIVE", testable: true }),
       expect.objectContaining({ id: "email", state: "configured", identifier: "auth@example.com", testable: true }),
@@ -197,5 +197,23 @@ describe("provider health", () => {
     expect(degraded.find((provider) => provider.id === "r2")).toMatchObject({ state: "configured" });
     expect(degraded.find((provider) => provider.id === "r2")).not.toHaveProperty("mediaLifecycle");
     expect(describeProviderHealth(configured, null, noTransfers, noAnalysis, stuck).find((provider) => provider.id === "triggerdev")?.state).toBe("not_configured");
+  });
+
+  it("describes the Cloudflare connection as not configured, connected, or degraded", () => {
+    const cloudflare = {
+      accountId: "0123456789abcdef0123456789abcdef",
+      connectedAt: "2026-10-20T00:00:00.000Z",
+      connectedBy: { id: "operator", name: "Example Operator" },
+      lastVerifiedAt: "2026-10-20T01:00:00.000Z",
+      lastFailureAt: null,
+      lastFailureDetail: null,
+      lastSyncedAt: null,
+      siteCount: 6,
+    };
+    const find = (providers: ReturnType<typeof describeProviderHealth>) => providers.find((provider) => provider.id === "cloudflare");
+    expect(find(describeProviderHealth({ ...configured, twilioMasterKey: false }, null, noTransfers, noAnalysis, noLifecycle, null))).toMatchObject({ state: "not_configured", testable: false, note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing" });
+    expect(find(describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle, null))).toMatchObject({ state: "not_configured", testable: false, note: "No Organization Cloudflare credential is connected" });
+    expect(find(describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle, cloudflare))).toMatchObject({ name: "Cloudflare", state: "connected", identifier: cloudflare.accountId, lastSuccessAt: cloudflare.lastVerifiedAt, testable: true });
+    expect(find(describeProviderHealth(configured, null, noTransfers, noAnalysis, noLifecycle, { ...cloudflare, lastFailureAt: "2026-10-20T02:00:00.000Z", lastFailureDetail: "Cloudflare is unavailable" }))).toMatchObject({ state: "degraded", lastFailureDetail: "Cloudflare is unavailable" });
   });
 });

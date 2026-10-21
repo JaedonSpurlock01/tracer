@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
+import { decideCloudflareDisconnect, decideTwilioDisconnect, isCloudflareAccountId, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 
 describe("Twilio integration policy", () => {
   it("allows disconnect without active workspaces", () => {
@@ -36,5 +36,19 @@ describe("Twilio integration policy", () => {
     expect(isTwilioApiKeySid(`AC${"a".repeat(32)}`)).toBe(false);
     expect(isTwilioAccountSid(`AC${"a".repeat(31)}`)).toBe(false);
     expect(isTwilioApiKeySid(`SK${"a".repeat(33)}`)).toBe(false);
+  });
+});
+
+describe("Cloudflare integration policy", () => {
+  it("allows disconnect without open Site Links and blocks it with the count otherwise", () => {
+    expect(decideCloudflareDisconnect({ openSiteLinkCount: 0 })).toEqual({ allowed: true });
+    expect(decideCloudflareDisconnect({ openSiteLinkCount: 2 })).toEqual({ allowed: false, reason: "active_site_links", openSiteLinkCount: 2 });
+  });
+
+  it("validates the Cloudflare Account ID as 32 hexadecimal characters", () => {
+    expect(isCloudflareAccountId("0123456789abcdef0123456789abcdef")).toBe(true);
+    expect(isCloudflareAccountId("0123456789ABCDEF0123456789ABCDEF")).toBe(true);
+    expect(isCloudflareAccountId("0123456789abcdef0123456789abcde")).toBe(false);
+    expect(isCloudflareAccountId("g123456789abcdef0123456789abcdef")).toBe(false);
   });
 });

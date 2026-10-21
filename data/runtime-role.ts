@@ -61,7 +61,23 @@ export async function provisionRuntimeRole(
       public.member,
       public.invitation,
       public.twilio_connection,
-      public.twilio_number
+      public.twilio_number,
+      public.cloudflare_connection,
+      public.dataforseo_connection
+    TO ${runtimeRole}
+  `);
+  await connection.query(`
+    GRANT SELECT, INSERT, UPDATE ON TABLE
+      public.site,
+      public.site_hostname,
+      public.site_link,
+      public.site_metric_day,
+      public.site_deployment,
+      public.site_check,
+      public.site_preview,
+      public.site_keyword,
+      public.keyword_rank_day,
+      public.deal
     TO ${runtimeRole}
   `);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.workspace TO ${runtimeRole}`);
