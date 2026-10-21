@@ -42,6 +42,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { cn } from "cn";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, DownloadIcon } from "lucide-react";
@@ -68,7 +69,7 @@ const timelineVariants = {
   Failed: "destructive-light",
 } as const satisfies Record<CallTimelineEntry["status"], string>;
 
-function recordingStatus(call: CallDetail): string {
+export function recordingStatus(call: CallDetail): string {
   const recording = call.recording;
   const timeZone = call.workspace.reportingTimezone;
   switch (recording.state) {
@@ -100,7 +101,27 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
-function ProcessingTimeline({ call }: { call: CallDetail }) {
+/** The dense Call facts definition list, reusable by any Call Detail chrome. */
+export function CallFacts({ call, className }: { call: CallDetail; className?: string }) {
+  const timeZone = call.workspace.reportingTimezone;
+  return (
+    <dl className={cn("grid gap-x-6 gap-y-3 sm:grid-cols-2", className)}>
+      <Fact term="Call start">{formatCallTime(call.startedAt, timeZone)}</Fact>
+      <Fact term="Call end">{call.endedAt ? formatCallTime(call.endedAt, timeZone) : "-"}</Fact>
+      <Fact term="Total duration">{duration(call.totalDurationSeconds)}</Fact>
+      <Fact term="Connected duration">{duration(call.connectedDurationSeconds)}</Fact>
+      <Fact term="Tracking Number dialed">{call.trackingNumber}</Fact>
+      <Fact term="Destination Number used">{call.destinationNumber ?? "Not forwarded"}</Fact>
+      <Fact term="Workspace">{call.workspace.name}</Fact>
+      <Fact term="Call Outcome">{call.outcome ?? "In Progress"}</Fact>
+      <Fact term="Spam gate">{call.spamGate}</Fact>
+      <Fact term="Recording">{recordingStatus(call)}</Fact>
+      {call.twilioCallSid ? <Fact term="Twilio call SID">{call.twilioCallSid}</Fact> : null}
+    </dl>
+  );
+}
+
+export function ProcessingTimeline({ call }: { call: CallDetail }) {
   const completed = call.timeline.findIndex((entry) => entry.status !== "Completed");
   return (
     <section aria-labelledby="call-timeline-title">
@@ -232,19 +253,7 @@ export default function CallDetailView({
               <FrameTitle><h2 id="call-facts-title">Call facts</h2></FrameTitle>
             </FrameHeader>
             <FramePanel className="flex flex-col gap-4">
-              <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                <Fact term="Call start">{formatCallTime(call.startedAt, timeZone)}</Fact>
-                <Fact term="Call end">{call.endedAt ? formatCallTime(call.endedAt, timeZone) : "-"}</Fact>
-                <Fact term="Total duration">{duration(call.totalDurationSeconds)}</Fact>
-                <Fact term="Connected duration">{duration(call.connectedDurationSeconds)}</Fact>
-                <Fact term="Tracking Number dialed">{call.trackingNumber}</Fact>
-                <Fact term="Destination Number used">{call.destinationNumber ?? "Not forwarded"}</Fact>
-                <Fact term="Workspace">{call.workspace.name}</Fact>
-                <Fact term="Call Outcome">{call.outcome ?? "In Progress"}</Fact>
-                <Fact term="Spam gate">{call.spamGate}</Fact>
-                <Fact term="Recording">{recordingStatus(call)}</Fact>
-                {call.twilioCallSid ? <Fact term="Twilio call SID">{call.twilioCallSid}</Fact> : null}
-              </dl>
+              <CallFacts call={call} />
               <p className="text-xs text-muted-foreground">Times are shown in {timeZone}.</p>
             </FramePanel>
           </Frame>

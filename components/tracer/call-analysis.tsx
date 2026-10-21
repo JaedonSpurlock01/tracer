@@ -34,6 +34,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { cn } from "cn";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
@@ -63,7 +64,7 @@ function activeTurnIndex(turns: Turn[], currentMs: number): number {
   return -1;
 }
 
-type Emphasis = { turnIndex: number; at: number } | null;
+export type Emphasis = { turnIndex: number; at: number } | null;
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -115,7 +116,7 @@ function searchStatus(count: number, current: number): string {
   return count === 1 ? "1 match" : `${count} matches`;
 }
 
-function TranscriptTurns({ turns, emphasis }: { turns: Turn[]; emphasis: Emphasis }) {
+function TranscriptTurns({ turns, emphasis, listClassName }: { turns: Turn[]; emphasis: Emphasis; listClassName?: string }) {
   const playback = usePlayback();
   const listRef = useRef<HTMLOListElement>(null);
   const [following, setFollowing] = useState(true);
@@ -180,7 +181,7 @@ function TranscriptTurns({ turns, emphasis }: { turns: Turn[]; emphasis: Emphasi
         ref={listRef}
         aria-label="Transcript turns"
         tabIndex={0}
-        className="relative flex max-h-96 flex-col gap-1 overflow-y-auto rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        className={cn("relative flex max-h-96 flex-col gap-1 overflow-y-auto rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50", listClassName)}
         onWheel={() => setFollowing(false)}
         onTouchMove={() => setFollowing(false)}
         onKeyDown={(event) => {
@@ -226,7 +227,7 @@ const skipReasons: Record<NonNullable<CallDetail["transcript"]["skipReason"]>, s
   too_short: "The Call had less than 15 seconds of conversation, so it was not analyzed.",
 };
 
-type RetryState = { pending: boolean; error: string; retry(): void };
+export type RetryState = { pending: boolean; error: string; retry(): void };
 
 function retryError(status: number): string {
   if (status === 409) return "There is nothing to retry. Refresh to see the latest state.";
@@ -273,10 +274,10 @@ function TranscriptSkeleton() {
   );
 }
 
-function TranscriptBody({ transcript, operator, retry, emphasis }: { transcript: CallDetail["transcript"]; operator: boolean; retry: RetryState; emphasis: Emphasis }) {
+export function TranscriptBody({ transcript, operator, retry, emphasis, listClassName }: { transcript: CallDetail["transcript"]; operator: boolean; retry: RetryState; emphasis: Emphasis; listClassName?: string }) {
   switch (transcript.state) {
     case "Completed":
-      return <TranscriptTurns turns={transcript.turns ?? []} emphasis={emphasis} />;
+      return <TranscriptTurns turns={transcript.turns ?? []} emphasis={emphasis} listClassName={listClassName} />;
     case "Pending":
       return <TranscriptSkeleton />;
     case "Failed":
@@ -307,7 +308,7 @@ function TranscriptSection({ transcript, operator, retry, emphasis }: { transcri
   );
 }
 
-type ContentRemoval = "Purged" | "Expired" | null;
+export type ContentRemoval = "Purged" | "Expired" | null;
 
 const removedEvidence: Record<NonNullable<ContentRemoval>, string> = {
   Purged: "Evidence and rationale were purged with the Transcript.",
@@ -365,7 +366,7 @@ function CompletedAssessment({ assessment, timeZone, reviewed, contentRemoval, o
   );
 }
 
-function AssessmentBody(props: { assessment: CallDetail["leadAssessment"]; operator: boolean; retry: RetryState; timeZone: string; reviewed: boolean; contentRemoval: ContentRemoval; onEvidence(item: LeadAssessmentEvidence): void }) {
+export function AssessmentBody(props: { assessment: CallDetail["leadAssessment"]; operator: boolean; retry: RetryState; timeZone: string; reviewed: boolean; contentRemoval: ContentRemoval; onEvidence(item: LeadAssessmentEvidence): void }) {
   const { assessment, operator, retry } = props;
   switch (assessment.state) {
     case "Completed":
@@ -479,11 +480,39 @@ function ReviewDetails({ review, timeZone }: { review: LeadReview; timeZone: str
   );
 }
 
-function LeadReviewSection({ call, operator }: { call: CallDetail; operator: boolean }) {
+export function LeadReviewBody({ call, operator, actionClassName }: { call: CallDetail; operator: boolean; actionClassName?: string }) {
   const [saved, setSaved] = useState<LeadReview | null>(null);
   const [editing, setEditing] = useState(false);
   const review = saved && (!call.leadReview || saved.reviewedAt > call.leadReview.reviewedAt) ? saved : call.leadReview;
-  if (!review && !operator) return null;
+  if (editing) {
+    return (
+      <LeadReviewForm
+        call={call}
+        review={review}
+        onCancel={() => setEditing(false)}
+        onSaved={(next) => {
+          setSaved(next);
+          setEditing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {review ? <ReviewDetails review={review} timeZone={call.workspace.reportingTimezone} /> : <Notice title="Not reviewed" detail="An Operator's Lead Review becomes the reporting result for this Call." />}
+      {operator ? (
+        <div className={actionClassName}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>
+            {review ? "Update Lead Review" : "Add Lead Review"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LeadReviewSection({ call, operator }: { call: CallDetail; operator: boolean }) {
+  if (!call.leadReview && !operator) return null;
   return (
     <section aria-labelledby="call-lead-review-title">
       <Frame>
@@ -491,28 +520,7 @@ function LeadReviewSection({ call, operator }: { call: CallDetail; operator: boo
           <FrameTitle><h2 id="call-lead-review-title">Lead Review</h2></FrameTitle>
         </FrameHeader>
         <FramePanel>
-          {editing ? (
-            <LeadReviewForm
-              call={call}
-              review={review}
-              onCancel={() => setEditing(false)}
-              onSaved={(next) => {
-                setSaved(next);
-                setEditing(false);
-              }}
-            />
-          ) : (
-            <div className="flex flex-col gap-3">
-              {review ? <ReviewDetails review={review} timeZone={call.workspace.reportingTimezone} /> : <Notice title="Not reviewed" detail="An Operator's Lead Review becomes the reporting result for this Call." />}
-              {operator ? (
-                <div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>
-                    {review ? "Update Lead Review" : "Add Lead Review"}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          )}
+          <LeadReviewBody call={call} operator={operator} />
         </FramePanel>
       </Frame>
     </section>
@@ -546,19 +554,30 @@ function useAnalysisRetry(call: CallDetail) {
   return { stage, state: { pending, error, retry: () => void retry() } };
 }
 
-export default function CallAnalysis({ call, operator }: { call: CallDetail; operator: boolean }) {
+/**
+ * The analysis state every chrome shares: the Transcript and Lead
+ * Assessment after a local Retry, the Retry action, the evidence emphasis,
+ * and what Transcript content was removed.
+ */
+export function useCallAnalysis(call: CallDetail) {
   const { stage, state: retry } = useAnalysisRetry(call);
   const transcript: CallDetail["transcript"] = stage === "transcription" ? { state: "Pending" } : call.transcript;
   const analysisPending = stage !== null || (call.leadAssessment.state === "Unavailable" && transcript.state === "Pending");
   const assessment: CallDetail["leadAssessment"] = analysisPending ? { state: "Pending" } : call.leadAssessment;
   const playback = usePlayback();
   const [emphasis, setEmphasis] = useState<Emphasis>(null);
+  const contentRemoval: ContentRemoval = call.transcript.state === "Purged" || call.transcript.state === "Expired" ? call.transcript.state : null;
 
   function selectEvidence(item: LeadAssessmentEvidence) {
     playback.seek(item.startMs / 1000);
     setEmphasis({ turnIndex: item.turnIndex, at: Date.now() });
   }
 
+  return { transcript, assessment, retry, emphasis, contentRemoval, selectEvidence };
+}
+
+export default function CallAnalysis({ call, operator }: { call: CallDetail; operator: boolean }) {
+  const { transcript, assessment, retry, emphasis, contentRemoval, selectEvidence } = useCallAnalysis(call);
   return (
     <>
       <TranscriptSection transcript={transcript} operator={operator} retry={retry} emphasis={emphasis} />
@@ -569,7 +588,7 @@ export default function CallAnalysis({ call, operator }: { call: CallDetail; ope
         retry={retry}
         timeZone={call.workspace.reportingTimezone}
         reviewed={call.leadReview !== null}
-        contentRemoval={call.transcript.state === "Purged" || call.transcript.state === "Expired" ? call.transcript.state : null}
+        contentRemoval={contentRemoval}
         onEvidence={selectEvidence}
       />
     </>
