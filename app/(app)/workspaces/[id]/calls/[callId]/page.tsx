@@ -35,7 +35,7 @@ import { notFound } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import CallDetailView from "@/components/tracer/call-detail-view";
-import { demoCallDetail } from "@/components/tracer/prototype/call-detail-fixture";
+import { demoCallDetail, demoNeighbors } from "@/components/tracer/prototype/call-detail-fixture";
 import CallDetailPrototype from "@/components/tracer/prototype/call-detail-prototype";
 import { createCallDetails } from "@/data/call-details";
 import { callDetailNavigation, callSourceFromBack, callSourceListQuery } from "@/data/call-source";
@@ -58,7 +58,7 @@ export default async function CallDetailPage({
   // PROTOTYPE: ?demo=1 renders the Call Detail fixture instead of a Call.
   const demo = query.demo === "1" && process.env.NODE_ENV !== "production";
   const data = demo
-    ? { call: demoCallDetail(id), neighbors: null }
+    ? { call: demoCallDetail(id), neighbors: demoNeighbors(id) }
     : await withTracerRuntime(async ({ pool }) => {
         const call = await createCallDetails(pool, actor).find(id, callId);
         if (!call) return null;

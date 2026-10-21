@@ -7,6 +7,7 @@
  * really plays and the lanes line up with the Transcript.
  */
 import type { CallDetail } from "@/data/call-details";
+import type { CallNeighbors } from "@/data/calls";
 import type { TranscriptTurn } from "@/data/transcript";
 
 export const demoMediaPath = "/api/prototype/recording";
@@ -44,6 +45,13 @@ export const demoTurns: TranscriptTurn[] = [
   turn("Caller", 150.2, 151.5, "Will do. Bye."),
   turn("Business", 151.8, 153.0, "Bye now."),
 ];
+
+export function demoNeighbors(workspaceId: string): CallNeighbors {
+  return {
+    previous: { id: "demo-previous", workspaceId, callerNumber: "+14805550177", startedAt: at(-47 * 60) },
+    next: { id: "demo-next", workspaceId, callerNumber: "+16025550131", startedAt: at(38 * 60) },
+  };
+}
 
 export function demoCallDetail(workspaceId: string): CallDetail {
   return {

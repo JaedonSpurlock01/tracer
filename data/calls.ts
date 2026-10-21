@@ -99,6 +99,8 @@ export interface CallListResult {
 export interface CallNeighbor {
   id: string;
   workspaceId: string;
+  callerNumber: string | null;
+  startedAt: string;
 }
 
 export interface CallNeighbors {
@@ -324,22 +326,25 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
       if (!scoped) return null;
       const { values, where, orderBy } = scoped;
       values.push(callId);
-      const rows = await pool.query<{ previous_id: string | null; previous_workspace_id: string | null; next_id: string | null; next_workspace_id: string | null }>(
-        `select previous_id, previous_workspace_id, next_id, next_workspace_id
+      type NeighborRow = { id: string | null; workspace_id: string | null; caller_number: string | null; started_at: Date | null };
+      const rows = await pool.query<{ previous: NeighborRow; next: NeighborRow }>(
+        `select json_build_object('id', previous_id, 'workspace_id', previous_workspace_id, 'caller_number', previous_caller_number, 'started_at', previous_started_at) as previous,
+                json_build_object('id', next_id, 'workspace_id', next_workspace_id, 'caller_number', next_caller_number, 'started_at', next_started_at) as next
            from (select c.id,
                         lag(c.id) over ordered as previous_id, lag(c.workspace_id) over ordered as previous_workspace_id,
-                        lead(c.id) over ordered as next_id, lead(c.workspace_id) over ordered as next_workspace_id
+                        lag(c.caller_number) over ordered as previous_caller_number, lag(c.started_at) over ordered as previous_started_at,
+                        lead(c.id) over ordered as next_id, lead(c.workspace_id) over ordered as next_workspace_id,
+                        lead(c.caller_number) over ordered as next_caller_number, lead(c.started_at) over ordered as next_started_at
                    from ${callSource}
                   where ${where}
                  window ordered as (order by ${orderBy})) listed
           where listed.id = $${values.length}`,
         values,
       );
+      const neighbor = (row: NeighborRow | undefined): CallNeighbor | null =>
+        row?.id && row.workspace_id && row.started_at ? { id: row.id, workspaceId: row.workspace_id, callerNumber: row.caller_number, startedAt: new Date(row.started_at).toISOString() } : null;
       const row = rows.rows[0];
-      return {
-        previous: row?.previous_id && row.previous_workspace_id ? { id: row.previous_id, workspaceId: row.previous_workspace_id } : null,
-        next: row?.next_id && row.next_workspace_id ? { id: row.next_id, workspaceId: row.next_workspace_id } : null,
-      };
+      return { previous: neighbor(row?.previous), next: neighbor(row?.next) };
     },
     async workspaceOptions() {
       const values: unknown[] = [];

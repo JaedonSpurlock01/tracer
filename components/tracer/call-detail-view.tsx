@@ -62,6 +62,7 @@ import { PlaybackProvider } from "@/components/tracer/playback";
 import PurgeMediaButton, { canPurgeMedia, purgedCallDetail } from "@/components/tracer/purge-media";
 import RecordingPlayer from "@/components/tracer/recording-player";
 import type { CallDetail, CallTimelineEntry } from "@/data/call-details";
+import type { CallStep } from "@/data/call-source";
 
 const timelineVariants = {
   Completed: "success-light",
@@ -157,13 +158,13 @@ export function ProcessingTimeline({ call }: { call: CallDetail }) {
 
 export interface CallDetailNavigation {
   back: string;
-  previous: string | null;
-  next: string | null;
+  previous: CallStep | null;
+  next: CallStep | null;
 }
 
-function StepCall({ label, href, children }: { label: string; href: string | null; children: ReactNode }) {
-  return href ? (
-    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} href={href} prefetch>
+function StepCall({ label, step, children }: { label: string; step: CallStep | null; children: ReactNode }) {
+  return step ? (
+    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} title={step.callerNumber ?? "Unknown caller"} href={step.href} prefetch>
       {children}
     </Link>
   ) : (
@@ -196,10 +197,10 @@ export default function CallDetailView({
             Back to Calls
           </Link>
           <ButtonGroup aria-label="Call navigation">
-            <StepCall label="Previous Call" href={navigation.previous}>
+            <StepCall label="Previous Call" step={navigation.previous}>
               <ChevronUpIcon aria-hidden />
             </StepCall>
-            <StepCall label="Next Call" href={navigation.next}>
+            <StepCall label="Next Call" step={navigation.next}>
               <ChevronDownIcon aria-hidden />
             </StepCall>
           </ButtonGroup>

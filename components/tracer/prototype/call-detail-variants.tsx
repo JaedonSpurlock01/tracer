@@ -49,7 +49,7 @@ import { BreadcrumbLabel } from "@/components/tracer/breadcrumbs";
 import { AssessmentBody, LeadReviewBody, TranscriptBody, useCallAnalysis } from "@/components/tracer/call-analysis";
 import { CallFacts, ProcessingTimeline, type CallDetailNavigation } from "@/components/tracer/call-detail-view";
 import { ExportCallButton } from "@/components/tracer/call-export";
-import { formatCallTime, formatClock } from "@/components/tracer/call-format";
+import { formatCallTime, formatClock, formatTimeOfDay } from "@/components/tracer/call-format";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
 import { PlaybackProvider, usePlayback } from "@/components/tracer/playback";
@@ -57,6 +57,7 @@ import PurgeMediaButton, { canPurgeMedia } from "@/components/tracer/purge-media
 import { longSeekStepSeconds, playbackRates, useRecordingEngine, zoomLevels, type ReadyRecording, type RecordingEngine } from "@/components/tracer/recording-engine";
 import { RecordingState, RecordingWaveform, sliderNumber } from "@/components/tracer/recording-player";
 import type { CallDetail } from "@/data/call-details";
+import type { CallStep } from "@/data/call-source";
 import type { TranscriptTurn } from "@/data/transcript";
 
 export interface VariantProps {
@@ -292,14 +293,36 @@ function MirrorWaveform({ engine, turns, height = 56 }: { engine: RecordingEngin
 /* Shared header pieces.                                                     */
 /* ----------------------------------------------------------------------- */
 
-function StepCall({ label, href, children }: { label: string; href: string | null; children: ReactNode }) {
-  return href ? (
-    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} href={href} prefetch>
+function StepCall({ label, step, children }: { label: string; step: CallStep | null; children: ReactNode }) {
+  return step ? (
+    <Link className={buttonVariants({ variant: "outline", size: "icon" })} aria-label={label} title={step.callerNumber ?? "Unknown caller"} href={step.href} prefetch>
       {children}
     </Link>
   ) : (
     <Button variant="outline" size="icon" aria-label={label} disabled>
       {children}
+    </Button>
+  );
+}
+
+/** A step button that says which Call it goes to: the caller and its start time. */
+function LabeledStepCall({ label, step, timeZone, children }: { label: string; step: CallStep | null; timeZone: string; children: ReactNode }) {
+  const caller = step ? (step.callerNumber ?? "Unknown caller") : null;
+  const text = step ? (
+    <span className="hidden items-baseline gap-1.5 sm:inline-flex">
+      <span className="tabular-nums">{caller}</span>
+      <span className="text-xs font-normal text-muted-foreground tabular-nums">{formatTimeOfDay(step.startedAt, timeZone)}</span>
+    </span>
+  ) : null;
+  return step ? (
+    <Link className={buttonVariants({ variant: "outline", size: "sm" })} aria-label={`${label}: ${caller}, ${formatCallTime(step.startedAt, timeZone)}`} href={step.href} prefetch>
+      {children}
+      {text}
+    </Link>
+  ) : (
+    <Button variant="outline" size="sm" aria-label={label} disabled>
+      {children}
+      <span className="hidden text-xs font-normal text-muted-foreground sm:inline">None</span>
     </Button>
   );
 }
@@ -312,8 +335,8 @@ function NavRow({ navigation, compact = false }: { navigation: CallDetailNavigat
         {compact ? null : "Back to Calls"}
       </Link>
       <ButtonGroup aria-label="Call navigation">
-        <StepCall label="Previous Call" href={navigation.previous}><ChevronUpIcon aria-hidden /></StepCall>
-        <StepCall label="Next Call" href={navigation.next}><ChevronDownIcon aria-hidden /></StepCall>
+        <StepCall label="Previous Call" step={navigation.previous}><ChevronUpIcon aria-hidden /></StepCall>
+        <StepCall label="Next Call" step={navigation.next}><ChevronDownIcon aria-hidden /></StepCall>
       </ButtonGroup>
     </div>
   );
@@ -589,14 +612,14 @@ export function VariantB({ call, operator, autoPlay, navigation, mediaPath }: Va
         </span>
         <div className="ml-auto flex items-center gap-2">
           <ButtonGroup aria-label="Call navigation">
-            <StepCall label="Previous Call" href={navigation.previous}><ChevronUpIcon aria-hidden /></StepCall>
-            <StepCall label="Next Call" href={navigation.next}><ChevronDownIcon aria-hidden /></StepCall>
+            <LabeledStepCall label="Previous Call" step={navigation.previous} timeZone={call.workspace.reportingTimezone}><ChevronUpIcon data-icon="inline-start" aria-hidden /></LabeledStepCall>
+            <LabeledStepCall label="Next Call" step={navigation.next} timeZone={call.workspace.reportingTimezone}><ChevronDownIcon data-icon="inline-start" aria-hidden /></LabeledStepCall>
           </ButtonGroup>
           <DropdownMenu>
             <DropdownMenuTrigger className={buttonVariants({ variant: "outline", size: "icon" })} aria-label="More actions">
               <EllipsisIcon aria-hidden />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-56">
               {call.mp3RecordingId ? (
                 <DropdownMenuItem render={<a href={`/api/workspaces/${call.workspace.id}/recordings/${call.mp3RecordingId}/mp3`} download />}>
                   <DownloadIcon aria-hidden /> Download MP3

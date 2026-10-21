@@ -328,8 +328,8 @@ describe("CallDetailView", () => {
         operator={false}
         navigation={{
           back: "/calls?sort=leadScore&order=asc",
-          previous: "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc",
-          next: "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc",
+          previous: { href: "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc", callerNumber: "+13125550100", startedAt: "2026-10-16T19:00:00.000Z" },
+          next: { href: "/workspaces/workspace-1/calls/call-2?back=%2Fcalls%3Fsort%3DleadScore%26order%3Dasc", callerNumber: null, startedAt: "2026-10-16T21:00:00.000Z" },
         }}
       />,
     );
@@ -342,7 +342,7 @@ describe("CallDetailView", () => {
   });
 
   it("disables previous or next Call at either end of the list", () => {
-    render(<CallDetailView call={call} operator navigation={{ back: "/workspaces/workspace-1/calls", previous: null, next: "/workspaces/workspace-1/calls/call-2" }} />);
+    render(<CallDetailView call={call} operator navigation={{ back: "/workspaces/workspace-1/calls", previous: null, next: { href: "/workspaces/workspace-1/calls/call-2", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" } }} />);
     expect(screen.getByRole("button", { name: "Previous Call" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "Previous Call" })).toBeNull();
     expect(screen.getByRole("link", { name: "Next Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
