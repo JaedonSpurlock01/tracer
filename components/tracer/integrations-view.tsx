@@ -4,16 +4,17 @@
  * @brief  Renders the Operator Integrations provider health surface.
  *
  * @description
- *  Renders server-provided provider health, manages Twilio credentials and
- *  numbers, manages the Cloudflare connection and lists its Sites with
- *  their link state, manages the DataForSEO connection with its lookups
- *  this month and Keywords tracked, exposes safe Hyperdrive and Email
- *  Service test actions,
- *  lists recent Recording transfer failures for R2 and Trigger.dev,
- *  shows the OpenAI configured models, last successful Transcript and Lead
- *  Assessment, and recent processing failures, and lists on the Trigger.dev
- *  card the oldest purged or expired Recordings whose media cleanup is
- *  unfinished, each linking to its Call Detail.
+ *  Lays the page out as a provider navigation beside one provider's detail,
+ *  chosen by the `provider` search parameter so a provider is linkable.
+ *  A Needs attention lane above them lists unconnected Organization
+ *  credentials, a missing Twilio Auth Token, and degraded providers with
+ *  the action that resolves each. The detail shows the provider's facts,
+ *  its actions, and its own panels: Twilio numbers, Cloudflare Sites with
+ *  their link state, Recording transfer failures for R2 and Trigger.dev,
+ *  and the oldest purged or expired Recordings whose media cleanup is
+ *  unfinished, each linking to its Call Detail. Twilio, Cloudflare, and
+ *  DataForSEO credentials are connected, tested, rotated, and disconnected
+ *  through dialogs; Hyperdrive and Email Service expose safe test actions.
  *
  * @remarks
  *  Provider actions remain behind the authenticated HTTP boundary. The first
@@ -23,6 +24,7 @@
  *
  * @see
  *  data/integrations-handler.ts
+ *  data/provider-health.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -30,10 +32,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FramePanel } from "@/components/reui/frame";
+import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,12 +43,13 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { ProviderLogo } from "@/components/tracer/provider-logo";
 import { callDetailHref } from "@/data/call-source";
 import type { CloudflareConnectionRecord, CloudflareSiteListEntry } from "@/data/cloudflare-connection";
 import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
 import type { TwilioConnectionRecord, TwilioNumberRecord } from "@/data/integrations";
 import type { SiteHealth } from "@/data/site-health";
-import type { MediaLifecycleHealth, OpenAIAnalysisHealth, ProviderHealth, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
+import type { MediaLifecycleHealth, OpenAIAnalysisHealth, ProviderHealth, ProviderId, ProviderState, RecordingTransferFailure } from "@/data/provider-health";
 
 type IntegrationResponse = {
   providers: ProviderHealth[];
@@ -133,8 +136,28 @@ export function siteHealthVariant(health: SiteHealth): "success-light" | "warnin
   return "outline";
 }
 
-function AnalysisDetails({ identifier, analysis }: { identifier: string | null; analysis: OpenAIAnalysisHealth }) {
-  const rows: [string, string][] = [
+function StatusDot({ state }: { state: ProviderState }) {
+  const color = state === "connected" ? "bg-success" : state === "configured" ? "bg-primary/70" : state === "degraded" ? "bg-warning" : "bg-muted-foreground/40";
+  return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
+}
+
+type Fact = [term: string, value: ReactNode];
+
+function FactList({ facts }: { facts: Fact[] }) {
+  return (
+    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+      {facts.map(([term, value]) => (
+        <div key={term} className="min-w-0">
+          <dt className="text-xs text-muted-foreground">{term}</dt>
+          <dd className="truncate tabular-nums">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function analysisFacts(identifier: string | null, analysis: OpenAIAnalysisHealth): Fact[] {
+  return [
     ["Identifier", identifier ?? "Not available"],
     ["Transcription model", analysis.transcriptionModel],
     ["Lead analysis model", analysis.leadAssessmentModel],
@@ -143,84 +166,186 @@ function AnalysisDetails({ identifier, analysis }: { identifier: string | null; 
     ["Recent processing failures", String(analysis.failedCount)],
     ["Last failure", formatDate(analysis.lastFailureAt)],
   ];
+}
+
+function serviceFacts(provider: ProviderHealth): Fact[] {
+  if (provider.analysis) return analysisFacts(provider.identifier, provider.analysis);
+  const facts: Fact[] = [
+    ["Identifier", provider.identifier ?? "Not available"],
+    [provider.recentFailures ? "Last successful Recording transfer" : "Last successful check", formatDate(provider.lastSuccessAt)],
+    ["Last failure", formatDate(provider.lastFailureAt)],
+  ];
+  if (provider.lastFailureDetail) facts.push(["Failure detail", provider.lastFailureDetail]);
+  if (provider.mediaLifecycle) facts.push(["Unfinished media cleanup", String(provider.mediaLifecycle.stuckCount)]);
+  return facts;
+}
+
+function connectedBy(record: { connectedBy: { name: string } | null; connectedAt: string; lastVerifiedAt: string | null }): Fact[] {
+  return [["Connected by", record.connectedBy?.name ?? "Unknown"], ["Connected at", formatDate(record.connectedAt)], ["Last verified", formatDate(record.lastVerifiedAt)]];
+}
+
+function twilioFacts(connection: TwilioConnectionRecord): Fact[] {
+  return [
+    ["Account SID", <span key="sid" className="font-mono">{connection.accountSid}</span>],
+    ["API Key SID", <span key="key" className="font-mono">{connection.apiKeySid}</span>],
+    ["Account name", connection.accountFriendlyName ?? "Not available"],
+    ...connectedBy(connection),
+    ["Webhook Auth Token", <Badge key="token" variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge>],
+    ["Last failure", formatDate(connection.lastFailureAt)],
+  ];
+}
+
+function cloudflareFacts(connection: CloudflareConnectionRecord): Fact[] {
+  return [
+    ["Account ID", <span key="id" className="font-mono">{connection.accountId}</span>],
+    ...connectedBy(connection),
+    ["Last sync", formatDate(connection.lastSyncedAt)],
+    ["Sites", String(connection.siteCount)],
+    ["Last failure", formatDate(connection.lastFailureAt)],
+  ];
+}
+
+function dataforseoFacts(connection: DataForSeoConnectionRecord): Fact[] {
+  return [
+    ["API login", <span key="login" className="font-mono">{connection.login}</span>],
+    ...connectedBy(connection),
+    ["Last check", formatDate(connection.lastCheckedAt)],
+    ["Lookups this month", visitsFormatter.format(connection.lookupsThisMonth)],
+    ["Keywords tracked", visitsFormatter.format(connection.keywordCount)],
+    ["Last failure", formatDate(connection.lastFailureAt)],
+  ];
+}
+
+interface ConnectionRecords {
+  twilio: TwilioConnectionRecord | null;
+  cloudflare: CloudflareConnectionRecord | null;
+  dataforseo: DataForSeoConnectionRecord | null;
+  sites: CloudflareSiteListEntry[];
+}
+
+/** One line under a provider name in the navigation and the detail header. */
+function summaryLine(provider: ProviderHealth, records: ConnectionRecords): string {
+  switch (provider.id) {
+    case "twilio":
+      return records.twilio ? `${records.twilio.accountFriendlyName ?? records.twilio.accountSid} · ${records.twilio.numberCount} numbers` : "Not connected";
+    case "cloudflare":
+      return records.cloudflare ? `${records.cloudflare.siteCount} Sites · ${records.sites.filter((site) => site.linkedWorkspace).length} linked` : "Not connected";
+    case "dataforseo":
+      return records.dataforseo ? `${visitsFormatter.format(records.dataforseo.keywordCount)} Keywords · ${visitsFormatter.format(records.dataforseo.lookupsThisMonth)} lookups this month` : "Not connected";
+    case "openai":
+      return provider.analysis ? `${provider.analysis.transcriptionModel} · ${provider.analysis.leadAssessmentModel}` : "Transcripts and Lead Assessments";
+    case "triggerdev":
+      return provider.mediaLifecycle?.stuckCount ? `${provider.mediaLifecycle.stuckCount} Recordings awaiting cleanup` : "Background runs and media cleanup";
+    case "r2":
+      return provider.identifier ? `Bucket ${provider.identifier}` : "Recording storage";
+    case "email":
+      return provider.identifier ? `From ${provider.identifier}` : "Transactional email";
+    case "hyperdrive":
+      return "Database connection pool";
+  }
+}
+
+function NavGroup({ label, providers, current, records }: { label: string; providers: ProviderHealth[]; current: ProviderId; records: ConnectionRecords }) {
   return (
-    <dl className="grid gap-2 text-sm sm:grid-cols-2">
-      {rows.map(([term, value]) => (
-        <div key={term}>
-          <dt className="text-muted-foreground">{term}</dt>
-          <dd className="tabular-nums">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="flex shrink-0 flex-col gap-1">
+      <p className="px-2 text-xs font-medium text-muted-foreground">{label}</p>
+      <ul className="flex gap-1 md:flex-col">
+        {providers.map((provider) => {
+          const active = provider.id === current;
+          return (
+            <li key={provider.id}>
+              <Link
+                href={`/integrations?provider=${provider.id}`}
+                scroll={false}
+                aria-current={active ? "page" : undefined}
+                className={`flex items-center gap-2.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm transition-colors ${active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}
+              >
+                <ProviderLogo id={provider.id} className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{provider.name}</span>
+                  <span className="hidden truncate text-xs text-muted-foreground md:block">{summaryLine(provider, records)}</span>
+                </span>
+                <StatusDot state={provider.state} />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
-function ProviderDetails({ provider }: { provider: ProviderHealth }) {
-  if (provider.analysis) {
-    return (
-      <>
-        <AnalysisDetails identifier={provider.identifier} analysis={provider.analysis} />
-        {provider.note ? <p className="text-sm text-muted-foreground">{provider.note}</p> : null}
-      </>
-    );
-  }
+function NumbersTable({ numbers }: { numbers: TwilioNumberRecord[] }) {
+  if (!numbers.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No numbers synced yet.</p>;
   return (
-    <>
-      <dl className="grid gap-2 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="text-muted-foreground">Identifier</dt>
-          <dd>{provider.identifier ?? "Not available"}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">{provider.recentFailures ? "Last successful Recording transfer" : "Last successful check"}</dt>
-          <dd>{formatDate(provider.lastSuccessAt)}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Last failure</dt>
-          <dd>{formatDate(provider.lastFailureAt)}</dd>
-        </div>
-        {provider.lastFailureDetail ? <div><dt className="text-muted-foreground">Failure detail</dt><dd>{provider.lastFailureDetail}</dd></div> : null}
-      </dl>
-      {provider.recentFailures ? <RecordingTransferFailures failures={provider.recentFailures} /> : null}
-      {provider.mediaLifecycle ? <MediaLifecycle health={provider.mediaLifecycle} /> : null}
-      {provider.note ? <p className="text-sm text-muted-foreground">{provider.note}</p> : null}
-    </>
+    <div className="overflow-x-auto">
+      <table aria-label="Twilio numbers" className="w-full text-sm">
+        <caption className="sr-only">Twilio numbers</caption>
+        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Phone Number</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Friendly Name</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Voice</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Status</th></tr></thead>
+        <tbody>{numbers.map((number) => <tr key={number.id} className="border-b last:border-0"><td className="px-3 py-2 font-mono">{number.phoneNumber}</td><td className="px-3 py-2">{number.friendlyName}</td><td className="px-3 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-3 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function SitesTable({ sites }: { sites: CloudflareSiteListEntry[] }) {
+  if (!sites.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table aria-label="Sites" className="w-full text-sm">
+        <caption className="sr-only">Sites</caption>
+        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Site</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Health</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Last deployment</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Visits (30 days)</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th></tr></thead>
+        <tbody>{sites.map((site) => <tr key={site.id} className="border-b last:border-0">
+          <td className="px-3 py-2 font-mono">{site.primaryHostname}</td>
+          <td className="px-3 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
+          <td className="px-3 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
+          <td className="px-3 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
+          <td className="px-3 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
   );
 }
 
 function RecordingTransferFailures({ failures }: { failures: RecordingTransferFailure[] }) {
-  if (!failures.length) return <p className="text-sm text-muted-foreground">No Recording transfer failures.</p>;
+  if (!failures.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Recording transfer failures.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Recent transfer failures" className="w-full text-sm">
         <caption className="sr-only">Recent transfer failures</caption>
-        <thead><tr className="border-b text-left"><th className="px-2 py-2">Stage</th><th className="px-2 py-2">Reason</th><th className="px-2 py-2">Failed at</th></tr></thead>
-        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b"><td className="px-2 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-2 py-2">{failure.reason}</td><td className="px-2 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Stage</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Reason</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Failed at</th></tr></thead>
+        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b last:border-0"><td className="px-3 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-3 py-2">{failure.reason}</td><td className="px-3 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
 function MediaLifecycle({ health }: { health: MediaLifecycleHealth }) {
+  if (!health.oldestStuck.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No unfinished media cleanup.</p>;
   return (
-    <div className="flex flex-col gap-2">
-      <dl className="grid gap-2 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="text-muted-foreground">Unfinished media cleanup</dt>
-          <dd className="tabular-nums">{health.stuckCount}</dd>
-        </div>
-      </dl>
-      {health.oldestStuck.length ? (
-        <div className="overflow-x-auto">
-          <table aria-label="Unfinished media cleanup" className="w-full text-sm">
-            <caption className="sr-only">Unfinished media cleanup</caption>
-            <thead><tr className="border-b text-left"><th className="px-2 py-2">Call</th><th className="px-2 py-2">Workspace</th><th className="px-2 py-2">Media</th><th className="px-2 py-2">Since</th><th className="px-2 py-2">Detail</th></tr></thead>
-            <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b"><td className="px-2 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-2 py-2">{entry.workspaceName}</td><td className="px-2 py-2">{entry.media}</td><td className="px-2 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-2 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
-          </table>
-        </div>
-      ) : <p className="text-sm text-muted-foreground">No unfinished media cleanup.</p>}
+    <div className="overflow-x-auto">
+      <table aria-label="Unfinished media cleanup" className="w-full text-sm">
+        <caption className="sr-only">Unfinished media cleanup</caption>
+        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Call</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Media</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Since</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Detail</th></tr></thead>
+        <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b last:border-0"><td className="px-3 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-3 py-2">{entry.workspaceName}</td><td className="px-3 py-2">{entry.media}</td><td className="px-3 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-3 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
+      </table>
     </div>
   );
+}
+
+function ProviderAction({ id, action, message, error, onClick }: { id: "hyperdrive" | "email"; action: Action; message?: string; error?: string; onClick: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button type="button" variant="outline" disabled={action === id} onClick={onClick}>{action === id ? <><Spinner /> Testing...</> : id === "email" ? "Send Test Email" : "Test Connection"}</Button>
+      {message ? <p className="text-sm">{message}</p> : null}
+      {error ? <><p role="alert" className="text-sm">{error}</p><Button type="button" variant="outline" onClick={onClick}>Retry</Button></> : null}
+    </div>
+  );
+}
+
+function ErrorLine({ error, retry }: { error: string; retry: (() => void) | null }) {
+  if (!error) return null;
+  return <div className="flex flex-wrap items-center gap-3"><p role="alert" className="text-sm">{error}</p>{retry ? <Button type="button" variant="outline" onClick={retry}>Retry</Button> : null}</div>;
 }
 
 export interface IntegrationsOverview {
@@ -232,7 +357,7 @@ export interface IntegrationsOverview {
   dataforseo?: DataForSeoConnectionRecord | null;
 }
 
-export default function IntegrationsView({ initial }: { initial: IntegrationsOverview }) {
+export default function IntegrationsView({ initial, provider: selectedId }: { initial: IntegrationsOverview; provider: ProviderId }) {
   const [providers, setProviders] = useState<ProviderHealth[]>(initial.providers);
   const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
   const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
@@ -575,50 +700,164 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
   }
 
   const readyCount = providers.filter((provider) => provider.state === "connected" || provider.state === "configured").length;
-  const twilioProvider = providers.find((provider) => provider.id === "twilio");
-  const canConnect = !twilio && twilioProvider?.note === "No Organization Twilio credential is connected";
-  const canConnectCloudflare = !cloudflare && providers.find((provider) => provider.id === "cloudflare")?.note === "No Organization Cloudflare credential is connected";
-  const canConnectDataForSeo = !dataforseo && providers.find((provider) => provider.id === "dataforseo")?.note === "No Organization DataForSEO credential is connected";
+  const records: ConnectionRecords = { twilio, cloudflare, dataforseo, sites };
+  const selected = providers.find((provider) => provider.id === selectedId) ?? providers[0];
+  const connections = providers.filter((provider) => provider.group === "connection");
+  const services = providers.filter((provider) => provider.group === "service");
+  const headingId = `integration-${selected.id}`;
+
+  const connectAction: Partial<Record<ProviderId, () => void>> = {
+    twilio: openConnect,
+    cloudflare: () => openCloudflareDialog("connect"),
+    dataforseo: () => openDataForSeoDialog("connect"),
+  };
+
+  // Needs attention: what the Operator can resolve from this page, in page order.
+  const attention: { key: string; provider: ProviderHealth; message: string; action: ReactNode }[] = [];
+  for (const provider of providers) {
+    if (provider.connectable && provider.state === "not_configured") {
+      attention.push({ key: `${provider.id}-connect`, provider, message: provider.note ?? "Not connected", action: <Button type="button" size="sm" onClick={connectAction[provider.id]}>Connect {provider.name}</Button> });
+    }
+    if (provider.id === "twilio" && twilio && !twilio.authTokenConfigured) {
+      attention.push({ key: "twilio-auth-token", provider, message: "The webhook Auth Token is not configured, so Twilio webhooks cannot be verified.", action: <Button type="button" size="sm" variant="outline" onClick={openAuthToken}>Set Auth Token</Button> });
+    }
+    if (provider.state === "degraded") {
+      const message = provider.mediaLifecycle?.stuckCount
+        ? `${provider.mediaLifecycle.stuckCount} purged or expired Recordings still have media to clean up.`
+        : provider.lastFailureDetail ?? provider.note ?? `Last failure ${formatDate(provider.lastFailureAt)}.`;
+      attention.push({ key: `${provider.id}-degraded`, provider, message, action: provider.id === selected.id ? null : <Button type="button" size="sm" variant="outline" render={<Link href={`/integrations?provider=${provider.id}`} scroll={false} />}>View</Button> });
+    }
+  }
+
+  function detailActions(provider: ProviderHealth): ReactNode {
+    if (provider.id === "twilio") {
+      if (!twilio) return provider.connectable ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null;
+      const busy = twilioAction !== null;
+      const progress = actionText(twilioAction);
+      return (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={busy} onClick={() => void testTwilio()}>{twilioAction === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void syncTwilio()}>{twilioAction === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={openRotate}>Rotate Key</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={openAuthToken}>Set Auth Token</Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => setDisconnectOpen(true)}>Disconnect</Button>
+        </div>
+      );
+    }
+    if (provider.id === "cloudflare") {
+      if (!cloudflare) return provider.connectable ? <Button type="button" onClick={() => openCloudflareDialog("connect")}>Connect Cloudflare</Button> : null;
+      const busy = cloudflareAction !== null;
+      return (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={busy} onClick={() => void runCloudflare("test")}>{cloudflareAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void runCloudflare("sync")}>{cloudflareAction === "sync" ? <><Spinner /> Syncing...</> : "Sync now"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => openCloudflareDialog("rotate")}>Rotate Token</Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => { setCloudflareMessage(""); setCloudflareDisconnectOpen(true); }}>Disconnect</Button>
+        </div>
+      );
+    }
+    if (provider.id === "dataforseo") {
+      if (!dataforseo) return provider.connectable ? <Button type="button" onClick={() => openDataForSeoDialog("connect")}>Connect DataForSEO</Button> : null;
+      const busy = dataforseoAction !== null;
+      return (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={busy} onClick={() => void runDataForSeo("test")}>{dataforseoAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => openDataForSeoDialog("rotate")}>Rotate Password</Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => openDataForSeoDialog("disconnect")}>Disconnect</Button>
+        </div>
+      );
+    }
+    if ((provider.id === "hyperdrive" || provider.id === "email") && provider.testable) {
+      return <ProviderAction id={provider.id} action={providerAction} message={providerMessages[provider.id]} error={providerErrors[provider.id]} onClick={() => void testProvider(provider.id as "hyperdrive" | "email")} />;
+    }
+    return null;
+  }
+
+  function detailFacts(provider: ProviderHealth): Fact[] | null {
+    if (provider.id === "twilio") return twilio ? twilioFacts(twilio) : null;
+    if (provider.id === "cloudflare") return cloudflare ? cloudflareFacts(cloudflare) : null;
+    if (provider.id === "dataforseo") return dataforseo ? dataforseoFacts(dataforseo) : null;
+    return serviceFacts(provider);
+  }
+
+  function detailError(provider: ProviderHealth): ReactNode {
+    if (provider.id === "twilio") return <ErrorLine error={twilioError} retry={twilioRetry && twilioAction === null ? () => void testTwilio() : null} />;
+    if (provider.id === "cloudflare") return <ErrorLine error={cloudflareMessage} retry={cloudflareAction === null ? () => void runCloudflare("test") : null} />;
+    if (provider.id === "dataforseo") return <ErrorLine error={dataforseoMessage} retry={dataforseoAction === null ? () => void runDataForSeo("test") : null} />;
+    return null;
+  }
+
+  const facts = detailFacts(selected);
+  const panels: { title: string; description?: string; body: ReactNode }[] = [];
+  if (selected.id === "twilio" && twilio) panels.push({ title: "Numbers", description: `${twilio.numberCount} eligible numbers. Last synced ${formatDate(twilio.numbersSyncedAt)}.`, body: <NumbersTable numbers={numbers} /> });
+  if (selected.id === "cloudflare" && cloudflare) panels.push({ title: "Sites", description: "Workers on the account that serve a custom hostname.", body: <SitesTable sites={sites} /> });
+  if (selected.recentFailures) panels.push({ title: "Recording transfer failures", body: <RecordingTransferFailures failures={selected.recentFailures} /> });
+  if (selected.mediaLifecycle) panels.push({ title: "Media cleanup", description: "The oldest purged or expired Recordings whose media cleanup is unfinished.", body: <MediaLifecycle health={selected.mediaLifecycle} /> });
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="text-sm text-muted-foreground">{readyCount} of {providers.length} providers ready</p>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <StatusDot state={attention.length ? "degraded" : "connected"} />
+          {readyCount} of {providers.length} providers ready
+        </p>
       </div>
-      {status ? <p role="status">{status}</p> : null}
-      {refreshError ? <div className="flex items-center gap-3"><p role="alert">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
-      {providers.map((provider) => {
-        const headingId = `integration-${provider.id}`;
-        const isTwilio = provider.id === "twilio";
-        return (
-          <section key={provider.id} aria-labelledby={headingId}>
-            <Frame>
-              <FramePanel className="flex flex-col gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 id={headingId} className="text-lg font-semibold">{provider.name}</h2>
-                  <Badge variant={stateVariant(provider.state)}>{stateLabel(provider.state)}</Badge>
+      {status ? <p role="status" className="text-sm">{status}</p> : null}
+      {refreshError ? <div className="flex items-center gap-3"><p role="alert" className="text-sm">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
+
+      {attention.length ? (
+        <Frame>
+          <FrameHeader><FrameTitle>Needs attention</FrameTitle></FrameHeader>
+          <FramePanel className="p-0">
+            <ul aria-label="Needs attention" className="divide-y">
+              {attention.map((item) => (
+                <li key={item.key} className="flex items-center gap-3 px-3 py-2.5">
+                  <ProviderLogo id={item.provider.id} className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 text-sm"><span className="font-medium">{item.provider.name}</span><span className="text-muted-foreground"> · {item.message}</span></span>
+                  {item.action}
+                </li>
+              ))}
+            </ul>
+          </FramePanel>
+        </Frame>
+      ) : null}
+
+      <div className="grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <nav aria-label="Providers" className="flex gap-4 overflow-x-auto md:flex-col md:overflow-visible">
+          <NavGroup label="Organization connections" providers={connections} current={selected.id} records={records} />
+          <NavGroup label="Platform services" providers={services} current={selected.id} records={records} />
+        </nav>
+        <section aria-labelledby={headingId} className="min-w-0">
+          <Frame>
+            <FramePanel className="flex flex-col gap-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <ProviderLogo id={selected.id} className="size-6 shrink-0" />
+                    <h2 id={headingId} className="text-lg font-semibold">{selected.name}</h2>
+                    <Badge variant={stateVariant(selected.state)}>{stateLabel(selected.state)}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{summaryLine(selected, records)}</p>
                 </div>
-                <ProviderDetails provider={provider} />
-                {isTwilio ? (
-                  twilio ? <TwilioConnected connection={twilio} numbers={numbers} action={twilioAction} error={twilioError} retry={twilioRetry} onTest={() => void testTwilio()} onSync={() => void syncTwilio()} onRotate={openRotate} onSetAuthToken={openAuthToken} onDisconnect={() => setDisconnectOpen(true)} />
-                    : canConnect ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null
-                ) : provider.id === "cloudflare" ? (
-                  cloudflare ? <CloudflareConnected connection={cloudflare} sites={sites} action={cloudflareAction} error={cloudflareMessage} onTest={() => void runCloudflare("test")} onSync={() => void runCloudflare("sync")} onRotate={() => openCloudflareDialog("rotate")} onDisconnect={() => { setCloudflareMessage(""); setCloudflareDisconnectOpen(true); }} />
-                    : canConnectCloudflare ? <Button type="button" onClick={() => openCloudflareDialog("connect")}>Connect Cloudflare</Button> : null
-                ) : provider.id === "dataforseo" ? (
-                  dataforseo ? <DataForSeoConnected connection={dataforseo} action={dataforseoAction} error={dataforseoMessage} onTest={() => void runDataForSeo("test")} onRotate={() => openDataForSeoDialog("rotate")} onDisconnect={() => openDataForSeoDialog("disconnect")} />
-                    : canConnectDataForSeo ? <Button type="button" onClick={() => openDataForSeoDialog("connect")}>Connect DataForSEO</Button> : null
-                ) : provider.id === "hyperdrive" && provider.testable ? (
-                  <ProviderAction id="hyperdrive" action={providerAction} message={providerMessages.hyperdrive} error={providerErrors.hyperdrive} onClick={() => void testProvider("hyperdrive")} />
-                ) : provider.id === "email" && provider.testable ? (
-                  <ProviderAction id="email" action={providerAction} message={providerMessages.email} error={providerErrors.email} onClick={() => void testProvider("email")} />
-                ) : null}
+                {detailActions(selected)}
+              </div>
+              {detailError(selected)}
+              {facts ? <FactList facts={facts} /> : null}
+              {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
+            </FramePanel>
+            {panels.map((panel) => (
+              <FramePanel key={panel.title} className="flex flex-col p-0">
+                <div className="flex flex-col gap-0.5 px-3 pt-3 pb-2">
+                  <h3 className="text-sm font-medium">{panel.title}</h3>
+                  {panel.description ? <p className="text-xs text-muted-foreground">{panel.description}</p> : null}
+                </div>
+                {panel.body}
               </FramePanel>
-            </Frame>
-          </section>
-        );
-      })}
+            ))}
+          </Frame>
+        </section>
+      </div>
 
       <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
         <DialogContent>
@@ -729,93 +968,4 @@ export default function IntegrationsView({ initial }: { initial: IntegrationsOve
       </AlertDialog>
     </div>
   );
-}
-
-function ProviderAction({ id, action, message, error, onClick }: { id: "hyperdrive" | "email"; action: Action; message?: string; error?: string; onClick: () => void }) {
-  return <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" disabled={action === id} onClick={onClick}>{action === id ? <><Spinner /> Testing...</> : id === "email" ? "Send Test Email" : "Test Connection"}</Button>{message ? <p>{message}</p> : null}{error ? <><p role="alert">{error}</p><Button type="button" variant="outline" onClick={onClick}>Retry</Button></> : null}</div>;
-}
-
-function TwilioConnected({ connection, numbers, action, error, retry, onTest, onSync, onRotate, onSetAuthToken, onDisconnect }: { connection: TwilioConnectionRecord; numbers: TwilioNumberRecord[]; action: Action; error: string; retry: boolean; onTest: () => void; onSync: () => void; onRotate: () => void; onSetAuthToken: () => void; onDisconnect: () => void }) {
-  const busy = action !== null;
-  const progress = actionText(action);
-  return <div className="flex flex-col gap-4">
-    <dl className="grid gap-2 text-sm sm:grid-cols-2">
-      <div><dt className="text-muted-foreground">Account SID</dt><dd>{connection.accountSid}</dd></div>
-      <div><dt className="text-muted-foreground">API Key SID</dt><dd>{connection.apiKeySid}</dd></div>
-      <div><dt className="text-muted-foreground">Account name</dt><dd>{connection.accountFriendlyName ?? "Not available"}</dd></div>
-      <div><dt className="text-muted-foreground">Connected by</dt><dd>{connection.connectedBy?.name ?? "Unknown"}</dd></div>
-      <div><dt className="text-muted-foreground">Connected at</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Last verified</dt><dd>{formatDate(connection.lastVerifiedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Webhook Auth Token</dt><dd><Badge variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge></dd></div>
-    </dl>
-    <p className="text-sm"><span>{connection.numberCount} eligible numbers</span>. Last synced {formatDate(connection.numbersSyncedAt)}.</p>
-    <dl className="grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Active Number Assignments</dt><dd>Available after Workspace activation</dd></div><div><dt className="text-muted-foreground">Webhook health</dt><dd>Available after call routing</dd></div></dl>
-    {error ? <div className="flex items-center gap-3"><p role="alert">{error}</p>{retry ? <Button type="button" variant="outline" disabled={busy} onClick={onTest}>Retry</Button> : null}</div> : null}
-    <div className="flex flex-wrap gap-2">
-      <Button type="button" disabled={busy} onClick={onTest}>{action === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onSync}>{action === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onRotate}>{action === "rotate" ? <><Spinner /> Rotating...</> : "Rotate Key"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onSetAuthToken}>Set Auth Token</Button>
-      <Button type="button" variant="destructive" disabled={busy} onClick={onDisconnect}>Disconnect</Button>
-    </div>
-    <div className="overflow-x-auto">
-      {numbers.length ? <table aria-label="Twilio numbers" className="w-full text-sm"><caption className="sr-only">Twilio numbers</caption><thead><tr className="border-b text-left"><th className="px-2 py-2">Phone Number</th><th className="px-2 py-2">Friendly Name</th><th className="px-2 py-2">Voice</th><th className="px-2 py-2">Status</th></tr></thead><tbody>{numbers.map((number) => <tr key={number.id} className="border-b"><td className="px-2 py-2">{number.phoneNumber}</td><td className="px-2 py-2">{number.friendlyName}</td><td className="px-2 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-2 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody></table> : <p className="text-sm text-muted-foreground">No numbers synced yet.</p>}
-    </div>
-  </div>;
-}
-
-function CloudflareConnected({ connection, sites, action, error, onTest, onSync, onRotate, onDisconnect }: { connection: CloudflareConnectionRecord; sites: CloudflareSiteListEntry[]; action: Action; error: string; onTest: () => void; onSync: () => void; onRotate: () => void; onDisconnect: () => void }) {
-  const busy = action !== null;
-  return <div className="flex flex-col gap-4">
-    <dl className="grid gap-2 text-sm sm:grid-cols-2">
-      <div><dt className="text-muted-foreground">Account ID</dt><dd className="font-mono">{connection.accountId}</dd></div>
-      <div><dt className="text-muted-foreground">Connected by</dt><dd>{connection.connectedBy?.name ?? "Unknown"}</dd></div>
-      <div><dt className="text-muted-foreground">Connected at</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Last verified</dt><dd>{formatDate(connection.lastVerifiedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Last sync</dt><dd>{formatDate(connection.lastSyncedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Sites</dt><dd className="tabular-nums">{connection.siteCount}</dd></div>
-    </dl>
-    {error ? <div className="flex items-center gap-3"><p role="alert">{error}</p>{action === null ? <Button type="button" variant="outline" onClick={onTest}>Retry</Button> : null}</div> : null}
-    <div className="flex flex-wrap gap-2">
-      <Button type="button" disabled={busy} onClick={onTest}>{action === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onSync}>{action === "sync" ? <><Spinner /> Syncing...</> : "Sync now"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onRotate}>Rotate Token</Button>
-      <Button type="button" variant="destructive" disabled={busy} onClick={onDisconnect}>Disconnect</Button>
-    </div>
-    <div className="overflow-x-auto">
-      {sites.length ? <table aria-label="Sites" className="w-full text-sm">
-        <caption className="sr-only">Sites</caption>
-        <thead><tr className="border-b text-left"><th className="px-2 py-2">Preview</th><th className="px-2 py-2">Site</th><th className="px-2 py-2">Health</th><th className="px-2 py-2">Last deployment</th><th className="px-2 py-2">Visits (30 days)</th><th className="px-2 py-2">Workspace</th></tr></thead>
-        <tbody>{sites.map((site) => <tr key={site.id} className="border-b">
-          <td className="px-2 py-2"><div className="flex aspect-[16/10] w-20 items-center justify-center rounded-md border bg-muted text-xs text-muted-foreground">No preview</div></td>
-          <td className="px-2 py-2 font-mono">{site.primaryHostname}</td>
-          <td className="px-2 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
-          <td className="px-2 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
-          <td className="px-2 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
-          <td className="px-2 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
-        </tr>)}</tbody>
-      </table> : <p className="text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>}
-    </div>
-  </div>;
-}
-
-function DataForSeoConnected({ connection, action, error, onTest, onRotate, onDisconnect }: { connection: DataForSeoConnectionRecord; action: Action; error: string; onTest: () => void; onRotate: () => void; onDisconnect: () => void }) {
-  const busy = action !== null;
-  return <div className="flex flex-col gap-4">
-    <dl className="grid gap-2 text-sm sm:grid-cols-2">
-      <div><dt className="text-muted-foreground">API login</dt><dd className="font-mono">{connection.login}</dd></div>
-      <div><dt className="text-muted-foreground">Connected by</dt><dd>{connection.connectedBy?.name ?? "Unknown"}</dd></div>
-      <div><dt className="text-muted-foreground">Connected at</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Last verified</dt><dd>{formatDate(connection.lastVerifiedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Last check</dt><dd>{formatDate(connection.lastCheckedAt)}</dd></div>
-      <div><dt className="text-muted-foreground">Lookups this month</dt><dd className="tabular-nums">{visitsFormatter.format(connection.lookupsThisMonth)}</dd></div>
-      <div><dt className="text-muted-foreground">Keywords tracked</dt><dd className="tabular-nums">{visitsFormatter.format(connection.keywordCount)}</dd></div>
-    </dl>
-    {error ? <div className="flex items-center gap-3"><p role="alert">{error}</p>{action === null ? <Button type="button" variant="outline" onClick={onTest}>Retry</Button> : null}</div> : null}
-    <div className="flex flex-wrap gap-2">
-      <Button type="button" disabled={busy} onClick={onTest}>{action === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={onRotate}>Rotate Password</Button>
-      <Button type="button" variant="destructive" disabled={busy} onClick={onDisconnect}>Disconnect</Button>
-    </div>
-  </div>;
 }

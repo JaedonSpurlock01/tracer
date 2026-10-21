@@ -36,18 +36,28 @@ import type { TwilioConnectionRecord } from "@/data/integrations";
 import { leadAssessmentModel } from "@/data/lead-assessment";
 import { transcriptionModel } from "@/data/openai-client";
 
-export type ProviderId = "twilio" | "cloudflare" | "dataforseo" | "r2" | "openai" | "triggerdev" | "hyperdrive" | "email";
+export const providerIds = ["twilio", "cloudflare", "dataforseo", "hyperdrive", "email", "r2", "openai", "triggerdev"] as const;
+export type ProviderId = (typeof providerIds)[number];
 export type ProviderState = "connected" | "configured" | "degraded" | "not_configured";
+/** Organization connections hold credentials entered on the Integrations page; platform services are deployment secrets or bindings. */
+export type ProviderGroup = "connection" | "service";
+
+export function isProviderId(value: unknown): value is ProviderId {
+  return typeof value === "string" && (providerIds as readonly string[]).includes(value);
+}
 
 export interface ProviderHealth {
   id: ProviderId;
   name: string;
+  group: ProviderGroup;
   state: ProviderState;
   identifier: string | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastFailureDetail: string | null;
   testable: boolean;
+  /** True when an Operator can connect the credential from the Integrations page right now. */
+  connectable: boolean;
   note: string | null;
   recentFailures?: RecordingTransferFailure[];
   analysis?: OpenAIAnalysisHealth;
@@ -116,6 +126,8 @@ function openAIProvider(configured: boolean, analysis: AnalysisProcessingHealth)
     lastFailureAt: analysis.lastFailureAt,
     lastFailureDetail: null,
     testable: false,
+    group: "service",
+    connectable: false,
     note: "Test Connection arrives with its milestone",
     analysis: { transcriptionModel, leadAssessmentModel, ...analysis },
   };
@@ -140,6 +152,8 @@ function recordingTransferProvider(
     lastFailureAt: latestFailure?.at ?? null,
     lastFailureDetail: latestFailure?.reason ?? null,
     testable: false,
+    group: "service",
+    connectable: false,
     note: "Test Connection arrives with its milestone",
     recentFailures: transfers.recentFailures,
     ...(mediaLifecycle ? { mediaLifecycle } : {}),
@@ -165,6 +179,8 @@ export function describeProviderHealth(
         lastFailureAt: null,
         lastFailureDetail: null,
         testable: false,
+        group: "connection",
+        connectable: false,
         note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing",
       }
     : !twilio
@@ -177,6 +193,8 @@ export function describeProviderHealth(
           lastFailureAt: null,
           lastFailureDetail: null,
           testable: false,
+          group: "connection",
+          connectable: true,
           note: "No Organization Twilio credential is connected",
         }
       : {
@@ -188,6 +206,8 @@ export function describeProviderHealth(
           lastFailureAt: twilio.lastFailureAt,
           lastFailureDetail: twilio.lastFailureDetail,
           testable: true,
+          group: "connection",
+          connectable: false,
           note: null,
         };
   const cloudflareHealth: ProviderHealth = !configuration.twilioMasterKey
@@ -200,6 +220,8 @@ export function describeProviderHealth(
         lastFailureAt: null,
         lastFailureDetail: null,
         testable: false,
+        group: "connection",
+        connectable: false,
         note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing",
       }
     : !cloudflare
@@ -212,6 +234,8 @@ export function describeProviderHealth(
           lastFailureAt: null,
           lastFailureDetail: null,
           testable: false,
+          group: "connection",
+          connectable: true,
           note: "No Organization Cloudflare credential is connected",
         }
       : {
@@ -223,6 +247,8 @@ export function describeProviderHealth(
           lastFailureAt: cloudflare.lastFailureAt,
           lastFailureDetail: cloudflare.lastFailureDetail,
           testable: true,
+          group: "connection",
+          connectable: false,
           note: null,
         };
   const dataforseoHealth: ProviderHealth = !configuration.twilioMasterKey
@@ -235,6 +261,8 @@ export function describeProviderHealth(
         lastFailureAt: null,
         lastFailureDetail: null,
         testable: false,
+        group: "connection",
+        connectable: false,
         note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing",
       }
     : !dataforseo
@@ -247,6 +275,8 @@ export function describeProviderHealth(
           lastFailureAt: null,
           lastFailureDetail: null,
           testable: false,
+          group: "connection",
+          connectable: true,
           note: "No Organization DataForSEO credential is connected",
         }
       : {
@@ -258,6 +288,8 @@ export function describeProviderHealth(
           lastFailureAt: dataforseo.lastFailureAt,
           lastFailureDetail: dataforseo.lastFailureDetail,
           testable: true,
+          group: "connection",
+          connectable: false,
           note: null,
         };
   const hyperdrive: ProviderHealth = {
@@ -269,6 +301,8 @@ export function describeProviderHealth(
     lastFailureAt: null,
     lastFailureDetail: null,
     testable: configuration.hyperdrive,
+    group: "service",
+    connectable: false,
     note: null,
   };
   const email: ProviderHealth = {
@@ -280,6 +314,8 @@ export function describeProviderHealth(
     lastFailureAt: null,
     lastFailureDetail: null,
     testable: configuration.email && configuration.emailAllowlistCount > 0,
+    group: "service",
+    connectable: false,
     note: !configuration.email
       ? null
       : configuration.emailAllowlistCount === 0

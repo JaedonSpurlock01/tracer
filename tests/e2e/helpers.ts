@@ -68,7 +68,7 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
 }
 
 export async function ensureCloudflareSites(page: Page): Promise<void> {
-  await page.goto("/integrations");
+  await page.goto("/integrations?provider=cloudflare");
   await expect(page.getByRole("button", { name: /^(Connect Cloudflare|Sync now)$/ }).first()).toBeVisible();
   const connectButton = page.getByRole("button", { name: "Connect Cloudflare" });
   if ((await connectButton.count()) > 0) {
@@ -83,7 +83,7 @@ export async function ensureCloudflareSites(page: Page): Promise<void> {
 }
 
 export async function ensureDataForSeo(page: Page): Promise<void> {
-  await page.goto("/integrations");
+  await page.goto("/integrations?provider=dataforseo");
   await expect(page.getByRole("button", { name: /^(Connect DataForSEO|Rotate Password)$/ }).first()).toBeVisible();
   const connectButton = page.getByRole("button", { name: "Connect DataForSEO" });
   if ((await connectButton.count()) > 0) {

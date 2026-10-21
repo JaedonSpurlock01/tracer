@@ -1162,12 +1162,20 @@ There is no password section. Revoking the current session redirects to Sign In.
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Frame stack
+2. **Archetype:** Master-detail
 3. **Container family:** Frame-led
 4. **Density:** Dense
-5. **Regions:** Header, provider health summary, one Frame per integration
+5. **Regions:** Header with a readiness line, a Needs attention lane, a provider navigation, and one provider's detail Frame
 6. **States:** Server-rendered provider health, configured or missing state, test progress, and an inline Retry when a background refresh fails
 7. **Motion:** None
+
+### Layout
+
+The header states how many providers are ready beside a status dot that turns to warning while anything needs attention. Below it, a **Needs attention** lane appears only when there is something an Operator can resolve from this page: an Organization credential that can be connected (with its Connect action inline), a connected Twilio account without a webhook Auth Token (Set Auth Token), and any degraded provider with its failure detail and a View link. The lane is omitted when nothing needs attention.
+
+The page then splits into a provider navigation and a detail. The navigation, a 15rem column at `md` and a horizontal chip row below it, groups providers as **Organization connections** (Twilio, Cloudflare, DataForSEO) and **Platform services** (Hyperdrive, Cloudflare Email Service, Cloudflare R2, OpenAI, Trigger.dev). Each item shows the provider's monochrome mark from `components/tracer/provider-logo.tsx`, its name, a one-line summary (account and number count, Sites and linked count, Keywords and lookups, models, bucket, or sending address), and a status dot. The selected provider is kept in the `provider` search parameter, defaulting to Twilio, so other pages link straight to a provider, for example `/integrations?provider=cloudflare` from the Workspace wizard's Site step.
+
+The detail is one Frame. Its first panel carries the mark, the provider name, the state Badge, the summary line, the action toolbar on the right, any error line with Retry, and a three-column fact list. Further panels hold the provider's tables at full width: Numbers for Twilio, Sites for Cloudflare, Recording transfer failures for R2 and Trigger.dev, and Media cleanup for Trigger.dev. Placeholders for data that does not exist yet are not rendered.
 
 ### Access and secrets
 
