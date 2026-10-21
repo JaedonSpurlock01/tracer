@@ -30,7 +30,7 @@
  *  the same Workspace once so both Calls scopes have a second page.
  *
  * @see
- *  README.md
+ *  docs/SPECIFICATION.md
  *  DESIGN.md
  *  tests/e2e/helpers.ts
  *

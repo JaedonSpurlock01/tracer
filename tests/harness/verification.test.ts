@@ -10,7 +10,7 @@
  *  This fixture is intentionally failed once before its passing form is kept.
  *
  * @see
- *  README.md
+ *  docs/SPECIFICATION.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------

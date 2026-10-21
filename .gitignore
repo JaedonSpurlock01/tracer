@@ -8,6 +8,7 @@ playwright-report/
 test-results/
 .env*
 !.env.example
+!.env.trigger.example
 .dev.vars
 *.tsbuildinfo
 cloudflare-env.d.ts

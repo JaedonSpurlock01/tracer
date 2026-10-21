@@ -21,7 +21,7 @@
  *  tasks themselves.
  *
  * @see
- *  README.md
+ *  docs/SPECIFICATION.md
  *  tests/e2e/helpers.ts
  *
  * @author Jaedon Spurlock
