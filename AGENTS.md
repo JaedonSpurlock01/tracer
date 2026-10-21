@@ -88,7 +88,7 @@ Documentation, copy, and pure visual-token changes do not require a new behavior
 - Keep Trigger.dev registration thin so task behavior can be tested as ordinary functions.
 - Do not use snapshots as the primary assertion for domain behavior.
 - Never delete, skip, weaken, or rewrite a valid test merely to make a change pass. Change a test only when the agreed behavior changes, and state why.
-- Every invariant documented in `CONTEXT.md` must map to executable coverage in the domain behavior matrix in `README.md`.
+- Every invariant documented in `CONTEXT.md` must map to executable coverage in the domain behavior matrix in `docs/SPECIFICATION.md`.
 
 ### Layered Verification
 

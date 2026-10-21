@@ -30,7 +30,7 @@
  *  Viewer is provisioned once and keeps only this run's Access Grant.
  *
  * @see
- *  README.md
+ *  docs/SPECIFICATION.md
  *  DESIGN.md
  *  tests/e2e/helpers.ts
  *  data/e2e-trigger-fake.ts

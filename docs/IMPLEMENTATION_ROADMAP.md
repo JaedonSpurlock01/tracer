@@ -1,13 +1,13 @@
 # Tracer Implementation Roadmap
 
-This document is the authoritative implementation sequence for Tracer from ideation through production deployment. It converts the product scope in `README.md`, domain language in `CONTEXT.md`, interface specification in `DESIGN.md`, and engineering rules in `AGENTS.md` into small, verifiable milestones.
+This document is the authoritative implementation sequence for Tracer from ideation through production deployment. It converts the product scope in `docs/SPECIFICATION.md`, domain language in `CONTEXT.md`, interface specification in `DESIGN.md`, and engineering rules in `AGENTS.md` into small, verifiable milestones.
 
 ## Document authority
 
 - Use this roadmap to choose and sequence implementation work.
 - Use `CONTEXT.md` for canonical domain language and invariants.
 - Use `DESIGN.md` for page composition, states, branding, and ReUI rules.
-- Use `README.md` for product scope, architecture, security, and testing strategy.
+- Use `docs/SPECIFICATION.md` for product scope, architecture, security, and testing strategy, and `README.md` for setup, environment variables, and deployment.
 - Use `AGENTS.md` for mandatory agent behavior and verification rules.
 - Use `docs/CHANGELOG.md` to record substantive roadmap, scope, milestone, and deployment changes.
 
@@ -15,9 +15,9 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** None
-- **Next milestone:** M18 - Production Hardening and Acceptance, which the Product Owner starts explicitly; it carries the two M17 Staging checks as entry criteria
-- **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
+- **Current milestone:** M18 - Production Hardening and Acceptance, started by the Product Owner on 2026-10-21
+- **Next milestone:** M19 - Production Deployment and Stabilization
+- **Current environment:** Local, Preview, and Staging application and data paths verified; Staging data reset to empty on 2026-10-21 for acceptance; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
 - **Last roadmap review:** 2026-10-21
 
@@ -189,7 +189,7 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M21 | Search Rankings | Complete | Preview and Staging | M20 |
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
 | M23 | Form Submissions | Complete | Preview and Staging | M22 |
-| M18 | Production Hardening and Acceptance | Not Started | Staging | M23 |
+| M18 | Production Hardening and Acceptance | In Progress | Staging | M23 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
 
 M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M19. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
@@ -1227,11 +1227,18 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 ### M18 - Production Hardening and Acceptance
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** The complete first release passes security, reliability, accessibility, cost, and operational acceptance in Staging.
 - **Depends on:** M23
 - **Target environment:** Staging
 - **Entry criteria carried from M17:** the Product Owner's Staging retention demonstration with `pnpm fixtures:retention`, and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule.
+- **Execution note:** The Product Owner started M18 on 2026-10-21 and had Staging reset to an empty state so acceptance starts from a fresh install, the same path Production takes: every object in `tracer-recordings-staging` was deleted, and the Staging database is dropped and rebuilt from migration 0000 by the `Bootstrap Authentication` workflow. The reset deleted the M16 Staging report artifacts, so the second M17 entry criterion is met instead by confirming the `report-artifacts` rule on `tracer-recordings-staging` (confirmed with `wrangler r2 bucket lifecycle list` on 2026-10-21) and by a report generated on the reset Staging whose files are gone 7 days later. The retention demonstration needs a new Workspace with a Number Assignment and a published Call Flow first. The README now carries setup, environment variables, and deployment, and the former README specification moved to `docs/SPECIFICATION.md`.
+- **Open findings:**
+  - `AUTH_EMAIL_ALLOWED_RECIPIENTS` is enforced in every environment, so in Production every Operator and Client Viewer must be on the Worker secret before they can receive a sign-in code. The Product Owner decides before M19 whether Production keeps the allowlist or sends to every provisioned identity.
+  - No workflow deploys Production yet. Slice 8 rehearses a manual `Deploy Production` workflow against the `Production` GitHub Environment, mirroring `Deploy Staging` without the Staging smoke token.
+  - `tracer-recordings-production` has only Cloudflare's default multipart rule; M19 step 3 applies `report-artifacts`.
+  - `tests/components/report-notifications.test.tsx` "polls every 30 seconds while a job is Generating and the tab is visible" failed once in the 2026-10-21 `Bootstrap Authentication` run on `main` (expected 2 history requests, got 1) and passed on rerun and 5 of 5 local runs. Slice 2 makes it deterministic so required checks stay trustworthy.
+  - The `tracer` and `Production` GitHub Environments hold `STAGING_DATABASE_MIGRATION_URL` and `PRODUCTION_DATABASE_MIGRATION_URL`, which nothing reads; remove them once confirmed unneeded.
 
 #### Vertical slices
 
@@ -1328,7 +1335,7 @@ New work after M19 does not enter implementation directly.
 1. Describe the user or operational problem.
 2. Resolve domain terminology in `CONTEXT.md` when needed.
 3. Resolve page or interaction impact in `DESIGN.md` when needed.
-4. Resolve architecture and testing impact in `README.md`.
+4. Resolve architecture and testing impact in `docs/SPECIFICATION.md`.
 5. Add a new vertical milestone with dependencies, test-first behaviors, verification gate, and exit criteria.
 6. Record the addition under `Unreleased` in `docs/CHANGELOG.md`.
 7. Start it only when no other milestone is In Progress.
