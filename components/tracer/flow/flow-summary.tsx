@@ -8,8 +8,9 @@
  *  with the branch that reaches it and indenting it under its parent step.
  *
  * @remarks
- *  Workspace Overview and the Create Workspace review share this outline so
- *  both read the active graph the same way instead of the editable canvas.
+ *  The Create Workspace review uses this compact outline; Workspace Overview
+ *  shows the richer FlowSpine instead. Both read the domain graph, never the
+ *  editable canvas.
  *
  * @see
  *  data/call-flow.ts

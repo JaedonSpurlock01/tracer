@@ -125,6 +125,18 @@ describe("WorkspaceFlowEditor", () => {
     expect(screen.getByRole("button", { name: "Edit Flow" })).toBeVisible();
   });
 
+  it("derives tree positions so the Outcomes fan out side by side", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ validation: { valid: true, issues: [] } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Flow" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const body = JSON.parse((fetch.mock.calls[0] as unknown as [string, { body: string }])[1].body) as { graph: CallFlowGraph };
+    const outcomes = body.graph.nodes.filter((node) => node.type === "outcome");
+    expect(new Set(outcomes.map((node) => node.position.x)).size).toBe(3);
+    expect(new Set(outcomes.map((node) => node.position.y)).size).toBe(1);
+  });
+
   it("PUTs the published graph when Edit Flow is selected", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ validation: { valid: true, issues: [] } }), { status: 200 }));
     vi.stubGlobal("fetch", fetch);
@@ -152,7 +164,7 @@ describe("WorkspaceFlowEditor", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /keypad_gate/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Keypad Gate" }));
     expect(await screen.findByLabelText("Prompt")).toBeVisible();
   });
 
@@ -178,7 +190,7 @@ describe("WorkspaceFlowEditor", () => {
         })}
       />,
     );
-    expect(screen.getByRole("button", { name: /recording_disclosure/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Recording Disclosure" })).toBeDisabled();
   });
 
   it("autosaves a changed forward destination", async () => {
@@ -207,8 +219,8 @@ describe("WorkspaceFlowEditor", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "A required branch is missing." }));
-    expect(screen.getByText("forward_call")).toBeVisible();
-    expect(fitView).toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Forward Call" })).toBeVisible();
+    expect(fitView).toHaveBeenCalledWith(expect.objectContaining({ nodes: [{ id: "forward" }] }));
   });
 
   it("rewires a branch through the inspector", async () => {
@@ -225,6 +237,7 @@ describe("WorkspaceFlowEditor", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "forward" }));
+    expect(screen.getByRole("combobox", { name: "answered" })).toHaveValue("outcome-answered");
     fireEvent.change(screen.getByRole("combobox", { name: "answered" }), { target: { value: "outcome-missed" } });
     await vi.advanceTimersByTimeAsync(800);
     expect(fetch).toHaveBeenCalledWith(

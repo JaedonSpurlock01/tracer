@@ -685,7 +685,7 @@ Lifecycle state and health remain separate. An Active Workspace can still show a
 
 ### Call Flow summary
 
-Render a read-only linearized summary of the active validated graph rather than the editable React Flow canvas. Show enabled steps and branch outcomes in execution order. Operators use Edit Flow to open the Flow page.
+Render the published graph read-only as a spine rather than the editable canvas: the main path (next, Open, Pass, Answered) runs top to bottom, each step with its icon, title, and detail line, and every other branch hangs beneath its step as an exit chip naming the branch in its tone and where it leads (the Outcome, or the steps on the way to it). The panel heading carries the version Badge and, for Operators of an Active Workspace, Open Flow.
 
 ### Recent Calls
 
@@ -769,9 +769,9 @@ Requests and errors over 7 days, hostname certificates as a count Badge, Refresh
 2. **Archetype:** Three-pane builder
 3. **Container family:** Frame-led controls around a React Flow canvas
 4. **Density:** Dense
-5. **Regions:** Publish toolbar, node palette, canvas, node inspector, validation results
+5. **Regions:** Publish toolbar; a canvas with the node palette, the inspector, and validation issues docked inside it
 6. **States:** Canvas Skeleton, empty draft guidance, validation errors, and save or publish Retry
-7. **Motion:** React Flow pan and node drag only; no entrance animation
+7. **Motion:** React Flow pan and zoom only; no entrance animation
 
 ### Permissions and versions
 
@@ -787,24 +787,24 @@ Requests and errors over 7 days, hostname certificates as a count Badge, Refresh
 
 #### Publish toolbar
 
-- Draft or Published status
-- Last saved time and saving state
-- Validation action
+- Draft (with the version it is based on) or Published status
+- Saving state
+- Publishable, or the live issue count
 - Discard Draft
 - Version history
 - Primary action: Publish
 
 #### Node palette
 
-The left Frame lists only supported nodes and explains when each can be used. Nodes unavailable because of graph constraints remain visible but disabled with a reason.
+A compact chip row docked at the top-left of the canvas lists only supported nodes, each with an icon and a hint on hover. Nodes unavailable because of graph constraints remain visible but disabled with a reason.
 
 #### Canvas
 
-The center React Flow canvas supports pan, zoom, fit view, keyboard selection, connection creation, and node movement. It does not permit loops or arbitrary handles. Outcome edges carry explicit labels.
+The React Flow canvas lays the flow out as a tree: each step sits one layer below its parent and sibling branches fan out side by side, so positions are derived from the graph and nodes are never dragged. A node shows its icon, title, detail line, Outcome Badge, and issue count; a branch edge is labeled and colored by its tone (Open, Pass, and Answered success; Closed and Missed warning; Blocked and Failed destructive; `next` neutral and unlabeled). The canvas supports pan, zoom, fit view, keyboard selection, and connection creation. It does not permit loops or arbitrary handles. React Flow chrome follows the active theme tokens.
 
 #### Inspector
 
-Selecting a node opens its configuration in the right Frame. Changes save to the draft. The inspector shows field-level validation and the node's expected branches.
+Selecting a node docks its configuration over the right edge of the canvas, headed by the node's icon and title. Changes save to the draft. The inspector shows field-level validation and the node's expected branches, with targets named by their title and detail.
 
 ### Node catalog
 
@@ -866,7 +866,7 @@ A draft is publishable only when:
 - The active Number Assignment and Destination Number are valid
 - Voicemail is reachable only from supported paths
 
-Validation results appear in a dedicated Frame and link to the affected node. The first release does not include branch simulation or real test calls.
+Validation runs on every change. The toolbar shows Publishable or the issue count, and the issues dock at the bottom-left of the canvas, each naming the affected step and selecting it when chosen. The first release does not include branch simulation or real test calls.
 
 ### States
 

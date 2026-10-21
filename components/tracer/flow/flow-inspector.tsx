@@ -5,7 +5,7 @@
  *
  * @description
  *  Provides type-specific editing controls, inline node issues, and keyboard
- *  branch rewiring for the selected editor node. Business Hours times are
+ *  branch rewiring for the selected editor node, docked inside the canvas. Business Hours times are
  *  chosen in 15-minute steps in the Workspace timezone, and text-to-speech
  *  prompts show character guidance and a browser Preview.
  *
@@ -26,8 +26,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Frame, FramePanel } from "@/components/reui/frame";
+import { NodeIcon } from "@/components/tracer/flow/node-icon";
 import {
+  describeFlowNode,
   nodeHandles,
   outcomeKinds,
   promptMaxLength,
@@ -44,6 +45,8 @@ interface Props {
   node: FlowNode | undefined;
   nodes: FlowNode[];
   issues: ValidationIssue[];
+  /** Current target of each branch handle, so the selects show the wiring as it is. */
+  targets: Partial<Record<EdgeHandle, string>>;
   editing: boolean;
   timeZone: string;
   onChange: (node: FlowNode) => void;
@@ -145,23 +148,15 @@ function PromptField({
   );
 }
 
-export default function FlowInspector({ node, nodes, issues, editing, timeZone, onChange, onConnectHandle, onDelete }: Props) {
-  if (!node)
-    return (
-      <Frame>
-        <FramePanel>
-          <p className="text-sm text-muted-foreground">Select a node to inspect it.</p>
-        </FramePanel>
-      </Frame>
-    );
+export default function FlowInspector({ node, nodes, issues, targets, editing, timeZone, onChange, onConnectHandle, onDelete }: Props) {
+  if (!node) return null;
   const patch = (value: Partial<FlowNode>) => onChange({ ...node, ...value } as FlowNode);
   return (
-    <Frame>
-      <FramePanel className="grid gap-4">
-        <h2 className="font-semibold">Inspector</h2>
-        <p className="text-sm capitalize">
-          {node.type.replaceAll("_", " ")} <span className="sr-only">{node.type}</span>
-        </p>
+    <div className="grid gap-4 p-3">
+        <h2 className="flex items-center gap-2 font-semibold">
+          <NodeIcon type={node.type} />
+          {describeFlowNode(node).title}
+        </h2>
         {node.type === "recording_disclosure" ? (
           <PromptField label="Disclosure" text={recordingDisclosureText} voice={node.voice} editing={editing} editableText={false} onVoiceChange={(voice) => patch({ voice })} />
         ) : null}
@@ -355,18 +350,21 @@ export default function FlowInspector({ node, nodes, issues, editing, timeZone, 
             <InspectorSelect
               key={handle}
               label={handle}
-              value="none"
+              value={targets[handle] ?? "none"}
+              disabled={!editing}
               options={[
                 { value: "none", label: "Not connected" },
                 ...nodes
                   .filter((candidate) => candidate.id !== node.id && candidate.type !== "incoming_call")
-                  .map((candidate) => ({ value: candidate.id, label: candidate.id })),
+                  .map((candidate) => {
+                    const { title, detail } = describeFlowNode(candidate);
+                    return { value: candidate.id, label: `${title} · ${detail.length > 40 ? `${detail.slice(0, 40)}…` : detail}` };
+                  }),
               ]}
               onChange={(value) => onConnectHandle(handle, value === "none" ? null : value)}
             />
           ))}
         </div>
-      </FramePanel>
-    </Frame>
+    </div>
   );
 }
