@@ -142,6 +142,7 @@ The repository has two GitHub Environments, `tracer` (Staging) and `Production`.
 | `DATABASE_MIGRATION_URL` | How to log in to the database as `tracer_migration`, the user allowed to change tables. |
 | `DATABASE_RUNTIME_PASSWORD` | The `tracer_app` user's password, so the workflow can keep its permissions up to date. |
 | `DATABASE_SMOKE_TOKEN` | Staging only. A random value the deploy uses to check the live database round trip. |
+| `TRIGGER_ACCESS_TOKEN` | Production only. Lets the workflow upload the background job code to Trigger.dev. Get it from the Trigger.dev dashboard, your profile, **Personal Access Tokens**. |
 
 ### 4. `.env.trigger` on your computer (Staging background jobs)
 
@@ -179,7 +180,9 @@ To process Staging recordings and scheduled jobs, keep `pnpm trigger:dev` runnin
 Production is not live yet. Getting there is the last two roadmap milestones:
 
 - **M18 - Production Hardening and Acceptance:** prove everything on Staging (security, failure handling, accessibility, cost, rollback) and get a go or no-go decision.
-- **M19 - Production Deployment and Stabilization:** set the secrets above for Production, apply migrations, deploy the Worker (`wrangler deploy --env ""`) and the Trigger.dev tasks (`npx trigger.dev deploy`), run smoke checks, and watch it for the first days.
+- **M19 - Production Deployment and Stabilization:** set the secrets above for Production, run the **Deploy Production** workflow, run smoke checks, and watch it for the first days.
+
+The **Deploy Production** workflow is started by hand from the Actions tab, always from `main`. It runs the tests, typecheck, and lint, applies Production migrations and database permissions, deploys the `tracer` Worker, deploys the matching Trigger.dev task version, and checks `/health`. If any step fails, the steps after it do not run.
 
 The exact steps and checklists are in the [roadmap](./docs/IMPLEMENTATION_ROADMAP.md#phase-8---deployment-and-operation).
 

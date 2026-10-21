@@ -147,6 +147,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Security
 
+- Decided on 2026-10-21 for M18 that Production keeps the `AUTH_EMAIL_ALLOWED_RECIPIENTS` sign-in allowlist, so only listed Operators and Client Viewers receive sign-in codes.
 - M13 requests Lead Assessments with OpenAI response storage disabled, tells the Lead Assessment model to treat the Transcript as untrusted data, rejects evidence that does not quote a real Transcript turn, and keeps Transcript text and evidence in deletable rows apart from the immutable Lead Assessment so expiry and purge can remove content while scores and Lead Reviews remain.
 - Gave the Trigger.dev Recording-processing task direct access through a bucket-scoped R2 S3 API token, a Neon runtime-role connection string, and the Twilio credential master key as Trigger.dev environment secrets, because the task runs outside the Worker bindings and later waveform and transcription stages need the same R2 access.
 - Authorized every Client Viewer Workspace read through `data/workspace-authorization.ts` against current Access Grants on each request, so grant removal blocks an existing session's next read, and returned Not Found for ungranted Workspaces so they cannot be discovered (M8).
