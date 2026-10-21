@@ -15,6 +15,10 @@ This inventory contains resource identifiers only. Credentials remain in GitHub 
 
 Preview intentionally shares the Staging Neon project but uses a separate Hyperdrive configuration. Because Preview shares the Staging database, it also shares the Staging Recording bucket and Trigger.dev environment. Neither non-production configuration references the Production Neon project, Hyperdrive identifier, or Recording bucket.
 
+## Deploying Staging
+
+`.github/workflows/deploy-staging.yml` is the only path that changes Staging. It applies pending migrations to the Staging Neon project, reapplies the runtime grants, builds the Worker with OpenNext, deploys `tracer-staging`, sets the smoke token, and runs the protected database smoke check, using the secrets of the `tracer` GitHub environment. It runs in two ways: by hand from the Actions tab (Run workflow, choosing the branch to deploy), or as the `staging-database-smoke` job of the `Verification` workflow after the fast gates pass, which happens when a pull request carries the `smoke-staging` label (adding the label to an open pull request triggers it) or when `Verification` is dispatched by hand. Preview deployments share the Staging database, so a branch that adds migrations must deploy Staging before its Preview works.
+
 ## Roles and secrets
 
 Each Neon project has two database roles:
@@ -111,7 +115,7 @@ Search Visibility is derived at read time by `data/search-visibility.ts` from th
 3. Run `pnpm test:integration` against a clean Testcontainers PostgreSQL 17 database in GitHub Actions.
 4. Apply the migration to Staging with `pnpm db:migrate` through the `tracer` GitHub Environment.
 5. Apply runtime grants with `pnpm db:grant-runtime` through the approved GitHub Environment before deploying to Staging. Rerun it whenever a migration adds tables the runtime role must reach, as the M5 integration tables, the M11 `recording` table, and the M14 `call_event` table did.
-6. Run the `Verification` workflow manually. Its Staging gate reapplies migrations as a no-op, deploys `tracer-staging`, and performs the protected transactional read/write smoke check through Hyperdrive.
+6. Run the `Deploy Staging` workflow manually. It reapplies migrations as a no-op, deploys `tracer-staging`, and performs the protected transactional read/write smoke check through Hyperdrive.
 7. Before Production promotion, run `verify:full`, review the SQL, rehearse it in Staging, and apply it through the `Production` GitHub Environment.
 
 The current Windows environment cannot run Docker, so Testcontainers integration suites run on GitHub Actions. Other Local environments may run `pnpm test:integration` when a Docker-compatible daemon is available.
