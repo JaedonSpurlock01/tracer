@@ -265,7 +265,7 @@ export function SitePickerDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{mode === "replace" ? "Replace Site" : "Link Site"}</DialogTitle>
           <DialogDescription>
