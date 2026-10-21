@@ -3,70 +3,51 @@
 /**
  * -------------------------------------------------------------------------
  * @file   recording-player.tsx
- * @brief  Plays a Call's Recording over an interactive waveform.
+ * @brief  Plays a Call's Recording as a now-playing bar.
  *
  * @description
- *  Streams the Recording through the Workspace-authorized audio route in a
- *  media element and draws its precomputed peaks with wavesurfer.js as
- *  aligned Caller and Business lanes, or one Mixed audio lane. Offers play
- *  and pause, click and keyboard seek, an accessible seek slider, elapsed
- *  and total time, zoom, playback speed, volume, and mute. Shows the
+ *  Renders the Recording engine as the Call Detail now-playing bar: the
+ *  mirrored Caller-over-Business waveform, a seek control with elapsed and
+ *  total time at its ends, and a centered transport of back ten seconds,
+ *  play or pause, and forward ten seconds, with who is speaking on the
+ *  left and playback speed, mute, and volume on the right. Shows the
  *  processing, failed, unavailable, purged, and expired Recording states
  *  instead of the player.
  *
  * @remarks
- *  One wavesurfer instance renders both channels with splitChannels, so the
- *  lanes share one media element, playhead, time scale, scroll, and zoom by
- *  construction instead of syncing two players. React owns the media element
- *  and every control, so playback still works when peaks are missing.
- *  Shortcuts listen only inside the player and ignore text fields, sliders,
- *  and select menus, so they never hijack typing. Reduced motion turns off
- *  playhead auto-centering. The ready player connects its position and
- *  seek to an enclosing PlaybackProvider, so the Transcript can follow and
- *  seek playback without owning the media element. Auto play starts
- *  playback once on open for the Calls Play Recording action; a browser
- *  that blocks it leaves the player paused.
+ *  The media element, peaks, playback state, and shortcuts live in
+ *  useRecordingEngine; this file is only chrome. The seek control is the
+ *  accessible way through the audio, so the waveform never has to load for
+ *  playback to work. The engine connects to an enclosing PlaybackProvider
+ *  so the Transcript can follow and seek. Who is speaking comes from the
+ *  Transcript turns when there are any.
  *
  * @see
- *  data/call-details.ts
- *  data/recording-media.ts
+ *  components/tracer/recording-engine.ts
+ *  components/tracer/mirror-waveform.tsx
  *  components/tracer/playback.tsx
+ *  data/call-details.ts
  *  DESIGN.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { PauseIcon, PlayIcon, Volume2Icon, VolumeXIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { cn } from "cn";
+import { AudioLinesIcon, PauseIcon, PlayIcon, RotateCcwIcon, RotateCwIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
+import { useId } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { formatClock } from "@/components/tracer/call-format";
-import { useConnectPlayback } from "@/components/tracer/playback";
+import MirrorWaveform, { mirrorWaveformGutter } from "@/components/tracer/mirror-waveform";
+import { longSeekStepSeconds, playbackRates, recordingMediaPath, useRecordingEngine, type ReadyRecording } from "@/components/tracer/recording-engine";
 import type { RecordingAvailability } from "@/data/call-details";
-import type { WaveformPeaks } from "@/data/recording-waveform";
-
-type ReadyRecording = Extract<RecordingAvailability, { state: "Ready" }>;
-type PeaksState = { status: "loading" } | { status: "ready"; peaks: WaveformPeaks } | { status: "unavailable" } | { status: "error" };
-
-const zoomLevels = [0, 25, 50, 100, 200];
-const playbackRates = ["0.75", "1", "1.25", "1.5", "2"];
-const seekStepSeconds = 5;
-const longSeekStepSeconds = 10;
-const laneHeight = 56;
-const laneLabels = { Caller: "Caller", Business: "Business", Mixed: "Mixed audio" } as const;
-const shortcutExemptTargets = "input, textarea, select, [contenteditable='true'], [role='slider'], [role='combobox'], [role='listbox'], [role='option']";
-const fallbackMessage = "Waveform unavailable. Use the seek control or keyboard shortcuts to move through the audio.";
+import { speakerAt, type TranscriptTurn } from "@/data/transcript";
 
 function sliderNumber(value: number | readonly number[]): number {
   return typeof value === "number" ? value : value[0];
-}
-
-function isWaveformPeaks(value: unknown): value is WaveformPeaks {
-  const peaks = value as WaveformPeaks | null;
-  return Boolean(peaks) && Array.isArray(peaks?.lanes) && Array.isArray(peaks?.peaks) && peaks.lanes.length === peaks.peaks.length && typeof peaks.durationSeconds === "number";
 }
 
 function RecordingNotice({ title, detail }: { title: string; detail: string }) {
@@ -85,297 +66,19 @@ function ProcessingPlayer({ stage }: { stage: "transfer" | "waveform" }) {
         <p className="text-sm font-medium">Recording processing</p>
         <p className="text-sm text-muted-foreground">{stage === "transfer" ? "The Recording is being stored." : "The waveform is being generated."}</p>
       </div>
-      <div className="flex items-center gap-2">
-        <Skeleton className="size-8 rounded-full" />
-        <Skeleton className="h-2 flex-1" />
-        <Skeleton className="h-4 w-20" />
+      <Skeleton className="h-14 w-full" />
+      <div className="flex items-center justify-center gap-2">
+        <Skeleton className="size-9 rounded-full" />
+        <Skeleton className="size-12 rounded-full" />
+        <Skeleton className="size-9 rounded-full" />
       </div>
-      <Skeleton className="h-28 w-full" />
     </div>
   );
 }
 
-function ReadyPlayer({ workspaceId, recording, autoPlay }: { workspaceId: string; recording: ReadyRecording; autoPlay: boolean }) {
-  const mediaPath = `/api/workspaces/${workspaceId}/recordings/${recording.id}`;
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const waveformRef = useRef<HTMLDivElement>(null);
-  const wavesurferRef = useRef<{ zoom(minPxPerSec: number): void; destroy(): void } | null>(null);
-  const [peaks, setPeaks] = useState<PeaksState>(recording.waveform ? { status: "loading" } : { status: "unavailable" });
-  const [peaksAttempt, setPeaksAttempt] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [mediaDuration, setMediaDuration] = useState<number | null>(null);
-  const [rate, setRate] = useState("1");
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
-  const [zoomIndex, setZoomIndex] = useState(0);
-  const [audioError, setAudioError] = useState(false);
-  const seekLabelId = useId();
-  const volumeLabelId = useId();
-
-  const duration = peaks.status === "ready" ? peaks.peaks.durationSeconds : (recording.durationSeconds ?? mediaDuration ?? 0);
-  const lanes = peaks.status === "ready" ? peaks.peaks.lanes : recording.lanes;
-  const waveformReady = peaks.status === "ready";
-
-  useEffect(() => {
-    if (!recording.waveform) return;
-    const controller = new AbortController();
-    fetch(`${mediaPath}/peaks`, { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        const body: unknown = response.ok ? await response.json() : null;
-        if (!isWaveformPeaks(body)) throw new Error("Waveform peaks unavailable");
-        setPeaks({ status: "ready", peaks: body });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setPeaks({ status: "error" });
-      });
-    return () => controller.abort();
-  }, [mediaPath, recording.waveform, peaksAttempt]);
-
-  useEffect(() => {
-    const container = waveformRef.current;
-    const media = audioRef.current;
-    if (peaks.status !== "ready" || !container || !media) return;
-    let disposed = false;
-    const styles = getComputedStyle(document.documentElement);
-    const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
-    const waveColor = token("--muted-foreground", "#a1a1aa");
-    const progressColor = token("--foreground", "#fafafa");
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    const split = peaks.peaks.lanes.length > 1;
-    void Promise.all([import("wavesurfer.js"), import("wavesurfer.js/plugins/timeline")]).then(([{ default: WaveSurfer }, { default: TimelinePlugin }]) => {
-      if (disposed) return;
-      wavesurferRef.current = WaveSurfer.create({
-        container,
-        media,
-        peaks: peaks.peaks.peaks,
-        duration: peaks.peaks.durationSeconds,
-        height: laneHeight,
-        waveColor,
-        progressColor,
-        cursorColor: token("--primary", "#fafafa"),
-        cursorWidth: 2,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 1,
-        normalize: false,
-        interact: true,
-        dragToSeek: true,
-        autoScroll: true,
-        autoCenter: !reduceMotion,
-        splitChannels: split ? peaks.peaks.lanes.map(() => ({ height: laneHeight, waveColor, progressColor })) : undefined,
-        plugins: [TimelinePlugin.create({ height: 20, style: { fontSize: "12px", color: waveColor } })],
-      });
-    });
-    return () => {
-      disposed = true;
-      wavesurferRef.current?.destroy();
-      wavesurferRef.current = null;
-    };
-  }, [peaks]);
-
-  useEffect(() => {
-    wavesurferRef.current?.zoom(zoomLevels[zoomIndex]);
-  }, [zoomIndex]);
-
-  useEffect(() => {
-    if (autoPlay) void audioRef.current?.play().catch(() => setPlaying(false));
-  }, [autoPlay]);
-
-  const seek = useCallback((seconds: number) => {
-    const media = audioRef.current;
-    if (!media) return;
-    const next = Math.min(Math.max(seconds, 0), duration || seconds);
-    media.currentTime = next;
-    setCurrentTime(next);
-  }, [duration]);
-
-  useConnectPlayback({ currentTime, playing, seek });
-
-  const togglePlay = useCallback(() => {
-    const media = audioRef.current;
-    if (!media) return;
-    if (playing) media.pause();
-    else void media.play().catch(() => setPlaying(false));
-  }, [playing]);
-
-  const toggleMute = useCallback(() => {
-    const media = audioRef.current;
-    if (media) media.muted = !media.muted;
-  }, []);
-
-  const zoomBy = useCallback((direction: 1 | -1) => {
-    if (!waveformReady) return;
-    setZoomIndex((index) => Math.min(Math.max(index + direction, 0), zoomLevels.length - 1));
-  }, [waveformReady]);
-
-  function changeRate(value: string | null) {
-    const media = audioRef.current;
-    if (!value || !media) return;
-    media.playbackRate = Number(value);
-    setRate(value);
-  }
-
-  function changeVolume(percent: number) {
-    const media = audioRef.current;
-    if (!media) return;
-    media.volume = percent / 100;
-    if (percent > 0 && media.muted) media.muted = false;
-  }
-
-  function retryAudio() {
-    setAudioError(false);
-    audioRef.current?.load();
-  }
-
-  function retryPeaks() {
-    setPeaks({ status: "loading" });
-    setPeaksAttempt((attempt) => attempt + 1);
-  }
-
-  function handleShortcut(event: KeyboardEvent<HTMLDivElement>) {
-    const target = event.target as HTMLElement;
-    if (event.altKey || event.ctrlKey || event.metaKey || target.closest(shortcutExemptTargets)) return;
-    const onButton = Boolean(target.closest("button, a"));
-    const actions: Record<string, () => void> = {
-      k: togglePlay,
-      K: togglePlay,
-      ArrowLeft: () => seek(currentTime - seekStepSeconds),
-      ArrowRight: () => seek(currentTime + seekStepSeconds),
-      j: () => seek(currentTime - longSeekStepSeconds),
-      J: () => seek(currentTime - longSeekStepSeconds),
-      l: () => seek(currentTime + longSeekStepSeconds),
-      L: () => seek(currentTime + longSeekStepSeconds),
-      Home: () => seek(0),
-      End: () => seek(duration),
-      m: toggleMute,
-      M: toggleMute,
-      "+": () => zoomBy(1),
-      "=": () => zoomBy(1),
-      "-": () => zoomBy(-1),
-    };
-    if (!onButton) actions[" "] = togglePlay;
-    const action = actions[event.key];
-    if (!action) return;
-    event.preventDefault();
-    action();
-  }
-
-  return (
-    <div className="flex flex-col gap-3" onKeyDown={handleShortcut}>
-      <audio
-        ref={audioRef}
-        src={`${mediaPath}/audio`}
-        preload="metadata"
-        className="hidden"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-        onLoadedMetadata={(event) => setMediaDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : null)}
-        onRateChange={(event) => setRate(String(event.currentTarget.playbackRate))}
-        onVolumeChange={(event) => {
-          setVolume(event.currentTarget.volume);
-          setMuted(event.currentTarget.muted);
-        }}
-        onError={() => {
-          setAudioError(true);
-          setPlaying(false);
-        }}
-      />
-      <div role="group" aria-label="Waveform" tabIndex={0} className="flex flex-col gap-1 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-        {peaks.status === "loading" ? (
-          <Skeleton className="w-full" style={{ height: laneHeight * recording.lanes.length + 20 }} />
-        ) : waveformReady ? (
-          <div className="flex gap-2">
-            <div className="flex shrink-0 flex-col">
-              {lanes.map((lane) => (
-                <span key={lane} className="flex items-center text-xs font-medium text-muted-foreground" style={{ height: laneHeight }}>
-                  {laneLabels[lane]}
-                </span>
-              ))}
-            </div>
-            <div ref={waveformRef} className="min-w-0 flex-1" />
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm text-muted-foreground">{fallbackMessage}</p>
-            {peaks.status === "error" ? (
-              <Button type="button" variant="outline" size="sm" onClick={retryPeaks}>
-                Retry
-              </Button>
-            ) : null}
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col gap-1">
-        <span id={seekLabelId} className="sr-only">Seek</span>
-        <Slider
-          aria-labelledby={seekLabelId}
-          value={[Math.min(currentTime, duration)]}
-          min={0}
-          max={Math.max(duration, 1)}
-          step={1}
-          largeStep={longSeekStepSeconds}
-          onValueChange={(value) => seek(sliderNumber(value))}
-          getAriaValueText={(_formatted, value) => `${formatClock(value)} of ${formatClock(duration)}`}
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="icon-sm" aria-label={playing ? "Pause" : "Play"} onClick={togglePlay}>
-          {playing ? <PauseIcon /> : <PlayIcon />}
-        </Button>
-        <span className="text-xs tabular-nums text-muted-foreground">{formatClock(currentTime)} / {formatClock(duration)}</span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" size="icon-sm" aria-label="Zoom out" disabled={!waveformReady || zoomIndex === 0} onClick={() => zoomBy(-1)}>
-            <ZoomOutIcon />
-          </Button>
-          <Button type="button" variant="outline" size="icon-sm" aria-label="Zoom in" disabled={!waveformReady || zoomIndex === zoomLevels.length - 1} onClick={() => zoomBy(1)}>
-            <ZoomInIcon />
-          </Button>
-          <Select value={rate} onValueChange={changeRate}>
-            <SelectTrigger size="sm" aria-label="Playback speed">
-              <SelectValue>{(value: string) => `${value}x`}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {playbackRates.map((value) => (
-                <SelectItem key={value} value={value}>{`${value}x`}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button type="button" variant="outline" size="icon-sm" aria-label={muted ? "Unmute" : "Mute"} onClick={toggleMute}>
-            {muted ? <VolumeXIcon /> : <Volume2Icon />}
-          </Button>
-          <span id={volumeLabelId} className="sr-only">Volume</span>
-          <Slider
-            className="w-24"
-            aria-labelledby={volumeLabelId}
-            value={[muted ? 0 : Math.round(volume * 100)]}
-            min={0}
-            max={100}
-            step={10}
-            onValueChange={(value) => changeVolume(sliderNumber(value))}
-            getAriaValueText={(_formatted, value) => `${Math.round(value)}%`}
-          />
-        </div>
-      </div>
-      {audioError ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <p role="alert" className="text-sm">Recording audio could not be loaded.</p>
-          <Button type="button" variant="outline" size="sm" onClick={retryAudio}>
-            Retry
-          </Button>
-        </div>
-      ) : null}
-      <p className="text-xs text-muted-foreground">Shortcuts: Space or K play and pause, arrows move 5 seconds, J and L move 10 seconds, M mutes, plus and minus zoom.</p>
-    </div>
-  );
-}
-
-export default function RecordingPlayer({ workspaceId, recording, autoPlay = false }: { workspaceId: string; recording: RecordingAvailability; autoPlay?: boolean }) {
+/** The non-ready Recording states. */
+export function RecordingState({ recording }: { recording: Exclude<RecordingAvailability, ReadyRecording> }) {
   switch (recording.state) {
-    case "Ready":
-      return <ReadyPlayer workspaceId={workspaceId} recording={recording} autoPlay={autoPlay} />;
     case "Processing":
       return <ProcessingPlayer stage={recording.stage} />;
     case "Failed":
@@ -387,4 +90,119 @@ export default function RecordingPlayer({ workspaceId, recording, autoPlay = fal
     case "Expired":
       return <RecordingNotice title="Recording expired" detail="Recording media is removed 12 months after the Call." />;
   }
+}
+
+function SkipButton({ direction, onClick }: { direction: -1 | 1; onClick(): void }) {
+  const Icon = direction < 0 ? RotateCcwIcon : RotateCwIcon;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-lg"
+      aria-label={direction < 0 ? `Back ${longSeekStepSeconds} seconds` : `Forward ${longSeekStepSeconds} seconds`}
+      onClick={onClick}
+      className="relative [&_svg:not([class*='size-'])]:size-6"
+    >
+      <Icon strokeWidth={1.75} />
+      <span aria-hidden className="absolute inset-0 flex items-center justify-center pt-0.5 text-[0.5rem] leading-none font-semibold tabular-nums">
+        {longSeekStepSeconds}
+      </span>
+    </Button>
+  );
+}
+
+function ReadyPlayer({ workspaceId, recording, autoPlay, turns }: { workspaceId: string; recording: ReadyRecording; autoPlay: boolean; turns?: TranscriptTurn[] }) {
+  const engine = useRecordingEngine({ mediaPath: recordingMediaPath(workspaceId, recording.id), recording, autoPlay });
+  const seekLabelId = useId();
+  const volumeLabelId = useId();
+  const { currentTime, duration, playing, muted, volume, rate } = engine;
+  const speaker = turns ? speakerAt(turns, currentTime * 1000) : null;
+  const status = !playing ? "Paused" : speaker ? `${speaker} speaking` : "Silence";
+
+  return (
+    <div className="flex flex-col gap-2" onKeyDown={engine.handleShortcut}>
+      <audio {...engine.audioProps} />
+      <MirrorWaveform engine={engine} turns={turns} />
+      <div className="flex items-center gap-3">
+        <span className={cn("shrink-0 text-right text-xs tabular-nums text-muted-foreground", mirrorWaveformGutter)}>{formatClock(currentTime)}</span>
+        <span id={seekLabelId} className="sr-only">Seek</span>
+        <div className="min-w-0 flex-1">
+          <Slider
+            aria-labelledby={seekLabelId}
+            value={[Math.min(currentTime, duration)]}
+            min={0}
+            max={Math.max(duration, 1)}
+            step={1}
+            largeStep={longSeekStepSeconds}
+            onValueChange={(value) => engine.seek(sliderNumber(value))}
+            getAriaValueText={(_formatted, value) => `${formatClock(value)} of ${formatClock(duration)}`}
+          />
+        </div>
+        <span className={cn("shrink-0 text-xs tabular-nums text-muted-foreground", mirrorWaveformGutter)}>{formatClock(duration)}</span>
+      </div>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <AudioLinesIcon className={cn("size-4 shrink-0", playing ? "text-foreground" : "")} aria-hidden />
+          <span role="status" className="truncate">{status}</span>
+          <span className="hidden sm:inline">&middot; {recording.channels === 2 ? "Dual-channel" : "Mixed audio"}</span>
+        </div>
+        <div className="flex items-center justify-center gap-1">
+          <SkipButton direction={-1} onClick={() => engine.skip(-longSeekStepSeconds)} />
+          <Button type="button" size="icon-lg" aria-label={playing ? "Pause" : "Play"} onClick={engine.togglePlay} className="mx-1 size-10 rounded-full [&_svg:not([class*='size-'])]:size-4">
+            {playing ? <PauseIcon className="fill-current" /> : <PlayIcon className="fill-current" />}
+          </Button>
+          <SkipButton direction={1} onClick={() => engine.skip(longSeekStepSeconds)} />
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <Select value={rate} onValueChange={engine.changeRate}>
+            <SelectTrigger size="sm" aria-label="Playback speed" className="w-20">
+              <SelectValue>{(value: string) => `${value}x`}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {playbackRates.map((value) => (
+                <SelectItem key={value} value={value}>{`${value}x`}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={muted ? "Unmute" : "Mute"} onClick={engine.toggleMute}>
+            {muted ? <VolumeXIcon /> : <Volume2Icon />}
+          </Button>
+          <span id={volumeLabelId} className="sr-only">Volume</span>
+          <div className="hidden w-20 sm:block">
+            <Slider
+              aria-labelledby={volumeLabelId}
+              value={[muted ? 0 : Math.round(volume * 100)]}
+              min={0}
+              max={100}
+              step={10}
+              onValueChange={(value) => engine.changeVolume(sliderNumber(value))}
+              getAriaValueText={(_formatted, value) => `${Math.round(value)}%`}
+            />
+          </div>
+        </div>
+      </div>
+      {engine.audioError ? (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <p role="alert" className="text-sm">Recording audio could not be loaded.</p>
+          <Button type="button" variant="outline" size="sm" onClick={engine.retryAudio}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {engine.peaks === "error" ? (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <p className="text-xs text-muted-foreground">Waveform unavailable. Use the seek control or keyboard shortcuts to move through the audio.</p>
+          <Button type="button" variant="outline" size="xs" onClick={engine.retryPeaks}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      <p className="sr-only">Shortcuts: Space or K play and pause, arrows move 5 seconds, J and L move 10 seconds, M mutes.</p>
+    </div>
+  );
+}
+
+export default function RecordingPlayer({ workspaceId, recording, autoPlay = false, turns }: { workspaceId: string; recording: RecordingAvailability; autoPlay?: boolean; turns?: TranscriptTurn[] }) {
+  if (recording.state === "Ready") return <ReadyPlayer workspaceId={workspaceId} recording={recording} autoPlay={autoPlay} turns={turns} />;
+  return <RecordingState recording={recording} />;
 }

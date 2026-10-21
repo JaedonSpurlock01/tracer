@@ -35,7 +35,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -48,7 +47,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
@@ -85,11 +83,20 @@ export function purgedCallDetail(call: CallDetail, purgedAt: string): CallDetail
   };
 }
 
-export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { workspaceId: string; callId: string; onPurged(purgedAt: string): void }) {
-  const [open, setOpen] = useState(false);
+export default function PurgeMediaDialog({ workspaceId, callId, open, onOpenChange, onPurged }: { workspaceId: string; callId: string; open: boolean; onOpenChange(open: boolean): void; onPurged(purgedAt: string): void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
+
+  // Each opening asks for the acknowledgement again and starts clean.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setError("");
+      setAcknowledged(false);
+    }
+  }
 
   async function purge() {
     setPending(true);
@@ -98,7 +105,7 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
       const response = await mutationFetch(`/api/workspaces/${workspaceId}/calls/${callId}/media/purge`, { method: "POST" });
       if (response.ok) {
         const body = (await response.json()) as { purge: { purgedAt: string } };
-        setOpen(false);
+        onOpenChange(false);
         onPurged(body.purge.purgedAt);
         return;
       }
@@ -117,21 +124,7 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
   }
 
   return (
-    <>
-      <Button
-        type="button"
-        variant="destructive"
-        size="sm"
-        onClick={() => {
-          setError("");
-          setAcknowledged(false);
-          setOpen(true);
-        }}
-      >
-        <Trash2Icon data-icon="inline-start" aria-hidden />
-        Purge Media
-      </Button>
-      <AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
+      <AlertDialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Purge this Call&apos;s media?</AlertDialogTitle>
@@ -164,6 +157,5 @@ export default function PurgeMediaButton({ workspaceId, callId, onPurged }: { wo
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
   );
 }

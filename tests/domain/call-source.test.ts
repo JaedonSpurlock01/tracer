@@ -65,10 +65,10 @@ describe("Call Detail source list", () => {
     });
     expect(callSourceFromBack("/activity", "workspace-2")?.href).toBe("/activity");
     expect(callSourceListQuery(source, "workspace-1")).toEqual({ ...source!.query, workspaceId: undefined, callerSearchOnly: true });
-    expect(callDetailNavigation(source, "workspace-1", { previous: null, next: { id: "call-2", workspaceId: "workspace-2" } })).toEqual({
+    expect(callDetailNavigation(source, "workspace-1", { previous: null, next: { id: "call-2", workspaceId: "workspace-2", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" } })).toEqual({
       back: "/activity?q=312&outcome=Answered&analysis=Pending",
       previous: null,
-      next: "/workspaces/workspace-2/calls/call-2?back=%2Factivity%3Fq%3D312%26outcome%3DAnswered%26analysis%3DPending",
+      next: { href: "/workspaces/workspace-2/calls/call-2?back=%2Factivity%3Fq%3D312%26outcome%3DAnswered%26analysis%3DPending", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" },
     });
   });
 
@@ -112,15 +112,15 @@ describe("Call Detail source list", () => {
 
   it("links back to the source and to each neighbor's own Workspace route carrying the source, or to Workspace Calls without one", () => {
     const source = callSourceFromBack("/calls?outcome=Voicemail", "workspace-1");
-    expect(callDetailNavigation(source, "workspace-1", { previous: { id: "call-0", workspaceId: "workspace-2" }, next: null })).toEqual({
+    expect(callDetailNavigation(source, "workspace-1", { previous: { id: "call-0", workspaceId: "workspace-2", callerNumber: null, startedAt: "2026-10-16T19:00:00.000Z" }, next: null })).toEqual({
       back: "/calls?outcome=Voicemail",
-      previous: "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Foutcome%3DVoicemail",
+      previous: { href: "/workspaces/workspace-2/calls/call-0?back=%2Fcalls%3Foutcome%3DVoicemail", callerNumber: null, startedAt: "2026-10-16T19:00:00.000Z" },
       next: null,
     });
-    expect(callDetailNavigation(null, "workspace-1", { previous: null, next: { id: "call-2", workspaceId: "workspace-1" } })).toEqual({
+    expect(callDetailNavigation(null, "workspace-1", { previous: null, next: { id: "call-2", workspaceId: "workspace-1", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" } })).toEqual({
       back: "/workspaces/workspace-1/calls",
       previous: null,
-      next: "/workspaces/workspace-1/calls/call-2",
+      next: { href: "/workspaces/workspace-1/calls/call-2", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" },
     });
     expect(callDetailNavigation(null, "workspace-1", null)).toEqual({ back: "/workspaces/workspace-1/calls", previous: null, next: null });
   });

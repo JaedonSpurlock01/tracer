@@ -107,3 +107,20 @@ export function parseTranscriptTurns(value: unknown): TranscriptTurn[] {
 export function transcriptionCostUsd(audioMs: number): number {
   return Math.round(audioMs / 10) / 1_000_000;
 }
+
+export type SpeakerShares = Record<TranscriptSpeaker, number>;
+
+/** Each speaker's share of the spoken time, as whole percentages that sum to 100 when anyone spoke. */
+export function speakerShares(turns: TranscriptTurn[]): SpeakerShares | null {
+  const totals: SpeakerShares = { Caller: 0, Business: 0 };
+  for (const turn of turns) totals[turn.speaker] += turn.endMs - turn.startMs;
+  const spoken = totals.Caller + totals.Business;
+  if (spoken <= 0) return null;
+  const caller = Math.round((totals.Caller / spoken) * 100);
+  return { Caller: caller, Business: 100 - caller };
+}
+
+/** The speaker whose turn covers the instant, or null during silence. */
+export function speakerAt(turns: TranscriptTurn[], ms: number): TranscriptSpeaker | null {
+  return turns.find((turn) => ms >= turn.startMs && ms < turn.endMs)?.speaker ?? null;
+}

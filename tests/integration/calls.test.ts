@@ -617,15 +617,18 @@ describe.sequential("Call Detail previous and next Call", () => {
 
   it("walks a Workspace's Calls Started descending with no source list, and returns no Call past either end", async () => {
     const calls = await callList(clientCookie);
-    expect(await calls.neighbors({ ...query(), workspaceId: "granted-active" }, "assessed-call")).toEqual({ previous: null, next: { id: "reviewed-call", workspaceId: "granted-active" } });
-    expect(await calls.neighbors({ ...query(), workspaceId: "granted-active" }, "reviewed-call")).toEqual({ previous: { id: "assessed-call", workspaceId: "granted-active" }, next: null });
+    expect(await calls.neighbors({ ...query(), workspaceId: "granted-active" }, "assessed-call")).toEqual({
+      previous: null,
+      next: { id: "reviewed-call", workspaceId: "granted-active", callerNumber: "+13125550101", startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/) },
+    });
+    expect(await calls.neighbors({ ...query(), workspaceId: "granted-active" }, "reviewed-call")).toEqual({ previous: expect.objectContaining({ id: "assessed-call", workspaceId: "granted-active" }), next: null });
   });
 
   it("follows the source list's filter and non-default sort, across Workspaces in global Calls", async () => {
     const calls = await callList(operatorCookie);
     expect(await calls.neighbors(query("scoreMin=1&sort=leadScore&order=asc"), "assessed-call")).toEqual({
-      previous: { id: "grouped-weak-call", workspaceId: "grouped-office" },
-      next: { id: "reviewed-call", workspaceId: "granted-active" },
+      previous: expect.objectContaining({ id: "grouped-weak-call", workspaceId: "grouped-office" }),
+      next: expect.objectContaining({ id: "reviewed-call", workspaceId: "granted-active" }),
     });
     expect(neighborIds(await calls.neighbors(query("scoreMin=1&sort=leadScore&order=desc"), "assessed-call"))).toEqual(["reviewed-call", "grouped-weak-call"]);
     expect(neighborIds(await calls.neighbors(query("scoreMin=1&sort=leadScore&order=asc"), "grouped-weak-call"))).toEqual([null, "assessed-call"]);
@@ -638,10 +641,10 @@ describe.sequential("Call Detail previous and next Call", () => {
     ["an Or tree with a Workspace sort", `sort=workspace&order=asc&adv=${encodeURIComponent(JSON.stringify({ combinator: "or", rules: [{ field: "outcome", values: ["Voicemail"] }, { field: "leadScore", min: 50, max: null }] }))}`],
   ])("matches the rows on either side of each Call in the list itself under %s", async (_name, search) => {
     const calls = await callList(operatorCookie);
-    const listed: { id: string; workspaceId: string }[] = [];
+    const listed: { id: string; workspaceId: string; callerNumber: string | null; startedAt: string }[] = [];
     for (let page = 1; ; page += 1) {
       const result = (await calls.list({ ...query(search), page }))!;
-      listed.push(...result.calls.map((call) => ({ id: call.id, workspaceId: call.workspace.id })));
+      listed.push(...result.calls.map((call) => ({ id: call.id, workspaceId: call.workspace.id, callerNumber: call.callerNumber, startedAt: call.startedAt })));
       if (listed.length >= result.total) break;
     }
     expect(listed.length).toBeGreaterThan(2);

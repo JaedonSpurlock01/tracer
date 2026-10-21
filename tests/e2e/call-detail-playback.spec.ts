@@ -156,9 +156,9 @@ test("an Operator opens Call Detail from Recent Calls, controls playback, follow
     await expect(page).toHaveURL(new RegExp(`/workspaces/${assignment.workspace_id}/calls/${recording.call_id}$`));
     await expect(page.getByRole("heading", { level: 1, name: "+13125550142" })).toBeVisible();
     const waveform = page.getByRole("group", { name: "Waveform" });
-    await expect(waveform.getByText("Caller")).toBeVisible();
-    await expect(waveform.getByText("Business")).toBeVisible();
-    await expect(waveform.locator("canvas").first()).toBeVisible();
+    await expect(page.getByText("Caller (56%)")).toBeVisible();
+    await expect(page.getByText("Business (44%)")).toBeVisible();
+    await expect(waveform.locator("svg rect").first()).toBeVisible();
 
     await waveform.focus();
     await page.keyboard.press("k");
@@ -167,21 +167,22 @@ test("an Operator opens Call Detail from Recent Calls, controls playback, follow
     await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
     await page.keyboard.press("Home");
     await page.keyboard.press("ArrowRight");
-    await expect(page.getByText("0:05 / 0:10")).toBeVisible();
+    const seek = page.getByRole("slider", { name: "Seek" });
+    await expect(seek).toHaveAttribute("aria-valuetext", "0:05 of 0:10");
     await page.keyboard.press("m");
     await expect(page.getByRole("button", { name: "Unmute" })).toBeVisible();
-    const seek = page.getByRole("slider", { name: "Seek" });
     await seek.focus();
     await page.keyboard.press("End");
     await expect(seek).toHaveAttribute("aria-valuetext", "0:10 of 0:10");
 
     const transcript = page.getByRole("region", { name: "Transcript" });
     await transcript.getByRole("button", { name: "Seek to 0:05, Caller" }).click();
-    await expect(page.getByText("0:05 / 0:10")).toBeVisible();
+    await expect(seek).toHaveAttribute("aria-valuetext", "0:05 of 0:10");
     await expect(transcript.getByRole("listitem").nth(1)).toHaveAttribute("aria-current", "true");
     await transcript.getByRole("searchbox", { name: "Search Transcript" }).fill("heater");
     await expect(transcript.getByRole("status")).toHaveText("1 match");
 
+    await page.getByRole("button", { name: "Details" }).click();
     const assessment = page.getByRole("region", { name: "Lead Assessment" });
     await expect(assessment.getByText("82 / 100")).toBeVisible();
     await expect(assessment.getByText("Automated estimate")).toBeVisible();
@@ -197,8 +198,9 @@ test("an Operator opens Call Detail from Recent Calls, controls playback, follow
     await expect(review.getByText("Caller was a vendor.")).toBeVisible();
     await expect(review.getByText("Reporting result")).toBeVisible();
     await page.reload();
+    await page.getByRole("button", { name: "Details" }).click();
     await expect(page.getByRole("region", { name: "Lead Review" }).getByText("Caller was a vendor.")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 }).locator("xpath=../..").getByText("Not Good Lead", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).locator("xpath=..").getByText("Not Good Lead", { exact: true })).toBeVisible();
   } finally {
     await pool.end();
   }

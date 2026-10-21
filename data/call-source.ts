@@ -79,10 +79,17 @@ export function callSourceListQuery(source: CallSource | null, workspaceId: stri
   return { ...source.query, workspaceId: source.scope === "workspace" ? workspaceId : undefined };
 }
 
-type Neighbor = { id: string; workspaceId: string } | null;
+type Neighbor = { id: string; workspaceId: string; callerNumber: string | null; startedAt: string } | null;
 
-export function callDetailNavigation(source: CallSource | null, workspaceId: string, neighbors: { previous: Neighbor; next: Neighbor } | null) {
+/** A previous or next Call step: its href plus what the Call is, for a label. */
+export interface CallStep {
+  href: string;
+  callerNumber: string | null;
+  startedAt: string;
+}
+
+export function callDetailNavigation(source: CallSource | null, workspaceId: string, neighbors: { previous: Neighbor; next: Neighbor } | null): { back: string; previous: CallStep | null; next: CallStep | null } {
   const back = source?.href ?? null;
-  const step = (call: Neighbor | undefined) => (call ? callDetailHref(call, back) : null);
+  const step = (call: Neighbor | undefined): CallStep | null => (call ? { href: callDetailHref(call, back), callerNumber: call.callerNumber, startedAt: call.startedAt } : null);
   return { back: back ?? listPath("workspace", workspaceId), previous: step(neighbors?.previous), next: step(neighbors?.next) };
 }

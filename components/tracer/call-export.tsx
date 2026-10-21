@@ -6,7 +6,7 @@
  * @description
  *  Export Recordings, the primary Calls action, and Export CSV, the
  *  secondary one, export the current Calls scope and the filters in the
- *  page URL; Export Call on Call Detail exports one Call as a Recording
+ *  page URL; the Export Call dialog on Call Detail exports one Call as a Recording
  *  ZIP. Each opens a confirmation Dialog that previews the selection and
  *  shows matched Calls, retained Recordings, expired media, media an
  *  Operator purged, and Calls without recordings. A Recording export above the 500 retained
@@ -34,7 +34,6 @@
  */
 "use client";
 
-import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -222,21 +221,15 @@ export function CallsExportActions({ workspaceId, query }: { workspaceId?: strin
   );
 }
 
-export function ExportCallButton({ workspaceId, callId }: { workspaceId: string; callId: string }) {
-  const [open, setOpen] = useState(false);
+/** The Export Call confirmation, opened by the Call Detail actions menu. */
+export function ExportCallDialog({ workspaceId, callId, open, onOpenChange }: { workspaceId: string; callId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
-    <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <DownloadIcon data-icon="inline-start" aria-hidden />
-        Export Call
-      </Button>
-      <ExportDialog
-        title="Export Call"
-        description="A ZIP with this Call's Recording MP3, its CSV manifest row, and the Transcript and Lead Assessment when present."
-        request={{ kind: "call_export", scope: { kind: "workspace", workspaceId }, callId, file: "zip" }}
-        open={open}
-        onOpenChange={setOpen}
-      />
-    </>
+    <ExportDialog
+      title="Export Call"
+      description="A ZIP with this Call's Recording MP3, its CSV manifest row, and the Transcript and Lead Assessment when present."
+      request={{ kind: "call_export", scope: { kind: "workspace", workspaceId }, callId, file: "zip" }}
+      open={open}
+      onOpenChange={onOpenChange}
+    />
   );
 }

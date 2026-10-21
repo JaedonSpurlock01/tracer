@@ -1,49 +1,39 @@
 /**
  * -------------------------------------------------------------------------
  * @file   recording-player.test.tsx
- * @brief  Verifies the Call Detail Recording player and its states.
+ * @brief  Verifies the Recording now-playing bar.
  *
  * @description
- *  Covers aligned Caller and Business lanes from precomputed peaks, the
- *  Mixed audio fallback, play and pause, elapsed and total time, the
- *  accessible seek control, scoped keyboard shortcuts, zoom, playback
- *  speed, volume and mute, playback without peaks, and the processing,
- *  failed, unavailable, and expired Recording states.
+ *  Covers the mirrored Caller-over-Business waveform drawn from the
+ *  precomputed peaks with each party's talk share, the Mixed audio lane,
+ *  play and pause with elapsed and total time, auto play from Play
+ *  Recording, the accessible seek control, the centered ten-second skips,
+ *  scoped keyboard shortcuts, playback speed, volume, and mute, the peaks
+ *  and audio failure states with Retry, and the processing, failed,
+ *  unavailable, and expired Recording states.
  *
  * @remarks
- *  wavesurfer.js draws to a canvas jsdom cannot render, so it is replaced
- *  at its module boundary and the test asserts what the player hands it.
- *  jsdom media elements cannot play, so play and pause dispatch their
- *  events the way a browser does. Base UI keeps a slider thumb hidden until
- *  it measures a layout box, which jsdom never computes, so element boxes
- *  get a fixed size.
+ *  jsdom plays no media, so HTMLMediaElement play, pause, and load are
+ *  replaced and the component is driven through the media element's
+ *  events the way a browser does. jsdom has no ResizeObserver either, so
+ *  one is stubbed that reports a fixed width, which is what sizes the SVG
+ *  bars. Base UI keeps a slider thumb hidden until it is measured, so
+ *  getBoundingClientRect is given a size.
  *
  * @see
  *  components/tracer/recording-player.tsx
+ *  components/tracer/mirror-waveform.tsx
+ *  components/tracer/recording-engine.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import RecordingPlayer from "@/components/tracer/recording-player";
 import type { RecordingAvailability } from "@/data/call-details";
-
-const wavesurfer = vi.hoisted(() => ({
-  instances: [] as { options: Record<string, unknown>; zoom: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }[],
-}));
-
-vi.mock("wavesurfer.js", () => ({
-  default: {
-    create: (options: Record<string, unknown>) => {
-      const instance = { options, zoom: vi.fn(), destroy: vi.fn() };
-      wavesurfer.instances.push(instance);
-      return instance;
-    },
-  },
-}));
-vi.mock("wavesurfer.js/plugins/timeline", () => ({ default: { create: vi.fn(() => ({ name: "timeline" })) } }));
+import type { TranscriptTurn } from "@/data/transcript";
 
 const ready: Extract<RecordingAvailability, { state: "Ready" }> = {
   state: "Ready",
@@ -56,6 +46,10 @@ const ready: Extract<RecordingAvailability, { state: "Ready" }> = {
 };
 const dualPeaks = { version: 1, sampleRate: 8000, samplesPerPixel: 160, pixelsPerSecond: 50, durationSeconds: 83, lanes: ["Caller", "Business"], peaks: [[0.1, 0.5], [0.25, 1]] };
 const mixedPeaks = { ...dualPeaks, lanes: ["Mixed"], peaks: [[0.2, 0.4]] };
+const turns: TranscriptTurn[] = [
+  { speaker: "Business", startMs: 0, endMs: 6000, text: "Thanks for calling." },
+  { speaker: "Caller", startMs: 6000, endMs: 10000, text: "My water heater is leaking." },
+];
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -69,16 +63,30 @@ function audio(): HTMLAudioElement {
   return element;
 }
 
-async function renderReady(recording = ready, peaks: unknown = dualPeaks) {
+function waveform(): HTMLElement {
+  return screen.getByRole("group", { name: "Waveform" });
+}
+
+async function renderReady(recording = ready, peaks: unknown = dualPeaks, props: { turns?: TranscriptTurn[]; autoPlay?: boolean } = {}) {
   fetchMock.mockResolvedValue(peaksResponse(peaks));
-  render(<RecordingPlayer workspaceId="workspace-1" recording={recording} />);
-  if (recording.waveform) await waitFor(() => expect(wavesurfer.instances).toHaveLength(1));
+  render(<RecordingPlayer workspaceId="workspace-1" recording={recording} {...props} />);
+  if (recording.waveform) await screen.findByRole("group", { name: "Waveform" });
 }
 
 beforeEach(() => {
-  wavesurfer.instances.length = 0;
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: (entries: { contentRect: { width: number } }[]) => void) {}
+      observe() {
+        this.callback([{ contentRect: { width: 200 } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
     this.dispatchEvent(new Event("play"));
     return Promise.resolve();
@@ -97,34 +105,43 @@ afterEach(() => {
 });
 
 describe("RecordingPlayer", () => {
-  it("renders aligned Caller and Business lanes from precomputed peaks over the streamed Recording", async () => {
+  it("draws Caller above and Business below one mirrored lane from precomputed peaks over the streamed Recording", async () => {
     await renderReady();
     expect(fetchMock).toHaveBeenCalledWith("/api/workspaces/workspace-1/recordings/recording-1/peaks", expect.anything());
     expect(audio().getAttribute("src")).toBe("/api/workspaces/workspace-1/recordings/recording-1/audio");
-    const options = wavesurfer.instances[0].options;
-    expect(options.media).toBe(audio());
-    expect(options.peaks).toEqual(dualPeaks.peaks);
-    expect(options.duration).toBe(83);
-    expect(options.splitChannels).toHaveLength(2);
-    const waveform = screen.getByRole("group", { name: "Waveform" });
-    expect(within(waveform).getByText("Caller")).toBeVisible();
-    expect(within(waveform).getByText("Business")).toBeVisible();
+    expect(screen.getByText("Caller")).toBeVisible();
+    expect(screen.getByText("Business")).toBeVisible();
+    const bars = waveform().querySelectorAll("rect");
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.length % 2).toBe(0);
+    expect(bars[0]).toHaveAttribute("fill", "var(--chart-1)");
+    expect(bars[1]).toHaveAttribute("fill", "var(--chart-2)");
   });
 
-  it("labels a single-channel Recording as one Mixed audio lane", async () => {
+  it("labels each lane with that party's share of the spoken time when a Transcript exists", async () => {
+    await renderReady(ready, dualPeaks, { turns });
+    expect(screen.getByText("Caller (40%)")).toBeVisible();
+    expect(screen.getByText("Business (60%)")).toBeVisible();
+  });
+
+  it("mirrors a single-channel Recording's one Mixed audio lane on both halves", async () => {
     await renderReady({ ...ready, channels: 1, lanes: ["Mixed"] }, mixedPeaks);
-    expect(wavesurfer.instances[0].options.splitChannels).toBeUndefined();
-    const waveform = screen.getByRole("group", { name: "Waveform" });
-    expect(within(waveform).getByText("Mixed audio")).toBeVisible();
-    expect(within(waveform).queryByText("Caller")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Mixed audio")).toHaveLength(2);
+    expect(screen.queryByText("Caller")).not.toBeInTheDocument();
   });
 
-  it("plays and pauses and shows elapsed and total time as text", async () => {
-    await renderReady();
-    expect(screen.getByText("0:00 / 1:23")).toBeVisible();
+  it("plays and pauses, shows elapsed and total time, and says who is speaking", async () => {
+    await renderReady(ready, dualPeaks, { turns });
+    expect(screen.getByText("0:00")).toBeVisible();
+    expect(screen.getByText("1:23")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Paused");
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Business speaking");
+    audio().currentTime = 7;
+    fireEvent.timeUpdate(audio());
+    expect(screen.getByRole("status")).toHaveTextContent("Caller speaking");
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("button", { name: "Play" })).toBeVisible();
   });
@@ -152,37 +169,35 @@ describe("RecordingPlayer", () => {
     expect(audio().currentTime).toBe(83);
   });
 
+  it("skips ten seconds either way from the centered transport and seeks from the waveform", async () => {
+    await renderReady();
+    fireEvent.click(screen.getByRole("button", { name: "Forward 10 seconds" }));
+    expect(audio().currentTime).toBe(10);
+    fireEvent.click(screen.getByRole("button", { name: "Forward 10 seconds" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back 10 seconds" }));
+    expect(audio().currentTime).toBe(10);
+    expect(screen.getByText("0:10")).toBeVisible();
+    fireEvent.pointerDown(waveform(), { clientX: 100, pointerId: 1 });
+    expect(audio().currentTime).toBeCloseTo(41.5);
+  });
+
   it("handles keyboard shortcuts inside the player without hijacking typing elsewhere", async () => {
     render(<input aria-label="Notes" />);
     await renderReady();
-    const waveform = screen.getByRole("group", { name: "Waveform" });
-    fireEvent.keyDown(waveform, { key: "k" });
+    fireEvent.keyDown(waveform(), { key: "k" });
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(waveform, { key: " " });
+    fireEvent.keyDown(waveform(), { key: " " });
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(waveform, { key: "ArrowRight" });
-    fireEvent.keyDown(waveform, { key: "ArrowRight" });
+    fireEvent.keyDown(waveform(), { key: "ArrowRight" });
+    fireEvent.keyDown(waveform(), { key: "ArrowRight" });
     expect(audio().currentTime).toBe(10);
-    fireEvent.keyDown(waveform, { key: "ArrowLeft" });
+    fireEvent.keyDown(waveform(), { key: "ArrowLeft" });
     expect(audio().currentTime).toBe(5);
-    expect(screen.getByText("0:05 / 1:23")).toBeVisible();
-    fireEvent.keyDown(waveform, { key: "m" });
+    expect(screen.getByText("0:05")).toBeVisible();
+    fireEvent.keyDown(waveform(), { key: "m" });
     expect(audio().muted).toBe(true);
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Notes" }), { key: "k" });
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-  });
-
-  it("zooms the waveform in and out from fit", async () => {
-    await renderReady();
-    const instance = wavesurfer.instances[0];
-    expect(screen.getByRole("button", { name: "Zoom out" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    expect(instance.zoom).toHaveBeenLastCalledWith(50);
-    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
-    expect(instance.zoom).toHaveBeenLastCalledWith(25);
-    fireEvent.keyDown(screen.getByRole("group", { name: "Waveform" }), { key: "-" });
-    expect(instance.zoom).toHaveBeenLastCalledWith(0);
   });
 
   it("changes playback speed, volume, and mute", async () => {
@@ -201,29 +216,22 @@ describe("RecordingPlayer", () => {
     expect(await screen.findByRole("button", { name: "Unmute" })).toBeVisible();
   });
 
-  it("starts the reduced-motion player without auto-centering the playhead", async () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), addEventListener: () => undefined, removeEventListener: () => undefined }));
-    await renderReady();
-    expect(wavesurfer.instances[0].options.autoCenter).toBe(false);
-  });
-
   it("keeps playback and seeking available when the peaks request fails, explains it, and retries", async () => {
     fetchMock.mockResolvedValueOnce(peaksResponse({ error: "not_found" }, 404));
     render(<RecordingPlayer workspaceId="workspace-1" recording={ready} />);
     expect(await screen.findByText("Waveform unavailable. Use the seek control or keyboard shortcuts to move through the audio.")).toBeVisible();
-    expect(wavesurfer.instances).toHaveLength(0);
+    expect(screen.queryByRole("group", { name: "Waveform" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
     expect(screen.getByRole("slider", { name: "Seek" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Zoom in" })).toBeDisabled();
     fetchMock.mockResolvedValueOnce(peaksResponse(dualPeaks));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(wavesurfer.instances).toHaveLength(1));
+    expect(await screen.findByRole("group", { name: "Waveform" })).toBeVisible();
   });
 
   it("plays a Recording whose waveform failed without requesting peaks", async () => {
     await renderReady({ ...ready, waveform: false });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText("Waveform unavailable. Use the seek control or keyboard shortcuts to move through the audio.")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Waveform" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
   });
 
