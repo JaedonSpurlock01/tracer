@@ -189,7 +189,7 @@ describe("WorkspaceOverview", () => {
     expect(screen.getByRole("link", { name: "Edit Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
   });
 
-    it("lists the published Call Flow in execution order with each branch outcome under its step", () => {
+  it("shows the published Call Flow as its main path with each side branch as an exit chip", () => {
     render(
       <WorkspaceOverview
         workspace={workspace}
@@ -208,16 +208,15 @@ describe("WorkspaceOverview", () => {
         }}
       />,
     );
-    const steps = within(screen.getByRole("list", { name: "Call Flow steps" })).getAllByRole("listitem").map((item) => item.textContent);
-    expect(steps).toEqual([
-      "Incoming Call",
-      "Keypad Gate: press 1 to continue",
-      "PassForward Call to +14155550101",
-      "AnsweredOutcome: Answered",
-      "MissedOutcome: Missed",
-      "FailedOutcome: Failed",
-      "BlockedOutcome: Blocked",
-    ]);
+    const steps = within(screen.getByRole("list", { name: "Call Flow steps" })).getAllByRole("listitem");
+    expect(steps.map((item) => item.querySelector("strong")?.textContent)).toEqual(["Incoming Call", "Keypad Gate", "Forward Call", "Outcome"]);
+    expect(steps[1]).toHaveTextContent(/Blocked\s*→\s*Blocked/);
+    expect(steps[2]).toHaveTextContent("+14155550101 · rings 30s");
+    expect(steps[2]).toHaveTextContent(/Missed\s*→\s*Missed/);
+    expect(steps[2]).toHaveTextContent(/Failed\s*→\s*Failed/);
+    expect(steps[3]).toHaveTextContent("Answered");
+    expect(screen.getByText("v1")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Flow" })).toHaveAttribute("href", "/workspaces/workspace-1/flow");
   });
 
 it("shows a read-only Overview without Operator actions for a Client Viewer", () => {

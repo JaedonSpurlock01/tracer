@@ -11,7 +11,9 @@
  *  with the Deal for Operators), the Site summary panel
  *  linking to the Site page or offering Link Site, the KPI row and Call
  *  trends chart in the Workspace reporting timezone, routing health, the
- *  published Call Flow summary, and the five Recent Calls linking to Call
+ *  published Call Flow as a spine of steps with exit chips and its version
+ *  Badge (Operators of an Active Workspace get Open Flow in the panel),
+ *  and the five Recent Calls linking to Call
  *  Detail, with View Calls opening Workspace Calls over the same range.
  *  Operators get Edit Flow and
  *  Workspace Settings; Client Viewers get Generate Report, scoped to this
@@ -56,7 +58,7 @@ import {
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock } from "@/components/tracer/call-format";
 import { EmptyState } from "@/components/tracer/empty-state";
-import FlowSummary from "@/components/tracer/flow/flow-summary";
+import FlowSpine from "@/components/tracer/flow/flow-spine";
 import GenerateReportButton from "@/components/tracer/generate-report-dialog";
 import { describeDeal } from "@/components/tracer/deal-editor";
 import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SiteResponse } from "@/components/tracer/site-picker";
@@ -380,10 +382,19 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
       <RoutingHealth workspace={workspace} health={routingHealth} operator={operator && !archived} pending={pending} onRetry={retry} />
       <Frame>
         <FramePanel>
-          <h2 className="font-semibold">Call Flow</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 font-semibold">
+              Call Flow {published ? <Badge variant="outline">v{published.version}</Badge> : null}
+            </h2>
+            {published && operator && workspace.state === "Active" ? (
+              <Button size="sm" variant="outline" render={<Link href={`/workspaces/${workspace.id}/flow`} prefetch />}>
+                Open Flow
+              </Button>
+            ) : null}
+          </div>
           {published ? (
             <div className="mt-4">
-              <FlowSummary graph={published.graph} />
+              <FlowSpine graph={published.graph} />
             </div>
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">No published Call Flow.</p>

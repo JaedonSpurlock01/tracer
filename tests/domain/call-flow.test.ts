@@ -19,7 +19,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   businessHoursOpen,
+  callFlowTree,
+  createFlowNode,
+  describeFlowNode,
+  flowNodeCatalog,
   generateInitialCallFlow,
+  nodeHandles,
   parseCallFlowGraph,
   summarizeCallFlow,
   validateCallFlow,
@@ -300,5 +305,59 @@ describe("Whisper validation", () => {
     };
     expect(issueCodes(graph, true)).not.toContain("whisper_requires_forward");
     expect(issueCodes(misplaced, true)).toContain("whisper_requires_forward");
+  });
+});
+
+describe("Call Flow descriptions, catalog, and tree", () => {
+  it("describes every node type with a title and a detail line", () => {
+    const graph = generateInitialCallFlow(baseOptions);
+    expect(describeFlowNode(node(graph, "incoming"))).toEqual({ title: "Incoming Call", detail: "Caller dials the Tracking Number" });
+    expect(describeFlowNode(node(graph, "gate"))).toEqual({ title: "Keypad Gate", detail: 'Press 1 within 10s · "Press 1 to be connected."' });
+    expect(describeFlowNode(node(graph, "forward"))).toEqual({ title: "Forward Call", detail: "+14155552671 · rings 30s" });
+    expect(describeFlowNode(node(graph, "outcome-missed"))).toEqual({ title: "Outcome", detail: "Missed" });
+    const hours = createFlowNode("business_hours", { destinationNumber: "" });
+    expect(describeFlowNode(hours).detail).toBe("Mon 09:00–17:00, Tue 09:00–17:00, Wed 09:00–17:00, Thu 09:00–17:00, Fri 09:00–17:00");
+  });
+
+  it("creates a default node of every addable type with its handles", () => {
+    for (const entry of flowNodeCatalog) {
+      const created = createFlowNode(entry.type, { destinationNumber: "+14155550000" });
+      expect(created.type).toBe(entry.type);
+      expect(created.id.startsWith(entry.type)).toBe(true);
+      expect(nodeHandles[created.type]).toBeDefined();
+    }
+    expect(flowNodeCatalog.map((entry) => entry.type)).not.toContain("incoming_call");
+    const forward = createFlowNode("forward_call", { destinationNumber: "+14155550000" });
+    expect(forward.type === "forward_call" && forward.destinationNumber).toBe("+14155550000");
+  });
+
+  it("walks the graph into a tree and marks a shared target the second time it is reached", () => {
+    const graph = generateInitialCallFlow({ ...baseOptions, whisperEnabled: false });
+    graph.nodes.push({ id: "voicemail", type: "voicemail", position: { x: 0, y: 0 }, greeting: "Leave a message.", voice: "Polly.Joanna" });
+    graph.edges = graph.edges.filter((edge) => edge.id !== "forward-missed");
+    graph.edges.push({ id: "forward-missed", source: "forward", sourceHandle: "missed", target: "voicemail" });
+    graph.edges.push({ id: "voicemail-next", source: "voicemail", sourceHandle: "next", target: "outcome-missed" });
+    graph.edges = graph.edges.map((edge) => (edge.id === "gate-blocked" ? { ...edge, target: "outcome-missed" } : edge));
+    const tree = callFlowTree(graph);
+    expect(tree?.node.id).toBe("incoming");
+    const gate = tree!.branches[0].child!.branches[0].child!;
+    expect(gate.node.id).toBe("gate");
+    expect(gate.branches.map((branch) => branch.handle)).toEqual(["pass", "blocked"]);
+    const forward = gate.branches[0].child!;
+    const missed = forward.branches.find((branch) => branch.handle === "missed")!;
+    expect(missed.child?.node.id).toBe("voicemail");
+    expect(missed.shared).toBe(false);
+    expect(missed.child?.branches[0].child?.node.id).toBe("outcome-missed");
+    const blocked = gate.branches[1];
+    expect(blocked.child?.node.id).toBe("outcome-missed");
+    expect(blocked.shared).toBe(true);
+    expect(blocked.child?.branches).toEqual([]);
+  });
+
+  it("reports an unconnected handle as a branch without a child", () => {
+    const graph = generateInitialCallFlow({ ...baseOptions, spamGateEnabled: false, whisperEnabled: false, recordingEnabled: false });
+    graph.edges = graph.edges.filter((edge) => edge.id !== "forward-failed");
+    const forward = callFlowTree(graph)!.branches[0].child!;
+    expect(forward.branches.find((branch) => branch.handle === "failed")).toEqual({ handle: "failed", child: null, shared: false });
   });
 });

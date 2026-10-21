@@ -74,12 +74,13 @@ test.describe.serial("Workspace activation and Flow publication", () => {
     await page.getByRole("button", { name: "Edit Flow" }).click();
     await page.getByTestId("flow-node-forward").click();
     await page.getByRole("combobox", { name: "missed" }).selectOption("none");
-    await page.getByRole("button", { name: "Validate" }).click();
     await expect(page.getByRole("alert").first()).toBeVisible();
+    await expect(page.getByText(/^\d+ issues?$/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
+    const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().includes(`/workspaces/${workspaceId}/flow`) && (response.request().postData() ?? "").includes("outcome-missed"));
     await page.getByRole("combobox", { name: "missed" }).selectOption("outcome-missed");
-    await page.getByRole("button", { name: "Validate" }).click();
-    await expect(page.getByText("Valid", { exact: true })).toBeVisible();
+    await saved;
+    await expect(page.getByText("Publishable", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Publish" }).click();
     await expect(page.getByText("Version 2 published")).toBeVisible();
     const versions = await page.evaluate(async (id) => {

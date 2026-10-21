@@ -18,7 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateInitialCallFlow } from "@/data/call-flow";
-import { fromReactFlow, toReactFlow } from "@/components/tracer/flow/graph-adapter";
+import { fromReactFlow, styleFlowEdge, toReactFlow } from "@/components/tracer/flow/graph-adapter";
 
 describe("Flow graph adapter", () => {
   it("maps and round-trips a Call Flow graph", () => {
@@ -32,7 +32,15 @@ describe("Flow graph adapter", () => {
     });
     const reactFlow = toReactFlow(graph);
     expect(reactFlow.nodes[0]).toMatchObject({ id: "incoming", type: "incoming_call", data: graph.nodes[0], position: { x: 0, y: 0 } });
-    expect(reactFlow.edges[0]).toMatchObject({ sourceHandle: "next", label: "next" });
+    expect(reactFlow.edges[0]).toMatchObject({ sourceHandle: "next" });
     expect(fromReactFlow(reactFlow.nodes, reactFlow.edges)).toEqual(graph);
+  });
+
+  it("styles a branch edge with its label and tone and leaves next unlabeled", () => {
+    const next = styleFlowEdge({ id: "a-next", source: "a", target: "b", sourceHandle: "next" });
+    expect(next.label).toBeUndefined();
+    expect(next.style).toMatchObject({ stroke: "var(--color-muted-foreground)" });
+    const missed = styleFlowEdge({ id: "a-missed", source: "a", target: "b", sourceHandle: "missed" });
+    expect(missed).toMatchObject({ type: "smoothstep", label: "Missed", style: { stroke: "var(--color-warning)" } });
   });
 });

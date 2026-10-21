@@ -9,7 +9,12 @@
  *
  * @remarks
  *  Graph validation stays independent from React Flow and database concerns so
- *  drafts can be checked before they are published.
+ *  drafts can be checked before they are published. Adding a node type touches
+ *  this file (the FlowNode union, nodeHandles, parseNode, validateCallFlow,
+ *  describeFlowNode, flowNodeCatalog, createFlowNode), the icon map in
+ *  components/tracer/flow/node-icon.tsx, and the type's fields in
+ *  components/tracer/flow/flow-inspector.tsx; every renderer reads the
+ *  description and tree from here.
  *
  * @see
  *  CONTEXT.md
@@ -82,6 +87,29 @@ export const nodeHandles: Record<FlowNodeType, readonly EdgeHandle[]> = {
   whisper: ["next"],
   voicemail: ["next"],
   outcome: [],
+};
+
+/** Semantic tone of a branch or Outcome, mapped to Badge variants and edge colors by renderers. */
+export type FlowTone = "neutral" | "success" | "warning" | "destructive";
+
+export const branchTones: Record<EdgeHandle, FlowTone> = {
+  next: "neutral",
+  open: "success",
+  closed: "warning",
+  pass: "success",
+  blocked: "destructive",
+  answered: "success",
+  missed: "warning",
+  failed: "destructive",
+};
+
+export const outcomeTones: Record<OutcomeKind, FlowTone> = {
+  Answered: "success",
+  Voicemail: "success",
+  Missed: "warning",
+  Abandoned: "warning",
+  Blocked: "destructive",
+  Failed: "destructive",
 };
 
 export interface ValidationIssue {
@@ -449,7 +477,7 @@ export interface FlowSummaryItem {
 
 const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const branchLabels: Record<EdgeHandle, string | null> = {
+export const branchLabels: Record<EdgeHandle, string | null> = {
   next: null,
   open: "Open",
   closed: "Closed",
@@ -492,4 +520,123 @@ export function summarizeCallFlow(graph: CallFlowGraph): FlowSummaryItem[] {
   const incoming = graph.nodes.find((node) => node.type === "incoming_call");
   if (incoming) visit(incoming.id, null, 0, new Set());
   return items;
+}
+
+const nodeTitles: Record<FlowNodeType, string> = {
+  incoming_call: "Incoming Call",
+  recording_disclosure: "Recording Disclosure",
+  business_hours: "Business Hours",
+  keypad_gate: "Keypad Gate",
+  forward_call: "Forward Call",
+  whisper: "Whisper",
+  voicemail: "Voicemail",
+  outcome: "Outcome",
+};
+
+export interface FlowNodeDescription {
+  title: string;
+  detail: string;
+}
+
+/** One title and one detail line per node, shared by the canvas, inspector, and Overview. */
+export function describeFlowNode(node: FlowNode): FlowNodeDescription {
+  const title = nodeTitles[node.type];
+  switch (node.type) {
+    case "incoming_call":
+      return { title, detail: "Caller dials the Tracking Number" };
+    case "recording_disclosure":
+      return { title, detail: `"${recordingDisclosureText}" · ${node.voice}` };
+    case "business_hours": {
+      const windows = node.weeklyWindows.map((window) => `${weekdayNames[window.day]} ${window.start}–${window.end}`).join(", ") || "No weekly windows";
+      const overrides = node.dateOverrides.length === 0 ? "" : ` · ${node.dateOverrides.length} date override${node.dateOverrides.length === 1 ? "" : "s"}`;
+      return { title, detail: `${windows}${overrides}` };
+    }
+    case "keypad_gate":
+      return { title, detail: `Press ${node.digit} within ${node.timeoutSeconds}s · "${node.prompt}"` };
+    case "forward_call":
+      return { title, detail: `${node.destinationNumber || "No destination"} · rings ${node.timeoutSeconds}s` };
+    case "whisper":
+      return { title, detail: node.message ? `"${node.message}"` : "No message" };
+    case "voicemail":
+      return { title, detail: `"${node.greeting}"` };
+    case "outcome":
+      return { title, detail: node.outcome };
+  }
+}
+
+/** Node types an Operator can add from the palette, with the hint shown beside each. */
+export const flowNodeCatalog: ReadonlyArray<{ type: Exclude<FlowNodeType, "incoming_call">; title: string; hint: string }> = [
+  { type: "recording_disclosure", title: nodeTitles.recording_disclosure, hint: "Required when recording; one per flow" },
+  { type: "business_hours", title: nodeTitles.business_hours, hint: "Open and Closed branches" },
+  { type: "keypad_gate", title: nodeTitles.keypad_gate, hint: "Pass and Blocked branches" },
+  { type: "whisper", title: nodeTitles.whisper, hint: "Heard by the business before connecting" },
+  { type: "forward_call", title: nodeTitles.forward_call, hint: "Rings the Destination Number" },
+  { type: "voicemail", title: nodeTitles.voicemail, hint: "After Closed or Missed" },
+  { type: "outcome", title: nodeTitles.outcome, hint: "Ends the Call" },
+];
+
+/** A new node of the given type with sensible defaults; position is assigned by the canvas layout. */
+export function createFlowNode(type: FlowNodeType, context: { destinationNumber: string }): FlowNode {
+  const id = `${type}-${crypto.randomUUID()}`;
+  const position = { x: 0, y: 0 };
+  switch (type) {
+    case "incoming_call":
+      return { id, type, position };
+    case "recording_disclosure":
+      return { id, type, position, voice: "Polly.Joanna" };
+    case "business_hours":
+      return {
+        id,
+        type,
+        position,
+        weeklyWindows: ([1, 2, 3, 4, 5] as const).map((day) => ({ day, start: "09:00", end: "17:00" })),
+        dateOverrides: [],
+      };
+    case "keypad_gate":
+      return { id, type, position, prompt: "Press 1 to be connected.", voice: "Polly.Joanna", digit: "1", timeoutSeconds: 10 };
+    case "forward_call":
+      return { id, type, position, destinationNumber: context.destinationNumber, timeoutSeconds: 30 };
+    case "whisper":
+      return { id, type, position, message: "", voice: "Polly.Joanna" };
+    case "voicemail":
+      return { id, type, position, greeting: "Please leave a message after the tone.", voice: "Polly.Joanna" };
+    case "outcome":
+      return { id, type, position, outcome: "Answered" };
+  }
+}
+
+export interface FlowTreeBranch {
+  handle: EdgeHandle;
+  /** The step this branch leads to, or null when the handle is not connected. */
+  child: FlowTreeNode | null;
+  /** True when the child was already placed under an earlier branch; its own branches are then empty. */
+  shared: boolean;
+}
+
+export interface FlowTreeNode {
+  node: FlowNode;
+  branches: FlowTreeBranch[];
+}
+
+/**
+ * Walks the graph from the Incoming Call in handle order. Each node is expanded
+ * once, where it is first reached; later edges to it become shared references,
+ * so renderers get a tree even though targets may be reused.
+ */
+export function callFlowTree(graph: CallFlowGraph): FlowTreeNode | null {
+  const byId = nodeById(graph.nodes);
+  const expanded = new Set<string>();
+  const visit = (node: FlowNode): FlowTreeNode => {
+    expanded.add(node.id);
+    const branches = nodeHandles[node.type].map((handle): FlowTreeBranch => {
+      const edge = graph.edges.find((candidate) => candidate.source === node.id && candidate.sourceHandle === handle);
+      const target = edge ? byId.get(edge.target) : undefined;
+      if (!target) return { handle, child: null, shared: false };
+      if (expanded.has(target.id)) return { handle, child: { node: target, branches: [] }, shared: true };
+      return { handle, child: visit(target), shared: false };
+    });
+    return { node, branches };
+  };
+  const incoming = graph.nodes.find((node) => node.type === "incoming_call");
+  return incoming ? visit(incoming) : null;
 }
