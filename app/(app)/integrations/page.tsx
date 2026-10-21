@@ -5,9 +5,11 @@
  *
  * @description
  *  Restricts Organization provider connection management to Active Operators
- *  and loads provider health, the Twilio connection and its numbers, and the
- *  Cloudflare connection and its Sites on the server so the page renders
- *  without a loading Skeleton.
+ *  and loads provider health, the Twilio connection and its numbers, the
+ *  Cloudflare connection and its Sites, and the DataForSEO connection on the
+ *  server so the page renders without a loading Skeleton. The `provider`
+ *  search parameter selects which provider's detail is shown, defaulting to
+ *  Twilio, so a provider is linkable from the rest of Tracer.
  *
  * @remarks
  *  Server authorization complements the role-aware Sidebar navigation. Secret
@@ -28,12 +30,12 @@ import { resolveRequestActor } from "@/app/(app)/actor";
 import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
 import { createRuntimeDataForSeoClient } from "@/data/dataforseo-runtime";
 import { createIntegrations } from "@/data/integrations";
-import { describeProviderHealth } from "@/data/provider-health";
+import { describeProviderHealth, isProviderId } from "@/data/provider-health";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
 import { createWorkspaces } from "@/data/workspaces";
 
-export default async function IntegrationsPage() {
+export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const actor = await resolveRequestActor();
   if (!isActiveOperatorActor(actor)) {
     notFound();
@@ -60,5 +62,6 @@ export default async function IntegrationsPage() {
       dataforseo,
     };
   });
-  return <IntegrationsView initial={initial} />;
+  const requested = (await searchParams).provider;
+  return <IntegrationsView initial={initial} provider={isProviderId(requested) ? requested : "twilio"} />;
 }

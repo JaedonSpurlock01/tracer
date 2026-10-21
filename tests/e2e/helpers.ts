@@ -6,7 +6,9 @@
  * @description
  *  Signs users in through the visible email-code flow and the gated E2E OTP
  *  endpoint, connects the fake Twilio account, connects the fake Cloudflare
- *  account and syncs its Sites, connects the fake DataForSEO account,
+ *  account and syncs its Sites, connects the fake DataForSEO account (each
+ *  through its own provider detail on Integrations, since the Needs
+ *  attention lane repeats the Connect action),
  *  releases a Site from an earlier run,
  *  creates or archives Active Workspaces through the same pages and server
  *  interfaces a browser journey uses, optionally linking a Site at the
@@ -48,9 +50,10 @@ export async function signIn(page: Page, request: APIRequestContext, email: stri
 }
 
 export async function ensureTwilioNumbers(page: Page): Promise<void> {
-  await page.goto("/integrations");
-  await expect(page.getByRole("button", { name: /^(Connect Twilio|Sync Numbers)$/ }).first()).toBeVisible();
-  const connectButton = page.getByRole("button", { name: "Connect Twilio" });
+  await page.goto("/integrations?provider=twilio");
+  const detail = page.getByRole("region", { name: "Twilio" });
+  await expect(detail.getByRole("button", { name: /^(Connect Twilio|Sync Numbers)$/ })).toBeVisible();
+  const connectButton = detail.getByRole("button", { name: "Connect Twilio" });
   if ((await connectButton.count()) > 0) {
     await connectButton.click();
     await page.getByLabel("Account SID").fill(`AC${"a".repeat(32)}`);
@@ -59,7 +62,7 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(page.getByRole("button", { name: "Sync Numbers" })).toBeVisible();
   }
-  await page.getByRole("button", { name: "Set Auth Token" }).click();
+  await detail.getByRole("button", { name: "Set Auth Token" }).click();
   await page.getByLabel("Auth Token", { exact: true }).fill(twilioAuthToken);
   await page.getByRole("button", { name: "Save Auth Token" }).click();
   await expect(page.getByText("Twilio Auth Token saved.")).toBeVisible();
@@ -68,9 +71,10 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
 }
 
 export async function ensureCloudflareSites(page: Page): Promise<void> {
-  await page.goto("/integrations");
-  await expect(page.getByRole("button", { name: /^(Connect Cloudflare|Sync now)$/ }).first()).toBeVisible();
-  const connectButton = page.getByRole("button", { name: "Connect Cloudflare" });
+  await page.goto("/integrations?provider=cloudflare");
+  const detail = page.getByRole("region", { name: "Cloudflare" });
+  await expect(detail.getByRole("button", { name: /^(Connect Cloudflare|Sync now)$/ })).toBeVisible();
+  const connectButton = detail.getByRole("button", { name: "Connect Cloudflare" });
   if ((await connectButton.count()) > 0) {
     await connectButton.click();
     await page.getByLabel("Account ID").fill("a".repeat(32));
@@ -83,9 +87,10 @@ export async function ensureCloudflareSites(page: Page): Promise<void> {
 }
 
 export async function ensureDataForSeo(page: Page): Promise<void> {
-  await page.goto("/integrations");
-  await expect(page.getByRole("button", { name: /^(Connect DataForSEO|Rotate Password)$/ }).first()).toBeVisible();
-  const connectButton = page.getByRole("button", { name: "Connect DataForSEO" });
+  await page.goto("/integrations?provider=dataforseo");
+  const detail = page.getByRole("region", { name: "DataForSEO" });
+  await expect(detail.getByRole("button", { name: /^(Connect DataForSEO|Rotate Password)$/ })).toBeVisible();
+  const connectButton = detail.getByRole("button", { name: "Connect DataForSEO" });
   if ((await connectButton.count()) > 0) {
     await connectButton.click();
     await page.getByLabel("API login").fill("operator@example.com");
