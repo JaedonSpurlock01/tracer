@@ -65,6 +65,7 @@ const summary: AnalyticsSummary = {
     goodLeads: { value: 5, comparison: { previous: 2, change: 1.5, unit: "relative" } },
     averageConnectedSeconds: { value: 95, comparison: { previous: null, change: null, unit: "relative" } },
   },
+  goodLeadForms: 0,
   trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5 }] },
   workspacePerformance: null,
 };

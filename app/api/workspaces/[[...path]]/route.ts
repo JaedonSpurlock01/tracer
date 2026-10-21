@@ -28,6 +28,7 @@ async function handle(request: Request): Promise<Response> {
   return withTracerRuntime((runtime) =>
     createWorkspacesHandler({
       ...runtime,
+      email: runtime.email,
       twilio: createRuntimeTwilioClient(),
       twilioMedia: createTwilioRecordingMedia(),
       cloudflare: createRuntimeCloudflareClient(),

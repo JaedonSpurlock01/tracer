@@ -19,7 +19,9 @@
  *  Workspace, and lets an Operator set the Service Area and add, reweight,
  *  and remove Keywords. Lets an Operator record the Site's Domain renewal
  *  and create, edit, and end the Workspace's Deal; Client Viewers get 403
- *  on every Deal and Domain route.
+ *  on every Deal and Domain route. Form Submission routes list a Workspace's
+ *  submissions for any reader and reserve approve, reject, resend, review,
+ *  and the forwarding recipients for Operators.
  *
  * @remarks
  *  Routing mutations remain in workspace-routing.ts rather than the Workspace
@@ -43,6 +45,7 @@ import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { createCallDetails } from "@/data/call-details";
 import { createDeals, DealsError } from "@/data/deals";
+import { createFormSubmissions, FormSubmissionsError } from "@/data/form-submissions";
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { Integrations } from "@/data/integrations";
 import { IntegrationsError } from "@/data/integrations-error";
@@ -62,6 +65,7 @@ import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/works
 import type { TwilioClient, TwilioRecordingMedia } from "@/data/twilio-client";
 import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
+import type { TransactionalEmail } from "@/data/transactional-email";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { workspaceStates, type WorkspaceState } from "@/data/workspace-policy";
 
@@ -69,6 +73,8 @@ export interface WorkspacesHandlerOptions {
   auth: TracerAuth;
   database: NodePgDatabase<typeof schema>;
   pool: Pool;
+  /** Forwards Form Submissions; without it every forward records Forward failed with Resend. */
+  email?: TransactionalEmail;
   twilio: TwilioClient;
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
@@ -94,7 +100,7 @@ function errorResponse(error: unknown): Response {
     const status = error.code === "master_key_missing" ? 503 : error.code === "not_connected" ? 404 : 502;
     return response(error.detail ? { error: error.code, detail: error.detail } : { error: error.code }, status);
   }
-  if (error instanceof WorkspacesError || error instanceof SitesError || error instanceof SiteKeywordsError || error instanceof DealsError) {
+  if (error instanceof WorkspacesError || error instanceof SitesError || error instanceof SiteKeywordsError || error instanceof DealsError || error instanceof FormSubmissionsError) {
     const status = error.code === "invalid_input" ? 400 : error.code === "not_found" ? 404 : 409;
     return response({ error: error.code }, status);
   }
@@ -238,6 +244,12 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         });
         return response(await withWorkspaceListStats(createAnalytics(options.pool, actor), listed));
       }
+      const formsListMatch = route.match(/^([^/]+)\/forms$/);
+      if (request.method === "GET" && formsListMatch) {
+        const list = await createFormSubmissions(options.pool, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } }).list(formsListMatch[1]);
+        if (!list) throw new WorkspacesError("not_found");
+        return response(list);
+      }
       if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
       const leadReviewMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/lead-review$/);
       if (request.method === "PUT" && leadReviewMatch) {
@@ -368,6 +380,25 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       if (request.method === "PUT" && subroute === "site/domain") {
         const body = await readBody(request);
         return response({ domain: await createSites(options.pool, actor).setDomainRenewal(id, { registrar: body.registrar, renewalCents: body.renewalCents, renewsOn: body.renewsOn }) });
+      }
+      if (subroute === "forms" || subroute.startsWith("forms/")) {
+        const forms = createFormSubmissions(options.pool, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } });
+        if (request.method === "PUT" && subroute === "forms/forwarding") {
+          const body = await readBody(request);
+          return response({ forwardTo: await forms.setForwarding(id, body.emails) });
+        }
+        const actionMatch = subroute.match(/^forms\/([^/]+)\/(approve|reject|resend|review)$/);
+        if (actionMatch) {
+          const [, submissionId, action] = actionMatch;
+          if (request.method === "POST" && action === "approve") return response({ submission: await forms.approve(id, submissionId) });
+          if (request.method === "POST" && action === "reject") return response({ submission: await forms.reject(id, submissionId) });
+          if (request.method === "POST" && action === "resend") return response({ submission: await forms.resend(id, submissionId) });
+          if (request.method === "PUT" && action === "review") {
+            const body = await readBody(request);
+            return response({ submission: await forms.review(id, submissionId, { classification: body.classification, note: body.note }) });
+          }
+          if (request.method === "DELETE" && action === "review") return response({ submission: await forms.clearReview(id, submissionId) });
+        }
       }
       if (subroute === "deal" || subroute.startsWith("deal/")) {
         const deals = createDeals(options.pool, actor);

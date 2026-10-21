@@ -71,6 +71,7 @@ describe("Workspace Sidebar", () => {
       ["All Workspaces", "/workspaces"],
       ["Overview", "/workspaces/workspace-1"],
       ["Site", "/workspaces/workspace-1/site"],
+      ["Forms", "/workspaces/workspace-1/forms"],
       ["Calls", "/workspaces/workspace-1/calls"],
       ["Flow", "/workspaces/workspace-1/flow"],
       ["Reports", "/workspaces/workspace-1/reports"],
@@ -89,12 +90,13 @@ describe("Workspace Sidebar", () => {
   it("hides Flow and Settings from a Client Viewer", () => {
     render(<Shell actor={viewer} />);
 
-    expect(sidebarLinks().map((link) => link.textContent)).toEqual(["All Workspaces", "Overview", "Site", "Calls", "Reports"]);
+    expect(sidebarLinks().map((link) => link.textContent)).toEqual(["All Workspaces", "Overview", "Site", "Forms", "Calls", "Reports"]);
   });
 
   it.each([
     ["/workspaces/workspace-1", "Overview"],
     ["/workspaces/workspace-1/site", "Site"],
+    ["/workspaces/workspace-1/forms", "Forms"],
     ["/workspaces/workspace-1/calls", "Calls"],
     ["/workspaces/workspace-1/calls/call-1", "Calls"],
     ["/workspaces/workspace-1/flow", "Flow"],

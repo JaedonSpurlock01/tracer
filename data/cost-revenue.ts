@@ -42,6 +42,7 @@ import type { Pool } from "pg";
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { connectedSecondsSql, totalSecondsSql } from "@/data/call-details";
 import { callSource, effectiveClassificationSql } from "@/data/calls";
+import { formGoodLeadSql, formSubmissionSource } from "@/data/form-submissions";
 import type { DealRecord } from "@/data/deals";
 import { projectedMonthlyRevenueCents, rates, telephonyCents, usdToCents, yearlyCents, type DealKind } from "@/data/pricing";
 import { canManageWorkspaces } from "@/data/workspace-authorization";
@@ -152,10 +153,18 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
           [...values, rates.openaiWhisperPerMinuteUsd, rates.openaiGpt5MiniInputPerMillionTokensUsd, rates.openaiGpt5MiniOutputPerMillionTokensUsd],
         ),
         pool.query<LeadRow>(
-          `select c.workspace_id, count(*)::int as good_leads
-             from ${callSource}
-            where w.organization_id = $1 and c.workspace_id = any($4::text[]) and ${callInMonth} and ${effectiveClassificationSql} = 'Good Lead'
-            group by c.workspace_id`,
+          `select workspace_id, sum(good_leads)::int as good_leads from (
+             select c.workspace_id, count(*)::int as good_leads
+               from ${callSource}
+              where w.organization_id = $1 and c.workspace_id = any($4::text[]) and ${callInMonth} and ${effectiveClassificationSql} = 'Good Lead'
+              group by c.workspace_id
+             union all
+             select fs.workspace_id, count(*)::int as good_leads
+               from ${formSubmissionSource}
+              where w.organization_id = $1 and fs.workspace_id = any($4::text[]) and ${formGoodLeadSql}
+                and fs.received_at >= ${localMonthStart} and fs.received_at < ${localMonthEnd}
+              group by fs.workspace_id
+           ) leads group by workspace_id`,
           values,
         ),
         pool.query<SearchRow>(

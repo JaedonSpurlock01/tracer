@@ -9,7 +9,7 @@
  *  Days, 30 Days, 90 Days, All Time, and a Custom range of calendar dates,
  *  and write the choice to the URL. The KPI row shows Total Calls, Answer
  *  Rate, Good Leads, and Average Duration, each with its comparison against
- *  the previous period: a relative change for counts and durations,
+ *  the previous period, and Good Leads names how many are Form Submissions: a relative change for counts and durations,
  *  percentage points for Answer Rate, a dash when no change exists, and
  *  nothing for All Time. The chart plots Total Calls, Answered Calls, and
  *  Good Leads per period, with a visible legend, a tooltip naming the
@@ -176,11 +176,12 @@ export function AnalyticsRangeControls({ range, onRangeChange, disabled = false 
   );
 }
 
-function KpiTile({ id, label, value, kpi, definition }: { id: string; label: string; value: string; kpi: AnalyticsKpi; definition: string }) {
+function KpiTile({ id, label, value, detail, kpi, definition }: { id: string; label: string; value: string; detail?: string; kpi: AnalyticsKpi; definition: string }) {
   return (
     <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
       <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
       <p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      {detail ? <p className="text-xs text-muted-foreground tabular-nums">{detail}</p> : null}
       {kpi.comparison ? <p className="text-xs text-muted-foreground tabular-nums">{formatComparison(kpi.comparison)}</p> : null}
       <p className="text-xs text-muted-foreground">{definition}</p>
     </FramePanel>
@@ -189,12 +190,19 @@ function KpiTile({ id, label, value, kpi, definition }: { id: string; label: str
 
 const kpiGrid = "grid gap-2 sm:grid-cols-2 xl:grid-cols-4";
 
-export function AnalyticsKpiRow({ kpis }: { kpis: AnalyticsKpis }) {
+export function AnalyticsKpiRow({ kpis, goodLeadForms = 0 }: { kpis: AnalyticsKpis; goodLeadForms?: number }) {
   return (
     <Frame className={kpiGrid}>
       <KpiTile id="kpi-total-calls" label="Total Calls" value={count.format(kpis.totalCalls.value ?? 0)} kpi={kpis.totalCalls} definition="Calls started in the period" />
       <KpiTile id="kpi-answer-rate" label="Answer Rate" value={formatRate(kpis.answerRate.value)} kpi={kpis.answerRate} definition="Answered Calls of forwarding attempts" />
-      <KpiTile id="kpi-good-leads" label="Good Leads" value={count.format(kpis.goodLeads.value ?? 0)} kpi={kpis.goodLeads} definition="Calls classified as Good Lead" />
+      <KpiTile
+        id="kpi-good-leads"
+        label="Good Leads"
+        value={count.format(kpis.goodLeads.value ?? 0)}
+        detail={goodLeadForms > 0 ? `${count.format(goodLeadForms)} from Forms` : undefined}
+        kpi={kpis.goodLeads}
+        definition="Good Lead Calls and Form Submissions"
+      />
       <KpiTile
         id="kpi-average-duration"
         label="Average Duration"

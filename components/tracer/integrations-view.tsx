@@ -355,6 +355,89 @@ export interface IntegrationsOverview {
   cloudflare: CloudflareConnectionRecord | null;
   sites: CloudflareSiteListEntry[];
   dataforseo?: DataForSeoConnectionRecord | null;
+  formsKey?: { createdAt: string } | null;
+}
+
+function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
+  const [formsKey, setFormsKey] = useState(initial);
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [action, setAction] = useState<"generate" | "revoke" | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [revokeOpen, setRevokeOpen] = useState(false);
+
+  async function generate() {
+    setAction("generate");
+    setError("");
+    setMessage("");
+    setCopied(false);
+    const response = await mutationFetch("/api/integrations/forms-key", { method: "POST" }).catch(() => null);
+    if (!response?.ok) {
+      setError("The Forms key could not be generated.");
+    } else {
+      const body = (await response.json()) as { key: string; createdAt: string };
+      setFormsKey({ createdAt: body.createdAt });
+      setRevealed(body.key);
+      setMessage(formsKey ? "Forms key rotated. Every Site's form posts are refused until the new key is deployed." : "Forms key generated.");
+    }
+    setAction(null);
+  }
+
+  async function revoke() {
+    setAction("revoke");
+    setError("");
+    setMessage("");
+    const response = await mutationFetch("/api/integrations/forms-key", { method: "DELETE" }).catch(() => null);
+    if (!response?.ok) {
+      setError("The Forms key could not be revoked.");
+    } else {
+      setFormsKey(null);
+      setRevealed(null);
+      setMessage("Forms key revoked. Every Site's form posts are refused until a new key is generated.");
+    }
+    setRevokeOpen(false);
+    setAction(null);
+  }
+
+  async function copy() {
+    if (!revealed) return;
+    await navigator.clipboard.writeText(revealed).catch(() => undefined);
+    setCopied(true);
+  }
+
+  const busy = action !== null;
+  return (
+    <div className="flex flex-col gap-3 px-3 pb-3 text-sm">
+      <p>
+        <span className="font-medium">Status: </span>
+        {formsKey ? `Generated ${formatDate(formsKey.createdAt)}` : "No key yet"}
+      </p>
+      {revealed ? (
+        <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <code className="break-all font-mono">{revealed}</code>
+            <Button type="button" variant="outline" size="sm" onClick={() => void copy()}>{copied ? "Copied" : "Copy"}</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Set it once as <span className="font-mono">TRACER_FORM_KEY</span> in the site repository&apos;s deploy environment so every Site&apos;s Worker gets it. It is shown only once.
+          </p>
+        </div>
+      ) : null}
+      {message ? <p>{message}</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void generate()}>{action === "generate" ? <><Spinner /> Generating...</> : formsKey ? "Rotate Forms key" : "Generate Forms key"}</Button>
+        {formsKey ? <Button type="button" variant="destructive" disabled={busy} onClick={() => setRevokeOpen(true)}>Revoke Forms key</Button> : null}
+      </div>
+      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Revoke the Forms key?</AlertDialogTitle><AlertDialogDescription>Every Site&apos;s contact form posts are refused until a new key is generated and deployed. Stored Form Submissions are kept.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={busy} onClick={(event) => { event.preventDefault(); void revoke(); }}>{action === "revoke" ? <><Spinner /> Revoking...</> : "Revoke Forms key"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
 }
 
 export default function IntegrationsView({ initial, provider: selectedId }: { initial: IntegrationsOverview; provider: ProviderId }) {
@@ -791,6 +874,7 @@ export default function IntegrationsView({ initial, provider: selectedId }: { in
   const panels: { title: string; description?: string; body: ReactNode }[] = [];
   if (selected.id === "twilio" && twilio) panels.push({ title: "Numbers", description: `${twilio.numberCount} eligible numbers. Last synced ${formatDate(twilio.numbersSyncedAt)}.`, body: <NumbersTable numbers={numbers} /> });
   if (selected.id === "cloudflare" && cloudflare) panels.push({ title: "Sites", description: "Workers on the account that serve a custom hostname.", body: <SitesTable sites={sites} /> });
+  if (selected.id === "cloudflare" && cloudflare) panels.push({ title: "Forms key", description: "The Organization's one secret every Site's Worker presents with its hostname when posting a Form Submission. Tracer keeps only its hash.", body: <FormsKeyPanel initial={initial.formsKey ?? null} /> });
   if (selected.recentFailures) panels.push({ title: "Recording transfer failures", body: <RecordingTransferFailures failures={selected.recentFailures} /> });
   if (selected.mediaLifecycle) panels.push({ title: "Media cleanup", description: "The oldest purged or expired Recordings whose media cleanup is unfinished.", body: <MediaLifecycle health={selected.mediaLifecycle} /> });
 
@@ -847,7 +931,7 @@ export default function IntegrationsView({ initial, provider: selectedId }: { in
               {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
             </FramePanel>
             {panels.map((panel) => (
-              <FramePanel key={panel.title} className="flex flex-col p-0">
+              <FramePanel key={panel.title} role="region" aria-label={panel.title} className="flex flex-col p-0">
                 <div className="flex flex-col gap-0.5 px-3 pt-3 pb-2">
                   <h3 className="text-sm font-medium">{panel.title}</h3>
                   {panel.description ? <p className="text-xs text-muted-foreground">{panel.description}</p> : null}

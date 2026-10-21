@@ -32,6 +32,7 @@ import { migrateDatabase } from "@/data/migrate";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import type { TwilioClient } from "@/data/twilio-client";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const login = "operator@example.com";
@@ -42,7 +43,7 @@ let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
 let organizationId = "";
 let operatorId = "";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const acceptedPasswords = new Set([firstPassword, secondPassword]);
 let unavailable = false;

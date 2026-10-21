@@ -38,13 +38,14 @@ import { createTracerAuth } from "@/data/tracer-auth";
 import type { TwilioClient } from "@/data/twilio-client";
 import { createWorkspaces } from "@/data/workspaces";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const siteIds: Record<string, string> = {};

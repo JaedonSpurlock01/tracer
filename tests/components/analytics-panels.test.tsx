@@ -85,6 +85,14 @@ describe("AnalyticsKpiRow", () => {
     expect(within(tile("Average Duration")).getByText("+146.4% vs previous period")).toBeVisible();
   });
 
+  it("names how many Good Leads are Form Submissions beneath the value and omits the line when none are", () => {
+    const { rerender } = render(<AnalyticsKpiRow kpis={kpis} goodLeadForms={3} />);
+    expect(within(tile("Good Leads")).getByText("3 from Forms")).toBeVisible();
+
+    rerender(<AnalyticsKpiRow kpis={kpis} goodLeadForms={0} />);
+    expect(within(tile("Good Leads")).queryByText(/from Forms/)).not.toBeInTheDocument();
+  });
+
   it("shows a dash when a comparison has no change and no comparison for All Time", () => {
     const { rerender } = render(<AnalyticsKpiRow kpis={kpis} />);
     expect(within(tile("Good Leads")).getByText("- vs previous period")).toBeVisible();

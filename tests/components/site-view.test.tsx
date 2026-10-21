@@ -106,6 +106,7 @@ const analytics: AnalyticsSummary = {
     goodLeads: { value: 5, comparison: { previous: 2, change: 1.5, unit: "relative" } },
     averageConnectedSeconds: { value: 95, comparison: { previous: null, change: null, unit: "relative" } },
   },
+  goodLeadForms: 0,
   trend: {
     interval: "day",
     points: [

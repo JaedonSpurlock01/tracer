@@ -18,9 +18,15 @@
  */
 import { normalizeIdentityEmail } from "@/data/auth-policy";
 
+export interface EmailAddress {
+  name: string;
+  email: string;
+}
+
 export interface TransactionalEmailMessage {
-  to: string;
-  from: string;
+  to: string | string[];
+  from: string | EmailAddress;
+  replyTo?: EmailAddress;
   subject: string;
   text: string;
   html: string;

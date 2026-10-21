@@ -31,6 +31,7 @@ import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { TwilioClientError, type TwilioAccountSummary, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const accountSid = "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -46,7 +47,7 @@ let pool: Pool | undefined;
 let organizationId = "";
 let operatorId = "";
 let viewerId = "";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const accepted = new Map<string, TwilioAccountSummary>();
 const credentials: TwilioCredential[] = [];
@@ -214,6 +215,21 @@ describe.sequential("Organization integrations", () => {
       body: JSON.stringify({ accountSid, apiKeySid: firstKeySid, apiKeySecret: firstSecret }),
     }));
     expect(connect.response.status).toBe(403);
+  });
+
+  it("generates, reports, and revokes the Organization's one Forms key for Operators only", async () => {
+    const viewerCookie = await signIn("viewer@example.com");
+    expect((await json(new Request("http://localhost:3000/api/integrations/forms-key", { method: "POST", headers: { cookie: viewerCookie } }))).response.status).toBe(403);
+    const cookie = await signIn("operator@example.com");
+    expect((await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }))).body.formsKey).toBeNull();
+    const generated = await json(new Request("http://localhost:3000/api/integrations/forms-key", { method: "POST", headers: { cookie } }));
+    expect(generated.response.status).toBe(201);
+    expect(generated.body).toEqual({ key: expect.stringMatching(/^fk_/), createdAt: expect.any(String) });
+    const read = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    expect(read.body.formsKey).toEqual({ createdAt: generated.body.createdAt });
+    expect(JSON.stringify(read.body)).not.toContain(generated.body.key as string);
+    expect((await handler()(new Request("http://localhost:3000/api/integrations/forms-key", { method: "DELETE", headers: { cookie } }))).status).toBe(204);
+    expect((await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }))).body.formsKey).toBeNull();
   });
 
   it("reports provider health before Twilio is connected", async () => {

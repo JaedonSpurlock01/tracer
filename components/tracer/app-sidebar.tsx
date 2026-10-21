@@ -8,7 +8,7 @@
  *  Outside a Workspace the navigation is global. Inside a Workspace, which
  *  the Workspace layout registers through WorkspaceNav, the navigation
  *  swaps to an All Workspaces back link, the Workspace name as a heading,
- *  Overview, a Website group with Site, a Phone group with Calls and the
+ *  Overview, a Website group with Site and Forms, a Phone group with Calls and the
  *  Operator-only Flow, Reports, and the Operator-only Settings. The menu
  *  trigger carries the Tracer orb. The menu lists the current Organization
  *  with a disabled New organization action, the signed-in user with a
@@ -45,6 +45,7 @@ import {
   FileText,
   Globe,
   House,
+  Inbox,
   LayoutGrid,
   LogOut,
   Phone,
@@ -206,7 +207,10 @@ function workspaceNavigation(workspaceId: string): Record<"overview" | "website"
   const base = `/workspaces/${workspaceId}`;
   return {
     overview: [{ label: "Overview", href: base, icon: House, exact: true }],
-    website: [{ label: "Site", href: `${base}/site`, icon: Globe }],
+    website: [
+      { label: "Site", href: `${base}/site`, icon: Globe },
+      { label: "Forms", href: `${base}/forms`, icon: Inbox },
+    ],
     phone: [
       { label: "Calls", href: `${base}/calls`, icon: Phone },
       { label: "Flow", href: `${base}/flow`, icon: Workflow, operatorOnly: true },

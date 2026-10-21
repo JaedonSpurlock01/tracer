@@ -42,9 +42,11 @@ export const organizations = pgTable(
     slug: text().notNull().unique(),
     logo: text(),
     metadata: text(),
+    formsKeyHash: text("forms_key_hash"),
+    formsKeyCreatedAt: timestamp("forms_key_created_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
-  (table) => [uniqueIndex("organization_slug_idx").on(table.slug)],
+  (table) => [uniqueIndex("organization_slug_idx").on(table.slug), uniqueIndex("organization_forms_key_hash_idx").on(table.formsKeyHash)],
 );
 
 export const users = pgTable(
@@ -239,6 +241,7 @@ export const workspaces = pgTable(
     spamGateEnabled: boolean("spam_gate_enabled").notNull().default(false),
     whisperEnabled: boolean("whisper_enabled").notNull().default(false),
     whisperMessage: text("whisper_message"),
+    formForwardTo: text("form_forward_to").array().notNull().default(sql`'{}'::text[]`),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
@@ -986,6 +989,65 @@ export const deals = pgTable(
   ],
 );
 
+export const formSubmissionForwardStatuses = ["Sent", "Failed", "Not configured", "Held", "Rejected"] as const;
+
+export const formSubmissions = pgTable(
+  "form_submission",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "restrict" }),
+    siteLinkId: text("site_link_id")
+      .notNull()
+      .references(() => siteLinks.id, { onDelete: "restrict" }),
+    submissionId: text("submission_id").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    page: text(),
+    name: text().notNull(),
+    phone: text(),
+    email: text(),
+    fields: jsonb().$type<Record<string, string>>().notNull(),
+    repeatOfId: text("repeat_of_id"),
+    held: boolean().notNull().default(false),
+    forwardStatus: text("forward_status").notNull(),
+    forwardTo: text("forward_to").array().notNull().default(sql`'{}'::text[]`),
+    forwardError: text("forward_error"),
+    forwardedAt: timestamp("forwarded_at", { withTimezone: true }),
+    forwardMessageId: text("forward_message_id"),
+    reviewClassification: text("review_classification"),
+    reviewNote: text("review_note"),
+    reviewerUserId: text("reviewer_user_id"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("form_submission_forward_status_check", sql`${table.forwardStatus} in ('Sent', 'Failed', 'Not configured', 'Held', 'Rejected')`),
+    check("form_submission_review_classification_check", sql`${table.reviewClassification} is null or ${table.reviewClassification} in ('Good Lead', 'Not Good Lead', 'Uncertain')`),
+    check("form_submission_held_review_check", sql`not ${table.held} or ${table.reviewClassification} is null`),
+    foreignKey({
+      columns: [table.repeatOfId],
+      foreignColumns: [table.id],
+      name: "form_submission_repeat_of_id_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.reviewerUserId],
+      foreignColumns: [users.id],
+      name: "form_submission_reviewer_user_id_fk",
+    }).onDelete("set null"),
+    uniqueIndex("form_submission_site_submission_idx").on(table.siteId, table.submissionId),
+    index("form_submission_organization_id_idx").on(table.organizationId),
+    index("form_submission_workspace_received_idx").on(table.workspaceId, table.receivedAt),
+  ],
+);
+
 export const schema = {
   organization: organizations,
   user: users,
@@ -1023,4 +1085,5 @@ export const schema = {
   siteKeyword: siteKeywords,
   keywordRankDay: keywordRankDays,
   deal: deals,
+  formSubmission: formSubmissions,
 };

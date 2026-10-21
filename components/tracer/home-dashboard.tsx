@@ -266,7 +266,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
           {pending ? (
             <AnalyticsKpiSkeleton />
           ) : summary ? (
-            <AnalyticsKpiRow kpis={summary.kpis} />
+            <AnalyticsKpiRow kpis={summary.kpis} goodLeadForms={summary.goodLeadForms} />
           ) : (
             <Frame>
               <FramePanel>

@@ -50,6 +50,7 @@ import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { createTwilioRecordingMedia, type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let owner: Pool | undefined;
@@ -58,7 +59,7 @@ let organizationId = "";
 let operatorId = "";
 let operatorCookie = "";
 let clientCookie = "";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const recipients = new Set(["operator@example.com", "client@example.com"]);
 const fakeTwilio: TwilioClient = {

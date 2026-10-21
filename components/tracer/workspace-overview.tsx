@@ -293,7 +293,7 @@ function Analytics({ analytics, pending, onRetry }: { analytics: NonNullable<Wor
   }
   return (
     <>
-      {pending || !summary ? <AnalyticsKpiSkeleton /> : <AnalyticsKpiRow kpis={summary.kpis} />}
+      {pending || !summary ? <AnalyticsKpiSkeleton /> : <AnalyticsKpiRow kpis={summary.kpis} goodLeadForms={summary.goodLeadForms} />}
       <Frame>
         <FramePanel role="region" aria-labelledby="call-trends-title" className="flex flex-col gap-3">
           <div className="flex flex-col gap-0.5">
