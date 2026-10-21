@@ -28,6 +28,7 @@ import IntegrationsView from "@/components/tracer/integrations-view";
 import { isActiveOperatorActor } from "@/data/authorization";
 import { resolveRequestActor } from "@/app/(app)/actor";
 import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
+import { createFormsKey } from "@/data/form-submissions";
 import { createRuntimeDataForSeoClient } from "@/data/dataforseo-runtime";
 import { createIntegrations } from "@/data/integrations";
 import { describeProviderHealth, isProviderId } from "@/data/provider-health";
@@ -60,6 +61,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       cloudflare,
       sites: cloudflare ? await integrations.listCloudflareSites() : [],
       dataforseo,
+      formsKey: await createFormsKey(runtime.pool, actor).status(),
     };
   });
   const requested = (await searchParams).provider;

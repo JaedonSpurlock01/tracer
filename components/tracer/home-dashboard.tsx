@@ -7,7 +7,7 @@
  *  Shows the Home header with its scope, date controls, and Generate
  *  Report, then the KPI row, the Operator-only Money row (this month's
  *  cost with its yearly projection, the revenue of open Deals, and the
- *  profit), the Call trends chart, Workspace performance when the user
+ *  profit), the Leads generated chart, Workspace performance when the user
  *  reads more than one Workspace (with Cost and Revenue columns for
  *  Operators), and the five newest Calls in scope. A Workspace performance row opens that Workspace Overview. A
  *  Recent Calls row opens Call Detail with the global Calls list as its
@@ -266,7 +266,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
           {pending ? (
             <AnalyticsKpiSkeleton />
           ) : summary ? (
-            <AnalyticsKpiRow kpis={summary.kpis} />
+            <AnalyticsKpiRow kpis={summary.kpis} goodLeadForms={summary.goodLeadForms} />
           ) : (
             <Frame>
               <FramePanel>
@@ -278,7 +278,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
           {summary || pending ? (
             <Frame stacked>
               <FramePanel className="p-0" role="region" aria-labelledby="call-trends-title">
-                <RegionTitle id="call-trends-title" title="Call trends" description={summary ? `Times in ${summary.timeZone}` : undefined} />
+                <RegionTitle id="call-trends-title" title="Leads generated" description={summary ? `Times in ${summary.timeZone}` : undefined} />
                 <div className="px-(--frame-panel-px) pb-(--frame-panel-py)">
                   {pending || !summary ? <CallTrendsSkeleton /> : hasCalls ? <CallTrendsChart trend={summary.trend} /> : <p className="py-10 text-center text-sm text-muted-foreground">{noCallsYet}</p>}
                 </div>

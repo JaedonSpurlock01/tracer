@@ -51,8 +51,8 @@ function summary(overrides: Partial<ReportAnalyticsSummary> = {}): ReportAnalyti
     trend: {
       interval: "day",
       points: [
-        { start: "2026-10-05", end: "2026-10-05", label: "Oct 5, 2026", totalCalls: 7, answeredCalls: 4, goodLeads: 2 },
-        { start: "2026-10-06", end: "2026-10-06", label: "Oct 6, 2026", totalCalls: 3, answeredCalls: 3, goodLeads: 1 },
+        { start: "2026-10-05", end: "2026-10-05", label: "Oct 5, 2026", totalCalls: 7, answeredCalls: 4, goodLeads: 2, formSubmissions: 0 },
+        { start: "2026-10-06", end: "2026-10-06", label: "Oct 6, 2026", totalCalls: 3, answeredCalls: 3, goodLeads: 1, formSubmissions: 0 },
       ],
     },
     outcomes: [

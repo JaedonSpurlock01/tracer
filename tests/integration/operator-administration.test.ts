@@ -27,6 +27,7 @@ import { migrateDatabase } from "@/data/migrate";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
@@ -41,7 +42,7 @@ let setupWorkspaceId = "";
 let secondActiveWorkspaceId = "";
 let archivedWorkspaceId = "";
 let clientId = "";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 
 const database = () => drizzle(pool!, { schema });

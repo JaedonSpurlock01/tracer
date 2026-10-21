@@ -90,11 +90,11 @@ const linkedSite = {
 };
 
 describe("WorkspaceSettingsView", () => {
-  it("lists the Site section between General and Number", () => {
+  it("lists the Site and Forms sections between General and Number", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={null} />);
     const rail = screen.getByRole("navigation", { name: "Workspace settings sections" });
-    expect(within(rail).getAllByRole("link").slice(0, 3).map((link) => link.textContent)).toEqual(["General", "Site", "Number"]);
+    expect(within(rail).getAllByRole("link").slice(0, 4).map((link) => link.textContent)).toEqual(["General", "Site", "Forms", "Number"]);
     expect(within(rail).getByRole("link", { name: "Site" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/site");
   });
 
@@ -221,6 +221,7 @@ describe("WorkspaceSettingsView", () => {
     expect(within(rail).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["General", "/workspaces/workspace-1/settings/general"],
       ["Site", "/workspaces/workspace-1/settings/site"],
+      ["Forms", "/workspaces/workspace-1/settings/forms"],
       ["Number", "/workspaces/workspace-1/settings/number"],
       ["Recording and AI", "/workspaces/workspace-1/settings/recording"],
       ["Access", "/workspaces/workspace-1/settings/access"],
@@ -536,5 +537,35 @@ describe("WorkspaceSettingsView Domain renewal and Deal", () => {
     expect(await within(region).findByText("Monthly, $500.00 per month, since Oct 1, 2026")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Deal saved.");
     expect(within(region).getByRole("button", { name: "End Deal" })).toBeVisible();
+  });
+});
+
+describe("WorkspaceSettingsView Forms", () => {
+  const forms = {
+    workspace: { id: "workspace-1", name: "Acme Plumbing" },
+    site: { id: "site-1", primaryHostname: "pocatelloasphaltpaving.com" },
+    submissions: [],
+    heldCount: 0,
+    forwardTo: ["owner@example.com"],
+  };
+
+  it("edits the Forwarding Recipients and saves them with PUT", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      if (String(request) === "/api/workspaces/workspace-1/forms/forwarding" && init?.method === "PUT") {
+        return new Response(JSON.stringify({ forwardTo: (JSON.parse(String(init.body)) as { emails: string[] }).emails }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="forms" initialForms={forms} />);
+    const region = screen.getByRole("region", { name: "Forwarding Recipients" });
+    expect(within(region).getByText("owner@example.com")).toBeVisible();
+    expect(within(region).getByText("info@pocatelloasphaltpaving.com")).toBeVisible();
+    fireEvent.change(within(region).getByLabelText("Add a recipient"), { target: { value: "office@example.com" } });
+    fireEvent.click(within(region).getByRole("button", { name: "Add" }));
+    fireEvent.click(within(region).getByRole("button", { name: "Remove owner@example.com" }));
+    fireEvent.click(within(region).getByRole("button", { name: "Save Forwarding Recipients" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/forms/forwarding", expect.objectContaining({ method: "PUT", body: JSON.stringify({ emails: ["office@example.com"] }) })));
+    expect(await screen.findByRole("status")).toHaveTextContent("Forwarding Recipients saved.");
   });
 });

@@ -19,7 +19,7 @@ If these documents conflict, stop implementation and resolve the conflict before
 - **Next milestone:** M18 - Production Hardening and Acceptance, which the Product Owner starts explicitly; it carries the two M17 Staging checks as entry criteria
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production data resources provisioned but not deployed
 - **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-20
+- **Last roadmap review:** 2026-10-21
 
 M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. M16 is Complete. It delivered scoped PDF and CSV reports generated in Trigger.dev, Calls Export CSV and Recording ZIP exports with a CSV manifest and a 500-Recording limit, a precomputed stereo MP3 per Stored Recording with Download MP3 and single-Call Export Call, requester-only Report history and the notification popover with downloads that recheck access to the whole Workspace scope, and seven-day artifact expiry through the `report-artifacts` R2 lifecycle rule with a 6-hour sweep that fails stuck jobs and deletes metadata after 90 days.
 
@@ -188,10 +188,11 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M20 | Sites and Cloudflare Connection | Complete | Preview and Staging | M17 |
 | M21 | Search Rankings | Complete | Preview and Staging | M20 |
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
-| M18 | Production Hardening and Acceptance | Not Started | Staging | M22 |
+| M23 | Form Submissions | Complete | Preview and Staging | M22 |
+| M18 | Production Hardening and Acceptance | Not Started | Staging | M23 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
 
-M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M18, M19. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production.
+M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M19. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
 
 ## Phase 0 - Ideation and governance
 
@@ -1043,7 +1044,7 @@ M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the 
 
 ## Phase 7 - Business HQ
 
-Phase 7 turns Tracer from a call-tracking application into the operating console for every rank-and-rent website Spurlock Labs runs. Each Business HQ domain is its own vertical milestone: the website and its hosting (M20), its search rankings (M21), and what it costs and earns (M22). Later domains such as form submissions, SMS, and Business Profile follow the same intake rules after M19. The Product Owner's stress-tested decisions for this phase are recorded in `docs/CHANGELOG.md` under 2026-10-20.
+Phase 7 turns Tracer from a call-tracking application into the operating console for every rank-and-rent website Spurlock Labs runs. Each Business HQ domain is its own vertical milestone: the website and its hosting (M20), its search rankings (M21), and what it costs and earns (M22). Form submissions joined the phase as M23 on 2026-10-21. Later domains such as SMS and Business Profile follow the same intake rules after M19. The Product Owner's stress-tested decisions for this phase are recorded in `docs/CHANGELOG.md` under 2026-10-20.
 
 ### M20 - Sites and Cloudflare Connection
 
@@ -1180,13 +1181,55 @@ M21 closed on 2026-10-20 after the domain, contract, integration, task, componen
 
 M22 closed on 2026-10-20 after the domain, integration, component, typecheck, lint, build, and Playwright gates passed. It delivered the maintained rate table in `data/pricing.ts` with the date its prices were checked, the `deal` table with at most one open Deal per Workspace and the Site's Domain renewal columns, the Deal routes and the Domain renewal route under the Workspace handler (Operator only, 403 for Client Viewers), the cost and revenue service that prices each Workspace's calendar month from persisted usage (Telephony, Processing, Hosting split evenly across Active Workspaces, Search, and Domain) and projects Monthly, Weekly, and Per Lead revenue with Lead Review precedence, the Home Money row with the yearly projection and the Cost and Revenue columns, the Overview Monthly Cost and Profit tiles, the Site Deal and cost panel with Add, Edit, and End Deal, the Domain renewal and Deal editors in Site settings, and the Pricing guide with the worked two-hour Call ($4.44: 120 inbound, forwarded, and Recording minutes, 240 transcribed channel minutes, and one Lead Assessment). Revenue follows the Deal that is open now, so past months are priced against the current Deal rather than the one open then. Playwright covers adding a Monthly Deal, reading Monthly Cost, Monthly Revenue, and Profit on Home and the Overview as an Operator, and a Client Viewer seeing none of them. The Staging reconciliation by hand, Home's cost and profit across the Staging Workspaces checked against the rate table, is still to be performed by the Product Owner after deployment to Staging.
 
+### M23 - Form Submissions
+
+- **Status:** Complete
+- **Outcome:** Every contact form on a rank-and-rent Site posts to Tracer instead of emailing the business directly, so each Form Submission is stored under its Workspace, forwarded by Tracer to the business from the Site's own address, counted beside Good Lead Calls as the Workspace's Leads, and reviewable by an Operator.
+- **Depends on:** M22
+- **Target environment:** Preview and Staging
+- **Execution note:** The Site Worker keeps its own validation and honeypot and replaces its email send with `POST /api/forms` carrying the Organization's one Forms key as a bearer token, its own hostname, and a submission id it minted, so a retried request is idempotent. One key for every Site was the Product Owner's call on 2026-10-21 over a key per Site: adding a city then needs no new secret, the site repository passes the key to every Worker at deploy time, and a leaked key can do no more than a spam bot already can, which the hold rule and review absorb. Tracer finds the Organization by the SHA-256 hash of the key, the Site by its primary or `www` hostname, follows the Site's open Site Link to the Workspace, and refuses with 401 for an unknown key, 404 for a hostname that is not a Site, 409 for a Site with no open Site Link (nothing is stored; the Site shows its existing error asking the customer to call), and 400 for a submission without a name or any contact. A stored Form Submission keeps the normalized name, phone, and email plus every field as submitted, so Sites in different verticals can post different fields. The same person (same phone or email) may submit twice within 24 hours and both are forwarded; the third and later are Held: stored, not forwarded, and not counted until an Operator approves (forwards and counts) or rejects (never forwarded, reviewed as Not Good Lead). Tracer forwards from the Worker through the Cloudflare Email Service binding, because Trigger.dev Cloud has no email binding, as `<Workspace name> <info@<Site primary hostname>>` with Reply-To the submitter, to the Workspace's forwarding recipients kept in Workspace Settings; a submission with no recipients is stored as Not forwarded, a provider failure as Forward failed with the provider's reason, and both offer Resend. Sending from the Site's domain works because the Sites and Tracer share one Cloudflare account where each Site domain is onboarded to Email Sending; the coupling is contained so a domain that is not onboarded shows as Forward failed, Tracer's binding carries no per-Site sender lists, and the Site knows nothing about Tracer beyond the URL and its key. Every unheld submission is a Good Lead by default; an Operator review (Good Lead, Not Good Lead, Uncertain) takes precedence, mirroring the Call rule. Good Leads on Home, the Workspace Overview, the Workspaces list, the trend chart, Workspace performance, and Per Lead revenue count Good Lead Calls and Good Lead Form Submissions together. The Forms page is the Website group's second item in the Workspace Sidebar; Client Viewers read it without the Form key or Operator actions. Because reports share the analytics aggregate, their Good Leads total also counts Form Submissions, but a Form Submissions section in the PDF and CSV, Activity entries, and Turnstile on the Sites stay out of scope. The Sites post to the Staging Worker until M19 switches them to Production. The logic prototype that settled the model (one HTML file with the pure reducer) is kept on the `prototype/form-submissions` branch.
+
+#### Vertical slices
+
+1. Store a Form Submission from a Site's POST with key, Site Link, validation, idempotency, and the hold rule.
+2. Forward from the Site's address to the Workspace's recipients, record the result, and Resend.
+3. Approve, reject, and review submissions; combine Good Leads with Calls in analytics and revenue.
+4. Generate and revoke the Organization's Forms key on Integrations and edit forwarding recipients in Workspace Settings.
+5. Render the Workspace Forms page and enable Forms in the Sidebar.
+
+#### Test-first behaviors
+
+- An unknown key, an unlinked Site, and a contactless submission are refused without a row; a repeated submission id returns the existing row and sends no second email.
+- The third submission from one person within 24 hours is Held until approved or rejected, and only Good Lead submissions count toward Leads and Per Lead revenue.
+- Forwarding records Sent, Not configured, or Failed with the provider's reason, and Resend retries.
+- A Client Viewer reads submissions but cannot approve, reject, review, resend, or edit recipients, and only Operators reach the Forms key on Integrations.
+
+#### Deliverables
+
+- `form_submission` table, the Organization Forms key hash, and Workspace forwarding recipients with runtime grants
+- `POST /api/forms` public route and the Workspace Forms routes
+- Combined Good Leads in the analytics and cost and revenue services
+- Workspace Forms page and Settings editors
+- The Site repository's `lead.ts` posting to Tracer
+
+#### Verification gate
+
+- Domain, integration, component, typecheck, lint, and build gates pass.
+- Staging receives a real submission from the Pocatello Site and forwards it.
+
+#### Exit criteria
+
+- A submission on a linked Site appears on its Workspace Forms page, reaches the forwarding recipients from the Site's address, and raises Good Leads on Home and the Overview.
+
+M23 closed on 2026-10-21 after the domain, contract, integration, component, Worker, typecheck, lint, build, and Playwright gates passed in CI and the Staging deployment applied migration 0025. The Product Owner verified the Staging gate the same day: a real submission from the Pocatello Site reached its Workspace Forms page and the forwarding recipients. The close-out renamed the dashboard chart from Call trends to Leads generated and added a fourth series, Forms, counting every Form Submission received per bucket beside Total Calls, Answered Calls, and the combined Good Leads; the PDF report keeps its three series. The asphalt, solar, and dumpster site repositories post to the Staging Worker until M19 switches them to Production.
+
 ## Phase 8 - Deployment and operation
 
 ### M18 - Production Hardening and Acceptance
 
 - **Status:** Not Started
 - **Outcome:** The complete first release passes security, reliability, accessibility, cost, and operational acceptance in Staging.
-- **Depends on:** M22
+- **Depends on:** M23
 - **Target environment:** Staging
 - **Entry criteria carried from M17:** the Product Owner's Staging retention demonstration with `pnpm fixtures:retention`, and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule.
 

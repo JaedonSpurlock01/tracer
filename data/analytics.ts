@@ -20,7 +20,8 @@
  *  is zero or absent, and Answer Rate changes by the difference in
  *  percentage points, null when either rate is absent, so a view shows a
  *  dash. Trend points count Total Calls, Answered Calls,
- *  and Good Leads per zero-filled bucket. Workspace performance lists Total
+ *  Good Leads (Calls and Form Submissions together), and Form Submissions
+ *  per zero-filled bucket. Workspace performance lists Total
  *  Calls, Answer Rate, Good Leads, and Lead Rate (Good Leads over Total
  *  Calls) per readable Workspace, Total Calls descending, and is withheld
  *  entirely unless the actor reads more than one Workspace. The Workspaces
@@ -80,6 +81,7 @@ import { connectedSecondsSql } from "@/data/call-details";
 import { outcomeKinds, type OutcomeKind } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { callSource, effectiveClassificationSql, filterConditions } from "@/data/calls";
+import { formGoodLeadSql, formSubmissionSource } from "@/data/form-submissions";
 import { leadClassifications, type LeadClassification } from "@/data/lead-classification";
 import type { SiteHealth } from "@/data/site-health";
 import { siteHealthForWorkspaces } from "@/data/site-health-query";
@@ -109,6 +111,8 @@ export interface AnalyticsTrendPoint extends AnalyticsTrendBucket {
   totalCalls: number;
   answeredCalls: number;
   goodLeads: number;
+  /** Every Form Submission received in the bucket, Held and reviewed ones included. */
+  formSubmissions: number;
 }
 
 export interface WorkspacePerformanceRow {
@@ -126,6 +130,8 @@ export interface AnalyticsSummary {
   window: AnalyticsWindow;
   previousWindow: AnalyticsWindow | null;
   kpis: AnalyticsKpis;
+  /** How many of the Good Leads are Form Submissions rather than Calls. */
+  goodLeadForms: number;
   trend: { interval: AnalyticsTrendInterval; points: AnalyticsTrendPoint[] };
   workspacePerformance: WorkspacePerformanceRow[] | null;
 }
@@ -186,7 +192,7 @@ const aggregateColumns = `count(*)::int as total_calls,
        count(*) filter (where ${goodLeadSql})::int as good_leads,
        (avg(${connectedSecondsSql}) filter (where ${answeredSql}))::float8 as average_connected_seconds`;
 
-type AggregateRow = { total_calls: number; forwarded_calls: number; answered_forwarded_calls: number; good_leads: number; average_connected_seconds: number | null };
+type AggregateRow = { total_calls: number; forwarded_calls: number; answered_forwarded_calls: number; good_leads: number; good_lead_forms: number; average_connected_seconds: number | null };
 
 const recentWindowDays = 30;
 
@@ -244,10 +250,31 @@ function scopeConditions(scope: ScopeSql, values: unknown[], workspaceId: string
   return conditions.join(" and ");
 }
 
+// Form Submissions share the Workspace scope and calendar-date window of Calls, keyed on the day they were received.
+function formConditions(scope: ScopeSql, values: unknown[], workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string, goodLeadsOnly = true): string {
+  const conditions = goodLeadsOnly ? [scope(values), formGoodLeadSql] : [scope(values)];
+  if (workspaceId) {
+    values.push(workspaceId);
+    conditions.push(`fs.workspace_id = $${values.length}`);
+  }
+  if (window) {
+    values.push(timeZone, window.from, window.to);
+    conditions.push(`(fs.received_at at time zone $${values.length - 2})::date between $${values.length - 1}::date and $${values.length}::date`);
+  }
+  return conditions.join(" and ");
+}
+
 async function aggregate(pool: Pool, scope: ScopeSql, workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string): Promise<AggregateRow> {
   const values: unknown[] = [];
   const where = scopeConditions(scope, values, workspaceId, window, timeZone);
-  return (await pool.query<AggregateRow>(`select ${aggregateColumns} from ${callSource} where ${where}`, values)).rows[0];
+  const formValues: unknown[] = [];
+  const formWhere = formConditions(scope, formValues, workspaceId, window, timeZone);
+  const [calls, forms] = await Promise.all([
+    pool.query<Omit<AggregateRow, "good_lead_forms">>(`select ${aggregateColumns} from ${callSource} where ${where}`, values),
+    pool.query<{ good_lead_forms: number }>(`select count(*)::int as good_lead_forms from ${formSubmissionSource} where ${formWhere}`, formValues),
+  ]);
+  const goodLeadForms = forms.rows[0]?.good_lead_forms ?? 0;
+  return { ...calls.rows[0], good_leads: calls.rows[0].good_leads + goodLeadForms, good_lead_forms: goodLeadForms };
 }
 
 async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, window: AnalyticsWindow | null, timeZone: string, interval: AnalyticsTrendInterval, today: string) {
@@ -265,9 +292,23 @@ async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, wi
       order by 1`,
     values,
   );
-  const first = rows.rows[0]?.day;
+  const formValues: unknown[] = [];
+  const formWhere = formConditions(scope, formValues, workspaceId, window, timeZone, false);
+  formValues.push(timeZone);
+  const formRows = await pool.query<{ day: string; good_leads: number; submissions: number }>(
+    `select to_char((fs.received_at at time zone $${formValues.length})::date, 'YYYY-MM-DD') as day,
+            count(*) filter (where ${formGoodLeadSql})::int as good_leads,
+            count(*)::int as submissions
+       from ${formSubmissionSource}
+      where ${formWhere}
+      group by 1
+      order by 1`,
+    formValues,
+  );
+  const firstDay = [rows.rows[0]?.day, formRows.rows[0]?.day].filter((day): day is string => Boolean(day)).sort()[0];
+  const first = firstDay;
   const trendWindow = window ?? { from: first && first < today ? first : today, to: today };
-  const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0 }));
+  const points = analyticsTrendBuckets(interval, trendWindow).map((bucket): AnalyticsTrendPoint => ({ ...bucket, totalCalls: 0, answeredCalls: 0, goodLeads: 0, formSubmissions: 0 }));
   const byStart = new Map(points.map((point) => [analyticsBucketStart(interval, point.start), point]));
   for (const row of rows.rows) {
     const point = byStart.get(analyticsBucketStart(interval, row.day));
@@ -275,6 +316,12 @@ async function trend(pool: Pool, scope: ScopeSql, workspaceId: string | null, wi
     point.totalCalls += row.total_calls;
     point.answeredCalls += row.answered_calls;
     point.goodLeads += row.good_leads;
+  }
+  for (const row of formRows.rows) {
+    const point = byStart.get(analyticsBucketStart(interval, row.day));
+    if (!point) continue;
+    point.goodLeads += row.good_leads;
+    point.formSubmissions += row.submissions;
   }
   return { window: trendWindow, points };
 }
@@ -291,16 +338,25 @@ async function workspacePerformance(pool: Pool, scope: ScopeSql, window: Analyti
   if (listed.rows.length <= 1) return null;
   const values: unknown[] = [];
   const where = scopeConditions(scope, values, null, window, timeZone);
-  const aggregates = await pool.query<AggregateRow & { workspace_id: string }>(
-    `select c.workspace_id, ${aggregateColumns} from ${callSource} where ${where} group by c.workspace_id`,
-    values,
-  );
+  const formValues: unknown[] = [];
+  const formWhere = formConditions(scope, formValues, null, window, timeZone);
+  const [aggregates, forms] = await Promise.all([
+    pool.query<Omit<AggregateRow, "good_lead_forms"> & { workspace_id: string }>(
+      `select c.workspace_id, ${aggregateColumns} from ${callSource} where ${where} group by c.workspace_id`,
+      values,
+    ),
+    pool.query<{ workspace_id: string; good_lead_forms: number }>(
+      `select fs.workspace_id, count(*)::int as good_lead_forms from ${formSubmissionSource} where ${formWhere} group by fs.workspace_id`,
+      formValues,
+    ),
+  ]);
   const byWorkspace = new Map(aggregates.rows.map((row) => [row.workspace_id, row]));
+  const formsByWorkspace = new Map(forms.rows.map((row) => [row.workspace_id, row.good_lead_forms]));
   return listed.rows
     .map((workspace): WorkspacePerformanceRow => {
       const row = byWorkspace.get(workspace.id);
       const totalCalls = row?.total_calls ?? 0;
-      const goodLeads = row?.good_leads ?? 0;
+      const goodLeads = (row?.good_leads ?? 0) + (formsByWorkspace.get(workspace.id) ?? 0);
       return {
         workspace: { id: workspace.id, name: workspace.name },
         trackingNumber: workspace.tracking_number,
@@ -337,7 +393,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
     const [ids, at, daysBack] = [`$${values.length - 2}`, `$${values.length - 1}::timestamptz`, `$${values.length}::int`];
     const localToday = `(${at} at time zone w.reporting_timezone)::date`;
     const recent = `c.started_at >= (${localToday} - ${daysBack})::timestamp at time zone w.reporting_timezone and c.started_at < (${localToday} + 1)::timestamp at time zone w.reporting_timezone`;
-    const [health, calls, siteHealthByWorkspace] = await Promise.all([
+    const [health, calls, siteHealthByWorkspace, formLeads] = await Promise.all([
       pool.query<{ id: string; state: WorkspaceState; last_accepted_voice_at: Date | null }>(
         `select w.id, w.state,
                 (select max(pe.received_at)
@@ -361,15 +417,24 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
         values,
       ),
       siteHealthForWorkspaces(pool, actor.organizationId, workspaceIds),
+      pool.query<{ workspace_id: string; good_leads: number }>(
+        `select fs.workspace_id, count(*)::int as good_leads
+           from ${formSubmissionSource}
+          where ${readable} and fs.workspace_id = any(${ids}::text[]) and ${formGoodLeadSql}
+            and fs.received_at >= (${localToday} - ${daysBack})::timestamp at time zone w.reporting_timezone and fs.received_at < (${localToday} + 1)::timestamp at time zone w.reporting_timezone
+          group by fs.workspace_id`,
+        values,
+      ),
     ]);
     const callsByWorkspace = new Map(calls.rows.map((row) => [row.workspace_id, row]));
+    const formsByWorkspace = new Map(formLeads.rows.map((row) => [row.workspace_id, row.good_leads]));
     return Object.fromEntries(health.rows.map((row) => {
       const stats = callsByWorkspace.get(row.id);
       const integrationHealth = webhookHealth(row.state, row.last_accepted_voice_at);
       const siteHealth = siteHealthByWorkspace[row.id] ?? null;
       return [row.id, {
         callsLast30Days: stats?.calls ?? 0,
-        goodLeadsLast30Days: stats?.good_leads ?? 0,
+        goodLeadsLast30Days: (stats?.good_leads ?? 0) + (formsByWorkspace.get(row.id) ?? 0),
         lastCallAt: stats?.last_call_at?.toISOString() ?? null,
         lastSuccessfulInboundCallAt: stats?.last_successful_at?.toISOString() ?? null,
         integrationHealth,
@@ -401,6 +466,7 @@ export function createAnalytics(pool: Pool, actor: Actor, options: { now?: () =>
         window: trendResult.window,
         previousWindow,
         kpis: summaryKpis(current, previous),
+        goodLeadForms: current.good_lead_forms,
         trend: { interval, points: trendResult.points },
         workspacePerformance: performance,
       };

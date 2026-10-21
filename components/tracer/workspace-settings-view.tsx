@@ -4,14 +4,14 @@
  * @brief  Renders one Workspace settings section behind a vertical rail.
  *
  * @description
- *  Provides General, Site, Number, Recording and AI, Access, and Danger
- *  settings, each on its own page linked from the rail. The Site page shows
+ *  Provides General, Site, Forms, Number, Recording and AI, Access, and
+ *  Danger settings, each on its own page linked from the rail. The Site page shows
  *  the linked Site with its preview thumbnail, hostname, and Site Link
  *  start, replaces it through the Site picker, or detaches it after
  *  confirmation without changing Cloudflare, edits the Site's Service
  *  Area, Keywords, and Domain renewal, and adds, edits, or ends the
- *  Workspace's Deal. The Number page replaces or
- *  detaches the Tracking Number. An Archived Workspace keeps only Access and
+ *  Workspace's Deal. The Forms page edits the Forwarding Recipients. The
+ *  Number page replaces or detaches the Tracking Number. An Archived Workspace keeps only Access and
  *  Restore editable.
  *
  * @remarks
@@ -51,6 +51,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/tracer/empty-state";
 import { formatCallTime } from "@/components/tracer/call-format";
+import { ForwardingRecipientsSettings } from "@/components/tracer/forms-settings";
 import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
 import { DealSettings, DomainRenewalSettings } from "@/components/tracer/site-deal-settings";
 import SiteSearchSettings, { type SiteSearchSettingsData } from "@/components/tracer/site-search-settings";
@@ -58,6 +59,7 @@ import WorkspaceAccessSection from "@/components/tracer/workspace-access-section
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { DealRecord } from "@/data/deals";
+import type { FormSubmissionList } from "@/data/form-submissions";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { AvailableNumber } from "@/data/workspace-routing";
 import type { WorkspaceRecord } from "@/data/workspaces";
@@ -73,6 +75,7 @@ export default function WorkspaceSettingsView({
   initialSite = null,
   initialKeywords = null,
   initialDeal,
+  initialForms = null,
 }: {
   initialWorkspace: WorkspaceRecord;
   section: WorkspaceSettingsSection;
@@ -80,6 +83,7 @@ export default function WorkspaceSettingsView({
   initialSite?: SiteResponse | null;
   initialKeywords?: SiteSearchSettingsData | null;
   initialDeal?: DealRecord | null;
+  initialForms?: FormSubmissionList | null;
 }) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [site, setSite] = useState<SiteResponse | null>(initialSite);
@@ -387,6 +391,19 @@ export default function WorkspaceSettingsView({
                     <DealSettings workspaceId={workspace.id} initial={initialDeal} onMessage={setMessage} />
                   </div>
                 ) : null}
+              </section>
+            ) : null}
+            {section === "forms" ? (
+              <section id="forms" className="flex flex-col gap-8">
+                <div>
+                  <h2 className="font-semibold">Forms</h2>
+                  <p className="text-sm text-muted-foreground">Where the linked Site&apos;s Form Submissions are forwarded. The Forms key every Site posts with is managed on Integrations.</p>
+                </div>
+                {initialForms ? (
+                  <ForwardingRecipientsSettings workspaceId={workspace.id} initial={initialForms.forwardTo ?? []} hostname={initialForms.site?.primaryHostname ?? null} onMessage={setMessage} />
+                ) : (
+                  <p role="alert" className="text-sm">The Forms settings are unavailable. Reload to try again.</p>
+                )}
               </section>
             ) : null}
             {section === "number" ? (

@@ -119,7 +119,7 @@ Inside a Workspace (any route under `/workspaces/[id]` except Call Detail's brea
 
 1. **All Workspaces**, a muted back link with a left arrow
 2. The Workspace name as a group heading, then **Overview**
-3. **Website** group: Site, with Forms and Business Profile shown disabled with a `Soon` Badge once those milestones are scheduled, never before
+3. **Website** group: Site and Forms, with Business Profile shown disabled with a `Soon` Badge once that milestone is scheduled, never before
 4. **Phone** group: Calls, Flow (Operator only), with Messages disabled the same way
 5. **Reports**
 6. **Settings**, Operator only
@@ -158,6 +158,7 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 
 - Overview
 - Site
+- Forms
 - Calls
 - Flow
 - Reports
@@ -197,7 +198,7 @@ Workspace creation, user provisioning, report generation, and export requests us
 
 1. **Total Calls:** Count in the selected period
 2. **Answer Rate:** Answered Calls divided by eligible forwarding attempts
-3. **Good Leads:** Calls classified as Good Lead, using Lead Review before Lead Assessment
+3. **Good Leads:** Calls and Form Submissions classified as Good Lead, using Lead Review before Lead Assessment, with a muted `N from Forms` line beneath the value when any are Form Submissions
 4. **Average Duration:** Average connected talk time, excluding prompts and ringing
 
 Each KPI includes a comparison with the immediately preceding period of equal length. The value is the focal point; comparison and definition remain secondary.
@@ -212,9 +213,9 @@ A second row of three tiles below the KPI row, hidden from Client Viewers:
 
 Workspace performance gains Cost and Revenue columns for Operators.
 
-### Call trends
+### Leads generated
 
-- Three line series: Total Calls, Answered Calls, and Good Leads
+- Four line series: Total Calls, Answered Calls, Good Leads (Calls and Form Submissions together), and Forms (every Form Submission received, M23)
 - Daily points for 7-day and 30-day ranges
 - Weekly points for the 90-day range
 - Monthly points for All Time
@@ -745,7 +746,7 @@ The Workspace date controls, then four tiles:
 
 ### Traffic and Calls
 
-One two-series line chart in the Workspace timezone: Visits in the muted series and Calls in the brand accent, dashed, with the same legend, sr-only table, and daily or weekly interval rules as Call trends.
+One two-series line chart in the Workspace timezone: Visits in the muted series and Calls in the brand accent, dashed, with the same legend, sr-only table, and daily or weekly interval rules as Leads generated.
 
 ### Pages and referrers
 
@@ -774,6 +775,52 @@ Requests and errors over 7 days, hostname certificates as a count Badge, Refresh
 - **Preview pending:** the hero shows a Skeleton at 16:10 with the capture status.
 - **Cloudflare disconnected:** keep the last synced data and show a warning line in the hero with a link to Integrations for Operators.
 - **Down:** the hero Badge reads Down with the last check time; analytics stay readable.
+
+## Forms
+
+### Composition plan
+
+1. **Surface:** Operational
+2. **Archetype:** Table-backed management
+3. **Container family:** One Frame around the header and the ledger
+4. **Density:** Dense
+5. **Regions:** Header, Form Submissions ledger with expandable rows
+6. **States:** No Form Submissions, No Site, inline action error
+7. **Motion:** None
+
+The Forms page is `/workspaces/[id]/forms`, the Website group's second item in the Workspace Sidebar. It lists the Workspace's Form Submissions newest first. Client Viewers read the same ledger without actions or the Forwarding Recipients.
+
+### Header
+
+- Title: `Forms`
+- Description: the Form Submission count, with a warning Badge `N held for approval` while any submission is Held
+
+### Ledger
+
+Columns:
+
+1. Received, in Geist Mono
+2. Name
+3. Contact: phone and email in Geist Mono
+4. Fields: every field except Name, Phone, and Email as `Key: value`, muted and truncated
+5. Forwarding: `Forwarded` with the send time, `Forward failed` with the provider's reason beneath, `Not forwarded` when the Workspace had no Forwarding Recipients, `Held`, or `Rejected`
+6. Lead: the effective classification Badge, `Awaiting approval` while Held, with the reviewer's note beneath
+7. Row actions
+
+`Details` on any row expands it to a definition list of the page, the recipients, and every field in full.
+
+### Row actions (Operator only)
+
+- `Approve` and `Reject` on a Held row; approving forwards and counts it, rejecting reviews it as Not Good Lead and never forwards it
+- `Review` opens a small popover with the Lead classification and an optional note, mirroring the Call Lead Review; `Clear review` returns the row to the default Good Lead
+- `Resend` on a `Forward failed` or `Not forwarded` row
+
+Every action replaces the row with the submission the route returns; a failed action shows one inline error above the ledger and leaves the row unchanged.
+
+### States
+
+- **No Form Submissions:** Empty state with the No Workspaces line art explaining that submissions appear when the linked Site's contact form posts with the Forms key.
+- **No Site:** the same Empty state saying the Workspace has no linked Site and pointing to Workspace Settings.
 
 ## Workspace Flow
 
@@ -1199,6 +1246,8 @@ Integrations is visible to Operators only. R2, Hyperdrive, OpenAI, Trigger.dev, 
 
 The Cloudflare Frame holds Connect (Account ID and API token, with a link to Cloudflare's token page and the four permissions the token needs listed), then once connected the account identifier, Connected by and time, Last verified, Test, Rotate Token, Disconnect (blocked while any Site Link is open, with the count), Last sync time with an Operator Sync now action, and a Sites table: preview thumbnail, primary hostname, Site Health Badge, last deployment, 30-day visits, and `Linked to <Workspace>` or `Not linked`. Workers without a custom domain never appear.
 
+Below the Sites table, the Forms key panel (M23) holds the Organization's one Forms key: `Generated <date>` or `No key yet`, Generate or Rotate revealing the new key once in Geist Mono beside Copy with one line to set it once as `TRACER_FORM_KEY` in the site repository's deploy environment, and Revoke behind a confirmation. Every Site posts the same key with its hostname.
+
 ### DataForSEO (M21)
 
 Connect (API login and password), the login shown once connected, Test, Rotate, Disconnect, last check time, lookups this month, and Keywords tracked.
@@ -1283,11 +1332,11 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 2. **Archetype:** Vertical rail settings
 3. **Container family:** Frame-led
 4. **Density:** Default forms with dense metadata
-5. **Regions:** General, Site, Number, Recording and AI, Access, Danger
+5. **Regions:** General, Site, Forms, Number, Recording and AI, Access, Danger
 6. **States:** Server-rendered section data, inline validation, save success, and Retry
 7. **Motion:** Installed section control behavior only
 
-Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `site`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
+Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `site`, `forms`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
 
 ### Site
 
@@ -1298,6 +1347,11 @@ Workspace Settings is Operator only. Client Viewers do not see the tab. Each sec
 - Keywords (M21): phrase and weight from 1 to 5, add and remove, at most 25
 - Domain renewal (M22): registrar, annual price, and renewal date
 - Deal (M22): Monthly, Weekly, or Per Lead with an amount, start date, and optional end date; ending a Deal keeps it in history
+
+### Forms
+
+- Forwarding Recipients: up to ten email addresses with add, remove, and one Save, and one line explaining that every Form Submission is emailed from `info@<primary hostname>` with Reply-To the customer
+- One line pointing to Integrations for the Organization's Forms key, which every Site posts with
 
 ### General
 

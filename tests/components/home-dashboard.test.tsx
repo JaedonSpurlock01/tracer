@@ -43,7 +43,8 @@ const summary: AnalyticsSummary = {
     goodLeads: { value: 9, comparison: { previous: 3, change: 2, unit: "relative" } },
     averageConnectedSeconds: { value: 95, comparison: { previous: 60, change: 95 / 60 - 1, unit: "relative" } },
   },
-  trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 26, answeredCalls: 15, goodLeads: 9 }] },
+  goodLeadForms: 0,
+  trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 26, answeredCalls: 15, goodLeads: 9, formSubmissions: 0 }] },
   workspacePerformance: [
     { workspace: { id: "north", name: "North Plumbing" }, trackingNumber: "+14155550101", totalCalls: 17, answerRate: 7 / 11, goodLeads: 5, leadRate: 5 / 17 },
     { workspace: { id: "setup", name: "Setup Roofing" }, trackingNumber: null, totalCalls: 0, answerRate: null, goodLeads: 0, leadRate: null },
@@ -190,7 +191,8 @@ describe("HomeDashboard", () => {
         goodLeads: { value: 0, comparison: { previous: 0, change: null, unit: "relative" } },
         averageConnectedSeconds: { value: null, comparison: { previous: null, change: null, unit: "relative" } },
       },
-      trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 0, answeredCalls: 0, goodLeads: 0 }] },
+      goodLeadForms: 0,
+      trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 0, answeredCalls: 0, goodLeads: 0, formSubmissions: 0 }] },
     };
     render(<HomeDashboard {...props} summary={empty} recentCalls={{ ...recentCalls, calls: [], total: 0, hasCalls: false }} />);
     expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("0")).toBeVisible();

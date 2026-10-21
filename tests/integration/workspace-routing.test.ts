@@ -30,6 +30,7 @@ import { createTracerAuth } from "@/data/tracer-auth";
 import { TwilioClientError, type TwilioClient, type TwilioVoiceConfiguration } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import { generateInitialCallFlow, type CallFlowGraph } from "@/data/call-flow";
+import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const accountSid = "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -52,7 +53,7 @@ let organizationId = "";
 let operatorId = "";
 const secondOrganizationId = "second-routing-organization";
 const secondOperatorId = "second-routing-operator";
-const messages: { to: string; subject: string; text: string; html: string }[] = [];
+const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const fetchedSids: string[] = [];
 const updates: Array<{ sid: string; configuration: TwilioVoiceConfiguration }> = [];

@@ -122,7 +122,7 @@ function fetchStub(routes: Record<string, RouteValue>) {
     if (!route) throw new Error(`Unexpected route ${key}`);
     const value = Array.isArray(route) ? route.shift() : route;
     if (!value) throw new Error(`No response remaining for ${key}`);
-    return new Response(JSON.stringify(value.body), { status: value.status ?? 200 });
+    return new Response(value.status === 204 ? null : JSON.stringify(value.body), { status: value.status ?? 200 });
   });
 }
 
@@ -598,5 +598,34 @@ describe("IntegrationsView", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/integrations/dataforseo/disconnect", expect.objectContaining({ method: "POST" })));
     expect(await screen.findByRole("status")).toHaveTextContent("DataForSEO disconnected.");
     expect(await within(region).findByRole("button", { name: "Connect DataForSEO" })).toBeVisible();
+  });
+
+  it("generates the Organization's Forms key once from the Cloudflare detail, reveals it a single time, and revokes it after confirmation", async () => {
+    const fetch = fetchStub({
+      ...responseRoutes({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected }),
+      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, formsKey: null } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, formsKey: null } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, formsKey: null } }],
+      "GET /api/integrations/cloudflare/sites": [{ body: { sites } }, { body: { sites } }, { body: { sites } }],
+      "POST /api/integrations/forms-key": { body: { key: "tfk_secret_once", createdAt: "2026-10-21T12:00:00.000Z" }, status: 201 },
+      "DELETE /api/integrations/forms-key": { body: null, status: 204 },
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<IntegrationsView initial={{ ...initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected }), formsKey: null }} provider="cloudflare" />);
+    const panel = within(detail("Cloudflare")).getByRole("region", { name: "Forms key" });
+    expect(within(panel).getByText("No key yet")).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Revoke Forms key" })).not.toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Generate Forms key" }));
+    expect(await within(panel).findByText("tfk_secret_once")).toBeVisible();
+    expect(within(panel).getByText(/TRACER_FORM_KEY/)).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Copy" })).toBeVisible();
+    expect(within(panel).getByText(`Generated ${time("2026-10-21T12:00:00.000Z")}`)).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Rotate Forms key" })).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith("/api/integrations/forms-key", expect.objectContaining({ method: "POST" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Revoke Forms key" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Revoke the Forms key?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Forms key" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/integrations/forms-key", expect.objectContaining({ method: "DELETE" })));
+    expect(await within(panel).findByText("No key yet")).toBeVisible();
+    expect(within(panel).queryByText("tfk_secret_once")).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Generate Forms key" })).toBeVisible();
   });
 });

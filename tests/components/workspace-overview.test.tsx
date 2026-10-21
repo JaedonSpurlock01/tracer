@@ -7,7 +7,7 @@
  *  Covers routing health with webhook health and the last successful
  *  inbound Call, a webhook Warning isolated in routing health with an
  *  Operator-only recovery action, published flow steps, the header actions
- *  for Operators and Client Viewers, the KPI row and Call trends in the
+ *  for Operators and Client Viewers, the KPI row and Leads generated in the
  *  Workspace timezone with date controls, a failed analytics region that
  *  keeps every other region, the Archived label, the Recent Calls list with
  *  its links to Call Detail, View Calls carrying the range, and Empty
@@ -65,7 +65,8 @@ const summary: AnalyticsSummary = {
     goodLeads: { value: 5, comparison: { previous: 2, change: 1.5, unit: "relative" } },
     averageConnectedSeconds: { value: 95, comparison: { previous: null, change: null, unit: "relative" } },
   },
-  trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5 }] },
+  goodLeadForms: 0,
+  trend: { interval: "day", points: [{ start: "2026-10-18", end: "2026-10-18", label: "Oct 18, 2026", totalCalls: 17, answeredCalls: 7, goodLeads: 5, formSubmissions: 0 }] },
   workspacePerformance: null,
 };
 const analytics = { range: { kind: "days" as const, days: 30 as const }, summary, callsHref: "/workspaces/workspace-1/calls?from=2026-09-19&to=2026-10-18" };
@@ -279,11 +280,11 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(screen.queryByRole("link", { name: "Review Number Settings" })).not.toBeInTheDocument();
   });
 
-  it("shows the KPI row and Call trends in the Workspace reporting timezone with date controls", () => {
+  it("shows the KPI row and Leads generated in the Workspace reporting timezone with date controls", () => {
     render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} recentCalls={[]} />);
     expect(screen.getAllByText("America/Chicago").length).toBeGreaterThan(0);
     expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("-11.4 pts vs previous period")).toBeVisible();
-    expect(within(screen.getByRole("region", { name: "Call trends" })).getByRole("list", { name: "Chart legend" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Leads generated" })).getByRole("list", { name: "Chart legend" })).toBeVisible();
     fireEvent.click(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "7 Days" }));
     expect(router.push).toHaveBeenCalledWith("/workspaces/workspace-1?range=7d", { scroll: false });
     expect(screen.getByRole("link", { name: "View Calls" })).toHaveAttribute("href", "/workspaces/workspace-1/calls?from=2026-09-19&to=2026-10-18");

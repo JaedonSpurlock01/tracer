@@ -22,7 +22,7 @@
  * @remarks
  *  Calls come from the Call analytics summary over the same range, and
  *  the chart joins Visits into the Call trend's periods so daily, weekly,
- *  and monthly intervals follow Call trends. The preview image is served
+ *  and monthly intervals follow Leads generated. The preview image is served
  *  by the Workspace-authorized preview route with the capture time as a
  *  cache buster; a missing image reads as Preview pending. States: No
  *  Site, Syncing before the first sync, Preview pending, Cloudflare

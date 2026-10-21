@@ -104,6 +104,18 @@ _Avoid_: Query
 A Site's 0 to 100 score summarizing its weighted Keyword positions through a click-through curve.
 _Avoid_: Ranking, SEO score
 
+**Form Submission**:
+A contact form posted by a linked Site to Tracer, stored under the Site's Workspace with its fields, forwarding result, and optional Lead Review; a Lead by default unless Held or reviewed otherwise.
+_Avoid_: Email, Call, Lead
+
+**Forms key**:
+The Organization's one secret that every Site's Worker presents with its hostname when posting a Form Submission; Tracer stores only its hash and an Operator generates, rotates, or revokes it on Integrations.
+_Avoid_: API key, password, Site key
+
+**Forwarding Recipient**:
+An email address in a Workspace's list that receives every forwarded Form Submission from the Site's own address.
+_Avoid_: Destination Number, Client Viewer
+
 **Deal**:
 A Workspace's agreement with its business: Monthly, Weekly, or Per Lead with an amount, used to project revenue and profit; at most one open Deal per Workspace.
 _Avoid_: Subscription, invoice
@@ -139,6 +151,10 @@ _Avoid_: Subscription, invoice
 - A **Site Link** connects one **Site** to one **Workspace** for a bounded period; replacing or detaching ends it and never changes Cloudflare
 - A **Site** has one **Service Area** and at most 25 **Keywords**, and its **Search Visibility** exists only when it has at least one checked **Keyword**
 - A **Site Health** of Down, Warning, Healthy, or Unknown is derived at read time and is separate from **Workspace State**
+- A **Form Submission** names its **Site** by hostname under the **Organization**'s **Forms key**, belongs to one **Workspace** through the **Site Link** open when it was posted, is unique per **Site** and submission id, and is refused when the hostname is not a **Site** or the **Site** has no open **Site Link**
+- The third **Form Submission** from one person within 24 hours of the first is Held until an **Operator** approves or rejects it; an approved one is forwarded and counts as a **Lead**, a rejected one never is
+- A **Form Submission**'s effective classification is its **Lead Review** when one exists, otherwise Good Lead unless Held
+- A **Workspace**'s Leads count Good Lead **Calls** and Good Lead **Form Submissions** together, and Per Lead revenue counts both
 - A **Workspace** has at most one open **Deal**; Per Lead revenue counts **Good Leads** with **Lead Review** precedence
 - A **Client Viewer** reads a linked **Site**'s traffic, performance, and Search results but never its hosting details, cost, or **Deal**
 

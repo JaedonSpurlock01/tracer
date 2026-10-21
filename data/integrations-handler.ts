@@ -31,6 +31,7 @@ import { AuthorizationError, requireActiveOperator } from "@/data/authorization"
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { createIntegrations, IntegrationsError, type Integrations } from "@/data/integrations";
+import { createFormsKey } from "@/data/form-submissions";
 import { describeProviderHealth, type ProviderConfiguration } from "@/data/provider-health";
 import { schema } from "@/data/schema";
 import type { RankCheckResult } from "@/data/rank-check";
@@ -111,7 +112,13 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
         const twilio = await integrations.getTwilioConnection();
         const cloudflare = await integrations.getCloudflareConnection();
         const dataforseo = await integrations.getDataForSeoConnection();
-        return response({ providers: describeProviderHealth(options.configuration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth(), cloudflare, dataforseo), twilio, cloudflare, dataforseo });
+        const formsKey = await createFormsKey(options.pool, actor).status();
+        return response({ providers: describeProviderHealth(options.configuration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth(), cloudflare, dataforseo), twilio, cloudflare, dataforseo, formsKey });
+      }
+      if (request.method === "POST" && route === "forms-key") return response(await createFormsKey(options.pool, actor).generate(), 201);
+      if (request.method === "DELETE" && route === "forms-key") {
+        await createFormsKey(options.pool, actor).revoke();
+        return new Response(null, { status: 204 });
       }
       if (request.method === "POST" && route === "dataforseo/connect") {
         const body = await readBody(request);
