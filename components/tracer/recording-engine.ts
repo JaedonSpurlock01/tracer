@@ -60,6 +60,8 @@ export interface RecordingEngine {
   /** Mount on the element that should hold the waveform lanes. */
   waveformRef: RefObject<HTMLDivElement | null>;
   peaks: PeaksStatus;
+  /** The loaded peaks, for a chrome that draws its own waveform. */
+  peaksData: WaveformPeaks | null;
   lanes: WaveformLane[];
   waveformReady: boolean;
   playing: boolean;
@@ -283,6 +285,7 @@ export function useRecordingEngine({ mediaPath, recording, autoPlay = false }: {
     audioProps,
     waveformRef,
     peaks: peaks.status,
+    peaksData: peaks.status === "ready" ? peaks.peaks : null,
     lanes,
     waveformReady,
     playing,

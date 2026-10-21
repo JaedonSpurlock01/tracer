@@ -22,7 +22,7 @@ export default function CallDetailPrototype({ children, demo, ...props }: Omit<V
   return (
     <>
       <Variant {...props} mediaPath={mediaPath} />
-      <PrototypeSwitcher current={variant} bottomClassName={variant === "B" ? "bottom-28" : "bottom-4"} />
+      <PrototypeSwitcher current={variant} bottomClassName={variant === "B" ? "bottom-44" : "bottom-4"} />
     </>
   );
 }

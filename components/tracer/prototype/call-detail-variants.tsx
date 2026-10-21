@@ -18,7 +18,7 @@
 
 import { cn } from "cn";
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   AudioLinesIcon,
   ChevronDownIcon,
@@ -39,6 +39,7 @@ import {
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -168,6 +169,108 @@ function AudioError({ engine }: { engine: RecordingEngine }) {
     <div className="flex flex-wrap items-center justify-center gap-2">
       <p role="alert" className="text-sm">Recording audio could not be loaded.</p>
       <Button type="button" variant="outline" size="sm" onClick={engine.retryAudio}>Retry</Button>
+    </div>
+  );
+}
+
+
+/* ----------------------------------------------------------------------- */
+/* Mirrored waveform: one lane, Caller above the center line, Business      */
+/* below, the way CallRail draws a two-party call. Drawn from the engine's  */
+/* peaks as SVG bars so it needs no wavesurfer instance.                    */
+/* ----------------------------------------------------------------------- */
+
+const mirrorBarWidth = 2;
+const mirrorBarGap = 1;
+
+function bucketMax(lane: number[], buckets: number): number[] {
+  const size = lane.length / buckets;
+  return Array.from({ length: buckets }, (_, index) => {
+    const start = Math.floor(index * size);
+    const end = Math.max(start + 1, Math.floor((index + 1) * size));
+    let max = 0;
+    for (let point = start; point < end; point += 1) max = Math.max(max, lane[point] ?? 0);
+    return max;
+  });
+}
+
+function MirrorWaveform({ engine, height = 56 }: { engine: RecordingEngine; height?: number }) {
+  const { peaksData, peaks, currentTime, duration, seek } = engine;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const dragging = useRef(false);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [peaks]); // the container mounts only once peaks are ready
+
+  const bars = Math.max(1, Math.floor(width / (mirrorBarWidth + mirrorBarGap)));
+  const halves = useMemo(() => {
+    if (!peaksData) return null;
+    const [top, bottom] = peaksData.lanes.length > 1 ? peaksData.peaks : [peaksData.peaks[0], peaksData.peaks[0]];
+    return { top: bucketMax(top, bars), bottom: bucketMax(bottom, bars), labels: peaksData.lanes.length > 1 ? peaksData.lanes : ["Mixed", "Mixed"] };
+  }, [peaksData, bars]);
+
+  function seekFromPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    seek(ratio * duration);
+  }
+
+  if (peaks === "loading") return <Skeleton className="w-full" style={{ height }} />;
+  if (!halves) return null;
+  const progress = duration ? Math.min(currentTime / duration, 1) : 0;
+  const playedBars = Math.round(progress * bars);
+  const mid = height / 2;
+  const half = mid - 1;
+  return (
+    <div className="flex items-stretch gap-3" style={{ height }}>
+      <div className="flex w-10 shrink-0 flex-col justify-between text-right text-[0.65rem] leading-none font-medium text-muted-foreground">
+        <span>{halves.labels[0]}</span>
+        <span>{halves.labels[1]}</span>
+      </div>
+    <div
+      ref={containerRef}
+      role="group"
+      aria-label="Waveform"
+      tabIndex={0}
+      className="relative min-w-0 flex-1 cursor-pointer touch-none select-none rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      style={{ height }}
+      onPointerDown={(event) => {
+        dragging.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        seekFromPointer(event);
+      }}
+      onPointerMove={(event) => {
+        if (dragging.current) seekFromPointer(event);
+      }}
+      onPointerUp={(event) => {
+        dragging.current = false;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }}
+    >
+      <svg width={width} height={height} className="block" aria-hidden>
+        <line x1={0} x2={width} y1={mid} y2={mid} className="stroke-border" strokeWidth={1} />
+        {halves.top.map((value, index) => {
+          const x = index * (mirrorBarWidth + mirrorBarGap);
+          const up = Math.max(1, value * half);
+          const down = Math.max(1, halves.bottom[index] * half);
+          const played = index < playedBars;
+          return (
+            <g key={index} className={played ? "fill-foreground" : "fill-muted-foreground/60"}>
+              <rect x={x} y={mid - up} width={mirrorBarWidth} height={up} rx={1} />
+              <rect x={x} y={mid + 1} width={mirrorBarWidth} height={down} rx={1} />
+            </g>
+          );
+        })}
+        <line x1={progress * width} x2={progress * width} y1={0} y2={height} className="stroke-primary" strokeWidth={2} />
+      </svg>
+    </div>
+      <div className="w-10 shrink-0" aria-hidden />
     </div>
   );
 }
@@ -365,6 +468,7 @@ function NowPlayingBar({ recording, mediaPath, autoPlay, turns }: { recording: R
   return (
     <div className="flex flex-col gap-2" onKeyDown={engine.handleShortcut}>
       <audio {...engine.audioProps} />
+      <MirrorWaveform engine={engine} />
       <Scrubber engine={engine} id="reader-seek" />
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
