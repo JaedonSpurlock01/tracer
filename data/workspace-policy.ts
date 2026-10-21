@@ -61,3 +61,8 @@ export function describeSetupChecklist(record: {
     { label: "Published Call Flow", complete: Boolean(record.publishedFlowVersion) },
   ];
 }
+
+/** The first incomplete setup requirement, or null once every requirement is met. */
+export function nextSetupStep(record: Parameters<typeof describeSetupChecklist>[0]): string | null {
+  return describeSetupChecklist(record).find((step) => !step.complete)?.label ?? null;
+}

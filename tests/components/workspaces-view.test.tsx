@@ -101,7 +101,7 @@ describe("WorkspacesView", () => {
     expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
   });
 
-  it("shows each Workspace's 30-day Calls, Good Leads, last Call, and integration health", async () => {
+  it("shows each Workspace's 30-day Calls, Good Leads, lead rate, last Call, and attention", async () => {
     const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const, trackingNumber: "+14155550101" };
     const south = { ...workspace, id: "south", name: "South Dental", state: "Active" as const, trackingNumber: "+14155550102" };
     const listed = {
@@ -109,29 +109,41 @@ describe("WorkspacesView", () => {
       workspaces: [north, south, workspace],
       total: 3,
       stats: {
-        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" }, siteHealth: null },
-        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
-        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
+        north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: "2026-10-18T15:04:05.000Z", lastSuccessfulInboundCallAt: "2026-10-18T15:04:05.000Z", integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: "2026-10-18T15:04:05.000Z" }, siteHealth: null, attention: { status: "Healthy" as const, reason: null } },
+        south: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Warning" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Needs attention" as const, reason: "No accepted Twilio webhook yet" } },
+        "workspace-1": { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Not applicable" as const, reason: null } },
       },
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
     render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
     const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
-    await waitFor(() => expect(cells(/^North Plumbing/).slice(4, 8)).toEqual(["17", "5", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
-    expect(cells(/^South Dental/).slice(4, 8)).toEqual(["0", "0", "-", "Needs attention"]);
-    expect(cells(/^Phoenix Office/).slice(4, 8)).toEqual(["0", "0", "-", "Not applicable"]);
+    await waitFor(() => expect(cells(/^North Plumbing/).slice(2, 7)).toEqual(["17", "5", "29%", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
+    expect(cells(/^South Dental/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Needs attentionNo accepted Twilio webhook yet"]);
+    expect(cells(/^Phoenix Office/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Not applicable"]);
   });
 
-  it("reports Site health that needs attention in the Integration health column", async () => {
-    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const };
-    const south = { ...workspace, id: "south", name: "South Dental", state: "Active" as const };
-    const stat = { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: null } };
-    const listed = { ...result, workspaces: [north, south], total: 2, stats: { north: { ...stat, siteHealth: "Down" as const }, south: { ...stat, siteHealth: "Healthy" as const } } };
+  it("groups Workspaces in triage order and names the next setup step", async () => {
+    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const, trackingNumber: "+14155550101", destinationNumber: "+14155550199" };
+    const south = { ...workspace, id: "south", name: "South Dental", state: "Active" as const, trackingNumber: "+14155550102" };
+    const old = { ...workspace, id: "old", name: "Old Roofing", state: "Archived" as const };
+    const healthy = { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Healthy" as const, reason: null } };
+    const listed = {
+      ...result,
+      workspaces: [north, south, old, workspace],
+      total: 4,
+      stats: { north: healthy, south: { ...healthy, siteHealth: "Down" as const, attention: { status: "Needs attention" as const, reason: "Site Down" } }, old: healthy },
+    };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
     render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
-    const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
-    await waitFor(() => expect(cells(/^North Plumbing/)[7]).toBe("Needs attentionSite Down"));
-    expect(cells(/^South Dental/)[7]).toBe("Healthy");
+    const groupFor = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tbody")!).getByRole("button", { expanded: true }).textContent;
+    expect(groupFor(/^South Dental/)).toBe("Needs attention2");
+    expect(groupFor(/^Phoenix Office/)).toBe("Needs attention2");
+    expect(groupFor(/^North Plumbing/)).toBe("Running1");
+    expect(within(screen.getByRole("link", { name: /^Phoenix Office/ }).closest("tr")!).getByText("Next: Tracking Number")).toBeVisible();
+    expect(within(screen.getByRole("link", { name: /^South Dental/ }).closest("tr")!).getByText("Site Down")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Old Roofing/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Archived/, expanded: false }));
+    expect(await screen.findByRole("link", { name: /^Old Roofing/ })).toBeVisible();
   });
 
   it("quietly revalidates the server-provided page without a loading skeleton", async () => {
@@ -212,15 +224,14 @@ describe("WorkspacesView", () => {
     });
     vi.stubGlobal("fetch", fetch);
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
-    expect(await screen.findByText("Setup Required")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Resume Setup" }));
-    expect(screen.getByText("Basics")).toBeVisible();
-    expect(screen.getByText("Site")).toBeVisible();
-    expect(screen.getByText("Number")).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    expect(within(screen.getByRole("dialog")).getByText("Basics")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Site")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Number")).toBeVisible();
     await skipSite();
     expect(await screen.findByText("+14155550100")).toBeVisible();
-    expect(screen.getByText("Routing")).toBeVisible();
-    expect(screen.getByText("Review")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Routing")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Review")).toBeVisible();
   });
 
   it("filters Twilio numbers on the Number step by phone number or friendly name", async () => {
@@ -526,7 +537,7 @@ describe("WorkspacesView", () => {
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
     expect(await screen.findByRole("radio", { name: "pocatelloasphaltpaving.com" })).toBeVisible();
-    expect(screen.getByText("Site")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Site")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(await screen.findByText("+14155550100")).toBeVisible();
     expect(fetch).not.toHaveBeenCalledWith(expect.stringMatching(/\/site\/link$/), expect.anything());
