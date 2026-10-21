@@ -561,7 +561,7 @@ function RailSection({ title, defaultOpen, children }: { title: string; defaultO
       <Frame>
         <div className="flex items-center justify-between px-(--frame-panel-header-px) py-(--frame-panel-header-py)">
           <FrameTitle><h2>{title}</h2></FrameTitle>
-          <CollapsibleTrigger className={buttonVariants({ variant: "ghost", size: "icon-sm" })} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>
+          <CollapsibleTrigger className={buttonVariants({ variant: "ghost", size: "icon-xs", className: "-my-1" })} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>
             <ChevronDownIcon aria-hidden className={cn("transition-transform", open ? "rotate-180" : "")} />
           </CollapsibleTrigger>
         </div>
@@ -616,13 +616,13 @@ export function VariantB({ call, operator, autoPlay, navigation, mediaPath }: Va
       <PlaybackProvider>
         <Verdict call={call} operator={operator} analysis={analysis} />
         <div className="grid flex-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <section aria-labelledby="call-transcript-title">
+          <section aria-labelledby="call-transcript-title" className="sticky top-4">
             <Frame>
               <FrameHeader>
                 <FrameTitle><h2 id="call-transcript-title">Transcript</h2></FrameTitle>
               </FrameHeader>
               <FramePanel>
-                <TranscriptBody transcript={analysis.transcript} operator={operator} retry={analysis.retry} emphasis={analysis.emphasis} listClassName="max-h-[calc(100vh-24rem)]" />
+                <TranscriptBody transcript={analysis.transcript} operator={operator} retry={analysis.retry} emphasis={analysis.emphasis} listClassName="max-h-[calc(100vh-22rem)]" />
               </FramePanel>
             </Frame>
           </section>
