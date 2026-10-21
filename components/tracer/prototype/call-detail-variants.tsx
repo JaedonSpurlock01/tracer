@@ -90,11 +90,11 @@ function Transport({ engine, size = "lg" }: { engine: RecordingEngine; size?: "l
   );
 }
 
-function Scrubber({ engine, id }: { engine: RecordingEngine; id: string }) {
+function Scrubber({ engine, id, gutter = "w-10" }: { engine: RecordingEngine; id: string; gutter?: string }) {
   const { currentTime, duration } = engine;
   return (
     <div className="flex items-center gap-3">
-      <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatClock(currentTime)}</span>
+      <span className={cn("shrink-0 text-right text-xs tabular-nums text-muted-foreground", gutter)}>{formatClock(currentTime)}</span>
       <span id={id} className="sr-only">Seek</span>
       <div className="min-w-0 flex-1">
         <Slider
@@ -108,7 +108,7 @@ function Scrubber({ engine, id }: { engine: RecordingEngine; id: string }) {
           getAriaValueText={(_formatted, value) => `${formatClock(value)} of ${formatClock(duration)}`}
         />
       </div>
-      <span className="w-10 shrink-0 text-xs tabular-nums text-muted-foreground">{formatClock(duration)}</span>
+      <span className={cn("shrink-0 text-xs tabular-nums text-muted-foreground", gutter)}>{formatClock(duration)}</span>
     </div>
   );
 }
@@ -180,6 +180,18 @@ function AudioError({ engine }: { engine: RecordingEngine }) {
 /* peaks as SVG bars so it needs no wavesurfer instance.                    */
 /* ----------------------------------------------------------------------- */
 
+function talkStats(turns: TranscriptTurn[]) {
+  const totals = { Caller: 0, Business: 0 };
+  let longest: TranscriptTurn | null = null;
+  for (const turn of turns) {
+    const length = turn.endMs - turn.startMs;
+    totals[turn.speaker] += length;
+    if (!longest || length > longest.endMs - longest.startMs) longest = turn;
+  }
+  const spoken = totals.Caller + totals.Business || 1;
+  return { callerShare: Math.round((totals.Caller / spoken) * 100), businessShare: Math.round((totals.Business / spoken) * 100), turns: turns.length, longest };
+}
+
 const mirrorBarWidth = 2;
 const mirrorBarGap = 1;
 
@@ -194,8 +206,9 @@ function bucketMax(lane: number[], buckets: number): number[] {
   });
 }
 
-function MirrorWaveform({ engine, height = 56 }: { engine: RecordingEngine; height?: number }) {
+function MirrorWaveform({ engine, turns, height = 56 }: { engine: RecordingEngine; turns?: TranscriptTurn[]; height?: number }) {
   const { peaksData, peaks, currentTime, duration, seek } = engine;
+  const shares = useMemo(() => (turns?.length ? talkStats(turns) : null), [turns]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const dragging = useRef(false);
@@ -229,9 +242,9 @@ function MirrorWaveform({ engine, height = 56 }: { engine: RecordingEngine; heig
   const half = mid - 1;
   return (
     <div className="flex items-stretch gap-3" style={{ height }}>
-      <div className="flex w-10 shrink-0 flex-col justify-between text-right text-[0.65rem] leading-none font-medium text-muted-foreground">
-        <span>{halves.labels[0]}</span>
-        <span>{halves.labels[1]}</span>
+      <div className="flex w-20 shrink-0 flex-col justify-between text-right text-[0.65rem] leading-none font-medium tabular-nums">
+        <span style={{ color: "var(--chart-1)" }}>{halves.labels[0]}{shares && halves.labels[0] === "Caller" ? ` (${shares.callerShare}%)` : ""}</span>
+        <span style={{ color: "var(--chart-2)" }}>{halves.labels[1]}{shares && halves.labels[1] === "Business" ? ` (${shares.businessShare}%)` : ""}</span>
       </div>
     <div
       ref={containerRef}
@@ -261,16 +274,16 @@ function MirrorWaveform({ engine, height = 56 }: { engine: RecordingEngine; heig
           const down = Math.max(1, halves.bottom[index] * half);
           const played = index < playedBars;
           return (
-            <g key={index} className={played ? "fill-foreground" : "fill-muted-foreground/60"}>
-              <rect x={x} y={mid - up} width={mirrorBarWidth} height={up} rx={1} />
-              <rect x={x} y={mid + 1} width={mirrorBarWidth} height={down} rx={1} />
+            <g key={index} opacity={played ? 1 : 0.4}>
+              <rect x={x} y={mid - up} width={mirrorBarWidth} height={up} rx={1} fill="var(--chart-1)" />
+              <rect x={x} y={mid + 1} width={mirrorBarWidth} height={down} rx={1} fill="var(--chart-2)" />
             </g>
           );
         })}
         <line x1={progress * width} x2={progress * width} y1={0} y2={height} className="stroke-primary" strokeWidth={2} />
       </svg>
     </div>
-      <div className="w-10 shrink-0" aria-hidden />
+      <div className="w-20 shrink-0" aria-hidden />
     </div>
   );
 }
@@ -468,8 +481,8 @@ function NowPlayingBar({ recording, mediaPath, autoPlay, turns }: { recording: R
   return (
     <div className="flex flex-col gap-2" onKeyDown={engine.handleShortcut}>
       <audio {...engine.audioProps} />
-      <MirrorWaveform engine={engine} />
-      <Scrubber engine={engine} id="reader-seek" />
+      <MirrorWaveform engine={engine} turns={turns} />
+      <Scrubber engine={engine} id="reader-seek" gutter="w-20" />
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           <AudioLinesIcon className={cn("size-4 shrink-0", engine.playing ? "text-foreground" : "")} aria-hidden />
@@ -649,18 +662,6 @@ function ProcessingTimelineBody({ call }: { call: CallDetail }) {
 /* ----------------------------------------------------------------------- */
 /* Variant C: Dossier.                                                       */
 /* ----------------------------------------------------------------------- */
-
-function talkStats(turns: TranscriptTurn[]) {
-  const totals = { Caller: 0, Business: 0 };
-  let longest: TranscriptTurn | null = null;
-  for (const turn of turns) {
-    const length = turn.endMs - turn.startMs;
-    totals[turn.speaker] += length;
-    if (!longest || length > longest.endMs - longest.startMs) longest = turn;
-  }
-  const spoken = totals.Caller + totals.Business || 1;
-  return { callerShare: Math.round((totals.Caller / spoken) * 100), businessShare: Math.round((totals.Business / spoken) * 100), turns: turns.length, longest };
-}
 
 function TalkTrack({ turns, engine }: { turns: TranscriptTurn[]; engine: RecordingEngine }) {
   const playback = usePlayback();
