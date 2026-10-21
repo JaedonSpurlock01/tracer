@@ -28,9 +28,9 @@
  *  arrives, as Lead Review and Retry do. The page resolves the back link and previous and next Call
  *  hrefs on the server; without them the back link is Workspace Calls and
  *  both steps are disabled. Previous and next are compact icon buttons so
- *  the header row fits at 390px. Call Detail is a record-detail page, so
- *  it renders no Workspace tabs. Times use the Workspace reporting
- *  timezone.
+ *  the header row fits at 390px. Call Detail keeps the Workspace Sidebar
+ *  with Calls current and carries no navigation of its own. Times use the
+ *  Workspace reporting timezone.
  *
  * @see
  *  data/call-details.ts

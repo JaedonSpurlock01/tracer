@@ -81,6 +81,8 @@ const staticLabels: Readonly<Record<string, string>> = {
   account: "Account",
   settings: "Settings",
   flow: "Flow",
+  site: "Site",
+  pricing: "Pricing",
 };
 
 /** Segments with no page of their own render as text, not links. */

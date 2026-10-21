@@ -135,8 +135,12 @@ async function expectGridScrollsInsideFrame(page: Page): Promise<void> {
 
 async function expectSidebarLayout(page: Page, viewport: { width: number }): Promise<void> {
   // Scope to the desktop Sidebar: the header breadcrumbs also name the
-  // current page, and on phones the Sidebar lives only in the Sheet.
-  const sidebarLink = page.locator('[data-slot="sidebar-container"]').getByRole("link", { name: "Activity", exact: true });
+  // current page, and on phones the Sidebar lives only in the Sheet. Inside
+  // a Workspace the Sidebar swaps to that Workspace's pages, so the link
+  // that proves the desktop Sidebar is All Workspaces there and Activity
+  // elsewhere; Calls exists in both.
+  const name = /\/workspaces\/[^/?#]+/.test(new URL(page.url()).pathname) ? "All Workspaces" : "Activity";
+  const sidebarLink = page.locator('[data-slot="sidebar-container"]').getByRole("link", { name, exact: true });
   if (viewport.width < 768) {
     await expect(sidebarLink).toBeHidden();
     const sheet = page.getByRole("dialog", { name: "Sidebar" });

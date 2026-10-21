@@ -6,7 +6,11 @@
  * @description
  *  Stores encrypted Twilio credentials, verifies provider access, syncs
  *  incoming number inventory, and reads Recording transfer, analysis, and
- *  media lifecycle health while isolating every query by Organization.
+ *  media lifecycle health while isolating every query by Organization. The
+ *  Cloudflare connection operations are composed in from
+ *  data/cloudflare-connection.ts and the DataForSEO connection operations
+ *  from data/dataforseo-connection.ts so one Integrations service serves
+ *  the Integrations page.
  *
  * @remarks
  *  PostgreSQL advisory locks serialize credential and inventory mutations.
@@ -28,7 +32,12 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
+import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
+import { createCloudflareConnection, type CloudflareConnection } from "@/data/cloudflare-connection";
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
+import { DataForSeoClientError, type DataForSeoClient } from "@/data/dataforseo-client";
+import { createDataForSeoConnection, type DataForSeoConnection } from "@/data/dataforseo-connection";
+import { IntegrationsError } from "@/data/integrations-error";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
 import type { AnalysisProcessingHealth, MediaLifecycleHealth, RecordingTransferHealth } from "@/data/provider-health";
@@ -62,35 +71,19 @@ export interface TwilioNumberRecord {
   releasedAt: string | null;
 }
 
-export type IntegrationsErrorCode =
-  | "invalid_input"
-  | "master_key_missing"
-  | "not_connected"
-  | "already_connected"
-  | "authentication_failed"
-  | "provider_unavailable"
-  | "active_workspaces";
-
-export class IntegrationsError extends Error {
-  constructor(
-    public readonly code: IntegrationsErrorCode,
-    public readonly detail?: string,
-    public readonly activeWorkspaceCount?: number,
-  ) {
-    super(code);
-    this.name = "IntegrationsError";
-  }
-}
+export { IntegrationsError, type IntegrationsErrorCode } from "@/data/integrations-error";
 
 export interface IntegrationsOptions {
   pool: Pool;
   organizationId: string;
   twilio: TwilioClient;
+  cloudflare?: CloudflareClient;
+  dataforseo?: DataForSeoClient;
   masterKey: string | undefined;
   activeWorkspaceCount: () => Promise<number>;
 }
 
-export interface Integrations {
+export interface Integrations extends CloudflareConnection, DataForSeoConnection {
   getTwilioConnection(client?: Pool | PoolClient): Promise<TwilioConnectionRecord | null>;
   withTwilioCredential<T>(
     operation: (credential: TwilioCredential) => Promise<T>,
@@ -216,8 +209,33 @@ function credentialFromRow(row: ConnectionRow, secret: string): TwilioCredential
   return { accountSid: row.account_sid, apiKeySid: row.api_key_sid, apiKeySecret: secret };
 }
 
+const unavailableCloudflare: CloudflareClient = {
+  async verifyToken() { throw new CloudflareClientError("provider_unavailable", null); },
+  async listSites() { throw new CloudflareClientError("provider_unavailable", null); },
+  async listDeployments() { throw new CloudflareClientError("provider_unavailable", null); },
+  async fetchDailyTraffic() { throw new CloudflareClientError("provider_unavailable", null); },
+  async captureScreenshot() { throw new CloudflareClientError("provider_unavailable", null); },
+};
+
+const unavailableDataForSeo: DataForSeoClient = {
+  async verify() { throw new DataForSeoClientError("provider_unavailable", null); },
+  async serp() { throw new DataForSeoClientError("provider_unavailable", null); },
+};
+
 export function createIntegrations(options: IntegrationsOptions): Integrations {
   const lock = "tracer:integrations:" + options.organizationId;
+  const cloudflare = createCloudflareConnection({
+    pool: options.pool,
+    organizationId: options.organizationId,
+    cloudflare: options.cloudflare ?? unavailableCloudflare,
+    masterKey: options.masterKey,
+  });
+  const dataforseo = createDataForSeoConnection({
+    pool: options.pool,
+    organizationId: options.organizationId,
+    dataforseo: options.dataforseo ?? unavailableDataForSeo,
+    masterKey: options.masterKey,
+  });
 
   async function selectConnection(client: Pool | PoolClient): Promise<ConnectionRow | null> {
     const result = await client.query<ConnectionRow>(connectionQuery, [options.organizationId]);
@@ -267,6 +285,9 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
   }
 
   return {
+    ...cloudflare,
+    ...dataforseo,
+
     async getTwilioConnection(client) {
       return selectConnection(client ?? options.pool).then((row) => (row ? toConnectionRecord(row) : null));
     },

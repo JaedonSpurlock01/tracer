@@ -221,7 +221,7 @@ describe.sequential("Workspaces", () => {
     const listed = await json(new Request("http://localhost:3000/api/workspaces?search=Alpha", { headers: { cookie } }));
     const id = (listed.body.workspaces as Array<{ id: string }>)[0].id;
     expect(listed.body.stats).toEqual({
-      [id]: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } },
+      [id]: { callsLast30Days: 0, goodLeadsLast30Days: 0, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null }, siteHealth: null },
     });
   });
 

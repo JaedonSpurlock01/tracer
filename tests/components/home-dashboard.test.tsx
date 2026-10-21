@@ -198,3 +198,41 @@ describe("HomeDashboard", () => {
     expect(screen.getAllByText("Activity appears after the first inbound Call.").length).toBeGreaterThan(0);
   });
 });
+
+const money = {
+  month: "October 2026",
+  totals: { costCents: 1244, yearlyCostCents: 14_928, revenueCents: 98_333, profitCents: 97_089 },
+  byWorkspace: { north: { costCents: 878, revenueCents: 5000 } },
+};
+
+describe("HomeDashboard Money row", () => {
+  it("shows Monthly Cost with the yearly projection, Monthly Revenue, and Profit for Operators with Cost and Revenue columns", () => {
+    render(<HomeDashboard {...props} money={money} />);
+    const tile = (name: string) => within(screen.getByRole("group", { name }));
+    expect(tile("Monthly Cost").getByText("$12.44")).toBeVisible();
+    expect(tile("Monthly Cost").getByText("Projected $149.28 per year")).toBeVisible();
+    expect(tile("Monthly Revenue").getByText("$983.33")).toBeVisible();
+    expect(tile("Monthly Revenue").getByText("Open Deals for October 2026")).toBeVisible();
+    expect(tile("Profit").getByText("$970.89")).toHaveClass("text-success");
+    expect(screen.getByRole("link", { name: "Pricing guide" })).toHaveAttribute("href", "/pricing");
+    const grid = screen.getByRole("region", { name: "Workspace performance" });
+    expect(within(grid).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Workspace", "Tracking Number", "Total Calls", "Answer Rate", "Good Leads", "Lead Rate", "Cost", "Revenue"]);
+    expect(within(within(grid).getByRole("link", { name: "North Plumbing" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["North Plumbing", "+14155550101", "17", "63.6%", "5", "29.4%", "$8.78", "$50.00"]);
+    expect(within(within(grid).getByRole("link", { name: "Setup Roofing" }).closest("tr")!).getAllByRole("cell").slice(-2).map((cell) => cell.textContent)).toEqual(["$0.00", "$0.00"]);
+  });
+
+  it("colors a loss in the destructive color and shows Retry when cost and revenue fail", () => {
+    render(<HomeDashboard {...props} money={{ ...money, totals: { ...money.totals, profitCents: -1244, revenueCents: 0 } }} />);
+    expect(within(screen.getByRole("group", { name: "Profit" })).getByText("-$12.44")).toHaveClass("text-destructive");
+    cleanup();
+    render(<HomeDashboard {...props} money={null} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Cost and revenue are unavailable.");
+  });
+
+  it("shows no money for a Client Viewer", () => {
+    render(<HomeDashboard {...props} operator={false} workspaceCount={3} />);
+    expect(screen.queryByRole("group", { name: "Monthly Cost" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Profit")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Pricing guide" })).not.toBeInTheDocument();
+  });
+});

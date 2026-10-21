@@ -40,10 +40,10 @@ const globalScope: GenerateReportScope = {
 
 const workspaceScope: GenerateReportScope = { kind: "workspace", workspace: { id: "workspace-2", name: "Quiet Dental", reportingTimezone: "America/Denver" } };
 
-function renderView(scope: GenerateReportScope = globalScope, operator = true) {
+function renderView(scope: GenerateReportScope = globalScope) {
   return render(
     <ReportJobsProvider>
-      <ReportsView scope={scope} operator={operator} />
+      <ReportsView scope={scope} />
     </ReportJobsProvider>,
   );
 }
@@ -186,13 +186,12 @@ describe("ReportsView", () => {
     expect(within(dialog).getByText("Call Outcome: Answered, Voicemail")).toBeVisible();
   });
 
-  it("keeps the Workspace tabs and lists only jobs covering the Workspace in Workspace Reports", async () => {
+  it("lists only jobs covering the Workspace in Workspace Reports", async () => {
     const other = reportJob({ id: "job-7", scope: [{ id: "workspace-1", name: "Acme Plumbing" }] });
     const covering = reportJob({ id: "job-8", scope: [{ id: "workspace-2", name: "Quiet Dental" }], files: [{ file: "pdf", downloadable: true, href: "/api/reports/job-8/files/pdf" }] });
     vi.stubGlobal("fetch", routedFetch({ "GET /api/reports": { jobs: [other, covering] }, "POST /api/reports/preview": { preview: { matchedCalls: 2 }, recordingExportLimit: 500 } }));
-    renderView(workspaceScope, false);
+    renderView(workspaceScope);
 
-    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getByRole("link", { name: "Reports" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("link", { name: "Download PDF" })).toHaveAttribute("href", "/api/reports/job-8/files/pdf");
     expect(screen.getAllByRole("link", { name: "Download PDF" })).toHaveLength(1);
 

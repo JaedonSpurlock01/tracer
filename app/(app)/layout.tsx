@@ -9,8 +9,10 @@
  *  account menu and current Organization. The header holds the Sidebar
  *  trigger, route breadcrumbs, and the report and export notification
  *  popover. One jobs provider spans the header and page so a job a page
- *  requests appears in the popover at once, and one breadcrumb provider
- *  lets a nested route name its own dynamic segment.
+ *  requests appears in the popover at once, one breadcrumb provider
+ *  lets a nested route name its own dynamic segment, and one Workspace
+ *  navigation provider spans the Sidebar and the page so the Workspace
+ *  layout can swap the Sidebar to that Workspace's pages.
  *
  * @remarks
  *  Route authorization remains server-side before shell content renders. The
@@ -31,6 +33,7 @@ import AppSidebar from "@/components/tracer/app-sidebar";
 import { BreadcrumbProvider, Breadcrumbs } from "@/components/tracer/breadcrumbs";
 import { ReportJobsProvider } from "@/components/tracer/report-jobs";
 import ReportNotifications from "@/components/tracer/report-notifications";
+import { WorkspaceNavProvider } from "@/components/tracer/workspace-nav";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { resolveRequestActor } from "@/app/(app)/actor";
@@ -56,25 +59,27 @@ export default async function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <SidebarProvider>
-      <AppSidebar
-        actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role, avatarSeed }}
-        organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
-      />
-      <SidebarInset className="min-w-0 bg-grain">
-        <ReportJobsProvider>
-          <BreadcrumbProvider>
-            <header className="flex h-12 items-center gap-2 border-b border-border px-4">
-              <SidebarTrigger />
-              <Separator orientation="vertical" className="h-4 w-px" />
-              <Breadcrumbs className="min-w-0" />
-              <div className="ml-auto">
-                <ReportNotifications />
-              </div>
-            </header>
-            <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
-          </BreadcrumbProvider>
-        </ReportJobsProvider>
-      </SidebarInset>
+      <WorkspaceNavProvider>
+        <AppSidebar
+          actor={{ id: actor.userId, name: actor.name, email: actor.email, role: actor.role, avatarSeed }}
+          organization={{ name: organization?.name ?? "Organization", slug: organization?.slug ?? "" }}
+        />
+        <SidebarInset className="min-w-0 bg-grain">
+          <ReportJobsProvider>
+            <BreadcrumbProvider>
+              <header className="flex h-12 items-center gap-2 border-b border-border px-4">
+                <SidebarTrigger />
+                <Separator orientation="vertical" className="h-4 w-px" />
+                <Breadcrumbs className="min-w-0" />
+                <div className="ml-auto">
+                  <ReportNotifications />
+                </div>
+              </header>
+              <div className="flex flex-1 flex-col gap-6 p-6">{children}</div>
+            </BreadcrumbProvider>
+          </ReportJobsProvider>
+        </SidebarInset>
+      </WorkspaceNavProvider>
     </SidebarProvider>
   );
 }

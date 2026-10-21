@@ -4,7 +4,8 @@
  * @brief  Describes configured provider health for the Integrations surface.
  *
  * @description
- *  Converts runtime configuration, persisted Twilio state, persisted
+ *  Converts runtime configuration, persisted Twilio, Cloudflare, and
+ *  DataForSEO state, persisted
  *  Recording transfer outcomes, persisted Transcript and Lead Assessment
  *  outcomes, and unfinished media cleanup into stable provider health
  *  records without contacting external services.
@@ -29,11 +30,13 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import type { CloudflareConnectionRecord } from "@/data/cloudflare-connection";
+import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
 import type { TwilioConnectionRecord } from "@/data/integrations";
 import { leadAssessmentModel } from "@/data/lead-assessment";
 import { transcriptionModel } from "@/data/openai-client";
 
-export type ProviderId = "twilio" | "r2" | "openai" | "triggerdev" | "hyperdrive" | "email";
+export type ProviderId = "twilio" | "cloudflare" | "dataforseo" | "r2" | "openai" | "triggerdev" | "hyperdrive" | "email";
 export type ProviderState = "connected" | "configured" | "degraded" | "not_configured";
 
 export interface ProviderHealth {
@@ -149,6 +152,8 @@ export function describeProviderHealth(
   recordingTransfers: RecordingTransferHealth,
   analysis: AnalysisProcessingHealth,
   mediaLifecycle: MediaLifecycleHealth,
+  cloudflare: CloudflareConnectionRecord | null = null,
+  dataforseo: DataForSeoConnectionRecord | null = null,
 ): ProviderHealth[] {
   const twilioHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
@@ -185,6 +190,76 @@ export function describeProviderHealth(
           testable: true,
           note: null,
         };
+  const cloudflareHealth: ProviderHealth = !configuration.twilioMasterKey
+    ? {
+        id: "cloudflare",
+        name: "Cloudflare",
+        state: "not_configured",
+        identifier: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        lastFailureDetail: null,
+        testable: false,
+        note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing",
+      }
+    : !cloudflare
+      ? {
+          id: "cloudflare",
+          name: "Cloudflare",
+          state: "not_configured",
+          identifier: null,
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          lastFailureDetail: null,
+          testable: false,
+          note: "No Organization Cloudflare credential is connected",
+        }
+      : {
+          id: "cloudflare",
+          name: "Cloudflare",
+          state: cloudflare.lastFailureAt && (!cloudflare.lastVerifiedAt || cloudflare.lastFailureAt > cloudflare.lastVerifiedAt) ? "degraded" : "connected",
+          identifier: cloudflare.accountId,
+          lastSuccessAt: cloudflare.lastVerifiedAt,
+          lastFailureAt: cloudflare.lastFailureAt,
+          lastFailureDetail: cloudflare.lastFailureDetail,
+          testable: true,
+          note: null,
+        };
+  const dataforseoHealth: ProviderHealth = !configuration.twilioMasterKey
+    ? {
+        id: "dataforseo",
+        name: "DataForSEO",
+        state: "not_configured",
+        identifier: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        lastFailureDetail: null,
+        testable: false,
+        note: "The TWILIO_CREDENTIAL_MASTER_KEY deployment secret is missing",
+      }
+    : !dataforseo
+      ? {
+          id: "dataforseo",
+          name: "DataForSEO",
+          state: "not_configured",
+          identifier: null,
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          lastFailureDetail: null,
+          testable: false,
+          note: "No Organization DataForSEO credential is connected",
+        }
+      : {
+          id: "dataforseo",
+          name: "DataForSEO",
+          state: dataforseo.lastFailureAt && (!dataforseo.lastVerifiedAt || dataforseo.lastFailureAt > dataforseo.lastVerifiedAt) ? "degraded" : "connected",
+          identifier: dataforseo.login,
+          lastSuccessAt: dataforseo.lastVerifiedAt,
+          lastFailureAt: dataforseo.lastFailureAt,
+          lastFailureDetail: dataforseo.lastFailureDetail,
+          testable: true,
+          note: null,
+        };
   const hyperdrive: ProviderHealth = {
     id: "hyperdrive",
     name: "Hyperdrive",
@@ -213,6 +288,8 @@ export function describeProviderHealth(
   };
   return [
     twilioHealth,
+    cloudflareHealth,
+    dataforseoHealth,
     hyperdrive,
     email,
     recordingTransferProvider("r2", "Cloudflare R2", configuration.r2, configuration.r2Bucket, recordingTransfers),

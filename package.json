@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "dev:local": "cross-env-shell E2E_AUTH_FAKE=true DATABASE_MIGRATION_URL=postgresql://postgres:postgres@127.0.0.1:5433/tracer BETTER_AUTH_URL=http://127.0.0.1:3000 BETTER_AUTH_SECRET=local-dev-only-secret-not-a-credential AUTH_EMAIL_FROM=auth@example.com AUTH_EMAIL_ALLOWED_RECIPIENTS=spurjae@gmail.com TWILIO_CREDENTIAL_MASTER_KEY=bG9jYWwtZGV2LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU= \"drizzle-kit migrate && next dev\"",
+    "dev:local": "cross-env-shell E2E_AUTH_FAKE=true E2E_CLOUDFLARE_FAKE=true E2E_DATAFORSEO_FAKE=true DATABASE_MIGRATION_URL=postgresql://postgres:postgres@127.0.0.1:5433/tracer BETTER_AUTH_URL=http://127.0.0.1:3000 BETTER_AUTH_SECRET=local-dev-only-secret-not-a-credential AUTH_EMAIL_FROM=auth@example.com AUTH_EMAIL_ALLOWED_RECIPIENTS=spurjae@gmail.com TWILIO_CREDENTIAL_MASTER_KEY=bG9jYWwtZGV2LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU= \"drizzle-kit migrate && next dev\"",
     "build": "corepack pnpm cf-typegen && next build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

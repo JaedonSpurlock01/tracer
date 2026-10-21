@@ -16,6 +16,8 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
+import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
+import { sitePreviewObjectsFromBinding } from "@/data/site-preview";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
 import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
 import { createWorkspaceRoutingRuntimeParts } from "@/data/workspace-routing-runtime";
@@ -28,6 +30,8 @@ async function handle(request: Request): Promise<Response> {
       ...runtime,
       twilio: createRuntimeTwilioClient(),
       twilioMedia: createTwilioRecordingMedia(),
+      cloudflare: createRuntimeCloudflareClient(),
+      sitePreviews: runtime.recordingBucket ? sitePreviewObjectsFromBinding(runtime.recordingBucket) : undefined,
       integrations: (organizationId) => createWorkspaceRoutingRuntimeParts(runtime, organizationId).integrations,
       baseURL: runtime.baseURL,
     })(request),

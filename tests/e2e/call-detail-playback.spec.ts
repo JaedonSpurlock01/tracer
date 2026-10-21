@@ -87,6 +87,7 @@ test("an Operator opens Call Detail from Recent Calls, controls playback, follow
     await page.getByRole("button", { name: "Create Workspace" }).first().click();
     await page.getByLabel("Workspace name").fill(workspaceName);
     await page.getByRole("button", { name: "Create Workspace" }).last().click();
+    await page.getByRole("button", { name: "Skip" }).click();
     await page.getByRole("radio", { disabled: false }).first().check();
     await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByLabel("Destination Number").fill("+14155550199");

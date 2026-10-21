@@ -1,0 +1,15 @@
+{
+  "result": [
+    { "id": "asphalt-paving-blackfoot", "created_on": "2026-10-10T23:02:57.697486Z", "modified_on": "2026-10-11T23:11:51.363494Z", "has_assets": true },
+    { "id": "asphalt-paving-pocatello", "created_on": "2026-10-10T04:58:22.779174Z", "modified_on": "2026-10-11T23:12:59.296842Z", "has_assets": true },
+    { "id": "asphalt-paving-st-george", "created_on": "2026-10-10T23:03:57.761580Z", "modified_on": "2026-10-11T23:12:21.994479Z", "has_assets": true },
+    { "id": "dumpster-rental-haines-city", "created_on": "2026-10-10T07:08:38.234873Z", "modified_on": "2026-10-11T22:27:21.256540Z", "has_assets": true },
+    { "id": "idaho-falls-solar-installation", "created_on": "2026-10-11T21:43:52.271115Z", "modified_on": "2026-10-11T23:41:44.213559Z", "has_assets": true },
+    { "id": "solar-panel-sites", "created_on": "2026-10-11T01:01:35.947129Z", "modified_on": "2026-10-11T23:40:58.218506Z", "has_assets": true },
+    { "id": "tracer", "created_on": "2026-10-13T03:19:55.234717Z", "modified_on": "2026-10-17T04:22:18.736879Z", "has_assets": false },
+    { "id": "tracer-staging", "created_on": "2026-10-13T04:52:26.415256Z", "modified_on": "2026-10-20T05:43:45.655544Z", "has_assets": true }
+  ],
+  "success": true,
+  "errors": [],
+  "messages": []
+}

@@ -122,22 +122,6 @@ describe("CallsView", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?workspaceId=workspace-1", { cache: "no-store" }));
   });
 
-  it("renders the Workspace tabs below the header in Workspace Calls with Calls current, and none on global Calls", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    const { rerender } = render(<CallsView initialResult={result} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} operator={false} />);
-    const nav = screen.getByRole("navigation", { name: "Workspace" });
-    expect(screen.getByRole("heading", { level: 1, name: "Calls" }).compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(nav.compareDocumentPosition(screen.getByRole("searchbox", { name: "Search Calls" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Reports"]);
-    expect(within(nav).getByRole("link", { name: "Calls" })).toHaveAttribute("aria-current", "page");
-
-    rerender(<CallsView initialResult={result} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} operator />);
-    expect(within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("link").map((link) => link.textContent)).toEqual(["Overview", "Calls", "Flow", "Reports", "Settings"]);
-
-    rerender(<CallsView initialResult={result} initialQuery={defaultQuery} />);
-    expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
-  });
-
   it("offers Export Recordings as the primary action and Export CSV as the secondary action", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<CallsView initialResult={result} initialQuery={defaultQuery} />);

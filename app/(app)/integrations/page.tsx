@@ -5,8 +5,9 @@
  *
  * @description
  *  Restricts Organization provider connection management to Active Operators
- *  and loads provider health, the Twilio connection, and its numbers on the
- *  server so the page renders without a loading Skeleton.
+ *  and loads provider health, the Twilio connection and its numbers, and the
+ *  Cloudflare connection and its Sites on the server so the page renders
+ *  without a loading Skeleton.
  *
  * @remarks
  *  Server authorization complements the role-aware Sidebar navigation. Secret
@@ -24,6 +25,8 @@ import { notFound } from "next/navigation";
 import IntegrationsView from "@/components/tracer/integrations-view";
 import { isActiveOperatorActor } from "@/data/authorization";
 import { resolveRequestActor } from "@/app/(app)/actor";
+import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
+import { createRuntimeDataForSeoClient } from "@/data/dataforseo-runtime";
 import { createIntegrations } from "@/data/integrations";
 import { describeProviderHealth } from "@/data/provider-health";
 import { withTracerRuntime } from "@/data/tracer-runtime";
@@ -40,14 +43,21 @@ export default async function IntegrationsPage() {
       pool: runtime.pool,
       organizationId: actor.organizationId,
       twilio: createRuntimeTwilioClient(),
+      cloudflare: createRuntimeCloudflareClient(),
+      dataforseo: createRuntimeDataForSeoClient(),
       masterKey: runtime.masterKey,
       activeWorkspaceCount: () => createWorkspaces(runtime.pool, actor.organizationId).countActive(),
     });
     const twilio = await integrations.getTwilioConnection();
+    const cloudflare = await integrations.getCloudflareConnection();
+    const dataforseo = await integrations.getDataForSeoConnection();
     return {
-      providers: describeProviderHealth(runtime.providerConfiguration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth()),
+      providers: describeProviderHealth(runtime.providerConfiguration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth(), cloudflare, dataforseo),
       twilio,
       numbers: twilio ? await integrations.listTwilioNumbers() : [],
+      cloudflare,
+      sites: cloudflare ? await integrations.listCloudflareSites() : [],
+      dataforseo,
     };
   });
   return <IntegrationsView initial={initial} />;

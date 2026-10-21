@@ -5,9 +5,13 @@
  *
  * @description
  *  Loads Organization-scoped Workspaces and guides Operators through Basics,
- *  Number, Routing, and Review before activating a Workspace. Each row shows
+ *  Site, Number, Routing, and Review before activating a Workspace. The Site
+ *  step links a Site right after the Workspace record exists, can always be
+ *  skipped, explains a disconnected Cloudflare account, and shows the current
+ *  Site Link read-only with Change on Resume Setup. Each row shows
  *  the Workspace's Calls and Good Leads for the last 30 days, its last Call
- *  in its reporting timezone, and its Twilio webhook health.
+ *  in its reporting timezone, and its integration health, which reports
+ *  Needs attention when the Twilio webhook or the linked Site does.
  *
  * @remarks
  *  Number selection remains local until activation, while routing and flow
@@ -55,7 +59,8 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
-import { formatCallTime } from "@/components/tracer/call-format";
+import { SitePickerList } from "@/components/tracer/site-picker";
+import { formatCallDate, formatCallTime } from "@/components/tracer/call-format";
 import type { WebhookHealth, WorkspaceListStats, WorkspaceListWithStats } from "@/data/analytics";
 import { recordingDisclosureText, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
@@ -63,7 +68,7 @@ import type { WorkspaceState } from "@/data/workspace-policy";
 
 const pageSize = 10;
 const states: Array<"All" | WorkspaceState> = ["All", "Setup Required", "Active", "Archived"];
-const steps = ["Basics", "Number", "Routing", "Review"];
+const steps = ["Basics", "Site", "Number", "Routing", "Review"];
 
 type AvailableNumber = { id: string; phoneNumber: string; friendlyName: string; assignedWorkspace: { id: string; name: string } | null };
 type RoutingForm = {
@@ -79,6 +84,9 @@ type FlowResponse = {
   draft: { graph: CallFlowGraph } | null;
   validation: { valid: boolean; issues: Array<{ code: string; message: string }> } | null;
 };
+
+type LinkedSite = { id: string; primaryHostname: string; linkedAt?: string };
+type SiteLinkState = { loaded: boolean; site: LinkedSite | null };
 
 type WorkspaceRow = WorkspaceRecord & { stats?: WorkspaceListStats };
 
@@ -120,11 +128,13 @@ export default function WorkspacesView({
   initialResult,
   initialQuery,
   readOnly = false,
+  cloudflareConnected = true,
 }: {
   initialTimezone: string;
   initialResult: WorkspaceListWithStats;
   initialQuery: WorkspacesViewQuery;
   readOnly?: boolean;
+  cloudflareConnected?: boolean;
 }) {
   const searchParams = useSearchParams();
   const resumeId = searchParams.get("resume");
@@ -146,6 +156,8 @@ export default function WorkspacesView({
   const [numbersError, setNumbersError] = useState(false);
   const [selectedNumberId, setSelectedNumberId] = useState("");
   const [numberSearch, setNumberSearch] = useState("");
+  const [siteLink, setSiteLink] = useState<SiteLinkState>({ loaded: false, site: null });
+  const [changingSite, setChangingSite] = useState(false);
   const [routing, setRouting] = useState<RoutingForm>(routingFromWorkspace(null));
   const [flow, setFlow] = useState<FlowResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -200,6 +212,8 @@ export default function WorkspacesView({
     setRouting(routingFromWorkspace(null));
     setSelectedNumberId("");
     setNumberSearch("");
+    setSiteLink({ loaded: false, site: null });
+    setChangingSite(false);
     setDialogOpen(true);
   }, []);
   const flowManaged = Boolean(workspace?.publishedFlowVersion);
@@ -212,6 +226,8 @@ export default function WorkspacesView({
     setRouting(routingFromWorkspace(value));
     setSelectedNumberId("");
     setNumberSearch("");
+    setSiteLink({ loaded: false, site: null });
+    setChangingSite(false);
     setDialogOpen(true);
   }, []);
 
@@ -232,10 +248,25 @@ export default function WorkspacesView({
     return () => window.clearTimeout(timer);
   }, [loadWorkspaces, pagination.pageIndex, search, stateFilter]);
   useEffect(() => {
-    if (!dialogOpen || step !== 2) return;
+    if (!dialogOpen || step !== 3) return;
     const timer = window.setTimeout(() => void loadNumbers(), 0);
     return () => window.clearTimeout(timer);
   }, [dialogOpen, loadNumbers, step]);
+  useEffect(() => {
+    if (!dialogOpen || step !== 2 || !workspace || siteLink.loaded || !cloudflareConnected) return;
+    let cancelled = false;
+    void fetch(`/api/workspaces/${workspace.id}/site`)
+      .then(async (response) => (response.ok ? ((await responseBody(response)).site as LinkedSite | null | undefined) : null))
+      .then((site) => {
+        if (!cancelled) setSiteLink({ loaded: true, site: site ?? null });
+      })
+      .catch(() => {
+        if (!cancelled) setSiteLink({ loaded: true, site: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudflareConnected, dialogOpen, siteLink.loaded, step, workspace]);
   useEffect(() => {
     if (readOnly || !resumeId || resumeHandled || loading) return;
     const listed = result.workspaces.find((item) => item.id === resumeId);
@@ -293,6 +324,7 @@ export default function WorkspacesView({
     const created = body.workspace as WorkspaceRecord;
     setWorkspace(created);
     setRouting(routingFromWorkspace(created));
+    setSiteLink({ loaded: true, site: null });
     setStep(2);
     await loadWorkspaces(true);
   }
@@ -325,7 +357,7 @@ export default function WorkspacesView({
       return;
     }
     setFlow((await responseBody(flowResponse)) as FlowResponse);
-    setStep(4);
+    setStep(5);
     setBusy(false);
   }
 
@@ -396,9 +428,16 @@ export default function WorkspacesView({
         header: "Integration health",
         cell: ({ row }) => {
           const health = row.original.stats?.integrationHealth;
+          const siteHealth = row.original.stats?.siteHealth;
           if (!health) return "-";
-          const [label, variant] = healthBadges[health.status];
-          return <Badge variant={variant}>{label}</Badge>;
+          const siteAttention = siteHealth === "Warning" || siteHealth === "Down";
+          const [label, variant] = siteAttention ? healthBadges.Warning : healthBadges[health.status];
+          return (
+            <span className="flex flex-col gap-0.5">
+              <span><Badge variant={variant}>{label}</Badge></span>
+              {siteAttention ? <span className="text-xs text-muted-foreground">Site {siteHealth}</span> : null}
+            </span>
+          );
         },
       },
       {
@@ -575,7 +614,66 @@ export default function WorkspacesView({
                 </form>
               </div>
             )}
-            {activeStep === 2 && (
+            {activeStep === 2 && workspace && (
+              <div className="mt-5 flex flex-col gap-4">
+                {!cloudflareConnected ? (
+                  <>
+                    <p className="text-sm">
+                      Connect the Organization Cloudflare account in Integrations to link a Site. A Workspace needs no Site to activate.{" "}
+                      <Link href="/integrations" className="underline">
+                        Integrations
+                      </Link>
+                    </p>
+                    <DialogFooter>
+                      <Button type="button" variant="outline" onClick={() => setStep(3)}>
+                        Skip
+                      </Button>
+                    </DialogFooter>
+                  </>
+                ) : !siteLink.loaded ? (
+                  <p>Loading Site...</p>
+                ) : siteLink.site && !changingSite ? (
+                  <>
+                    <dl className="grid gap-2 text-sm">
+                      <div>
+                        <dt className="font-medium">Linked Site</dt>
+                        <dd className="font-mono">{siteLink.site.primaryHostname}</dd>
+                      </div>
+                      {siteLink.site.linkedAt ? (
+                        <div>
+                          <dt className="font-medium">Site Link since</dt>
+                          <dd>{formatCallDate(siteLink.site.linkedAt, workspace.reportingTimezone)}</dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                    <div className="flex justify-between">
+                      <Button type="button" variant="outline" onClick={() => setChangingSite(true)}>
+                        Change
+                      </Button>
+                      <Button type="button" onClick={() => setStep(3)}>
+                        Next
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">Link one of the connected account&apos;s Sites to this Workspace, or skip for now.</p>
+                    <SitePickerList
+                      workspaceId={workspace.id}
+                      mode={siteLink.site ? "replace" : "link"}
+                      timeZone={workspace.reportingTimezone}
+                      onLinked={(site) => {
+                        setSiteLink({ loaded: true, site });
+                        setChangingSite(false);
+                        setStep(3);
+                      }}
+                      onSkip={() => setStep(3)}
+                    />
+                  </>
+                )}
+              </div>
+            )}
+            {activeStep === 3 && (
               <div className="mt-5 flex flex-col gap-4">
                 <p>Tracer will manage the selected number&apos;s voice webhook and keep its current configuration for restoration.</p>
                 {numbersError ? (
@@ -622,13 +720,13 @@ export default function WorkspacesView({
                   <Button type="button" variant="outline" onClick={() => void loadNumbers()}>
                     Refresh
                   </Button>
-                  <Button type="button" onClick={() => setStep(3)} disabled={!selectedNumberId || numbersLoading || numbersError}>
+                  <Button type="button" onClick={() => setStep(4)} disabled={!selectedNumberId || numbersLoading || numbersError}>
                     Next
                   </Button>
                 </div>
               </div>
             )}
-            {activeStep === 3 && (
+            {activeStep === 4 && (
               <div className="mt-5 flex flex-col gap-4">
                 <Field data-invalid={Boolean(actionError)}>
                   <FieldLabel htmlFor="destination-number">Destination Number</FieldLabel>
@@ -703,9 +801,13 @@ export default function WorkspacesView({
                 </DialogFooter>
               </div>
             )}
-            {activeStep === 4 && (
+            {activeStep === 5 && (
               <div className="mt-5 flex flex-col gap-4">
                 <dl className="grid gap-2 text-sm">
+                  <div>
+                    <dt className="font-medium">Site</dt>
+                    <dd className="font-mono">{siteLink.site?.primaryHostname ?? "None"}</dd>
+                  </div>
                   <div>
                     <dt className="font-medium">Number</dt>
                     <dd>
@@ -760,7 +862,7 @@ export default function WorkspacesView({
                 {reviewError ? (
                   <div role="alert">
                     {reviewError}
-                    <Button type="button" variant="outline" onClick={() => setStep(2)}>
+                    <Button type="button" variant="outline" onClick={() => setStep(3)}>
                       Choose another number
                     </Button>
                   </div>

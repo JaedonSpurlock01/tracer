@@ -80,6 +80,34 @@ _Avoid_: Edited AI result
 A Call judged by automated analysis or human review to represent a potential business opportunity.
 _Avoid_: Call
 
+**Site**:
+A lead-generation website hosted on a Cloudflare Worker of the Organization's connected account that serves at least one custom hostname; its primary hostname is the apex domain.
+_Avoid_: Worker, deployment, Workspace
+
+**Site Link**:
+The period during which one Site is linked to one Workspace; at most one open Site Link per Workspace and per Site.
+_Avoid_: Workspace
+
+**Site Health**:
+The derived operational condition of a Site: Healthy, Warning, Down, or Unknown, computed from uptime checks, hostname certificates, Worker errors, and recent traffic.
+_Avoid_: Workspace State, Integration health
+
+**Service Area**:
+The city, region, and country from which a Site's Keywords are checked, representing where its business serves.
+_Avoid_: Address, location
+
+**Keyword**:
+A search phrase tracked for one Site with a weight from 1 to 5 and a daily position from a SERP provider.
+_Avoid_: Query
+
+**Search Visibility**:
+A Site's 0 to 100 score summarizing its weighted Keyword positions through a click-through curve.
+_Avoid_: Ranking, SEO score
+
+**Deal**:
+A Workspace's agreement with its business: Monthly, Weekly, or Per Lead with an amount, used to project revenue and profit; at most one open Deal per Workspace.
+_Avoid_: Subscription, invoice
+
 ## Relationships
 
 - The first release exposes exactly one **Organization**, Spurlock Labs
@@ -106,6 +134,13 @@ _Avoid_: Call
 - A new **Access Grant** may target only an Active **Workspace**
 - An **Access Grant** authorizes reads only while its **Workspace** is Active or Archived
 - A **Call** may be classified as a **Lead**, but the terms are not interchangeable
+- An **Organization** owns at most one Cloudflare connection and at most one DataForSEO connection
+- A **Site** belongs to the **Organization** whose Cloudflare connection discovered it and has one or more hostnames
+- A **Site Link** connects one **Site** to one **Workspace** for a bounded period; replacing or detaching ends it and never changes Cloudflare
+- A **Site** has one **Service Area** and at most 25 **Keywords**, and its **Search Visibility** exists only when it has at least one checked **Keyword**
+- A **Site Health** of Down, Warning, Healthy, or Unknown is derived at read time and is separate from **Workspace State**
+- A **Workspace** has at most one open **Deal**; Per Lead revenue counts **Good Leads** with **Lead Review** precedence
+- A **Client Viewer** reads a linked **Site**'s traffic, performance, and Search results but never its hosting details, cost, or **Deal**
 
 ## Example dialogue
 
@@ -117,5 +152,6 @@ _Avoid_: Call
 - "Business owner" is a real-world relationship, while **Client Viewer** is the product role granted to that person.
 - "Number" could mean either a **Tracking Number** or **Destination Number**. Use the precise term.
 - An **Organization** is the Tracer tenant, not a client grouping; Client Viewer authorization still uses direct **Access Grants**.
-- A **Workspace** is an operational grouping with no required mapping to a customer, website, or campaign.
+- A **Workspace** is an operational grouping with no required mapping to a customer or campaign; since Phase 7 it may link one **Site**.
+- "Website" in conversation means the **Site**; "Worker" is the Cloudflare resource behind it and never appears in the interface.
 - "One number per Workspace" means one active **Number Assignment** at a time, not one immutable number for the Workspace's lifetime.

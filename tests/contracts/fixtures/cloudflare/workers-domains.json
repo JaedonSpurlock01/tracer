@@ -1,0 +1,17 @@
+{
+  "result": [
+    { "id": "d0000000000000000000000000000000000000a1", "zone_id": "z1000000000000000000000000000001", "zone_name": "pocatelloasphaltpaving.com", "hostname": "www.pocatelloasphaltpaving.com", "service": "asphalt-paving-pocatello", "environment": "production", "cert_id": "c1000000-0000-4000-8000-000000000002", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a2", "zone_id": "z1000000000000000000000000000001", "zone_name": "pocatelloasphaltpaving.com", "hostname": "pocatelloasphaltpaving.com", "service": "asphalt-paving-pocatello", "environment": "production", "cert_id": "c1000000-0000-4000-8000-000000000001", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a3", "zone_id": "z2000000000000000000000000000002", "zone_name": "asphaltpavingstgeorge.com", "hostname": "asphaltpavingstgeorge.com", "service": "asphalt-paving-st-george", "environment": "production", "cert_id": "c2000000-0000-4000-8000-000000000001", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a4", "zone_id": "z2000000000000000000000000000002", "zone_name": "asphaltpavingstgeorge.com", "hostname": "www.asphaltpavingstgeorge.com", "service": "asphalt-paving-st-george", "environment": "production", "cert_id": "c2000000-0000-4000-8000-000000000002", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a5", "zone_id": "z3000000000000000000000000000003", "zone_name": "asphaltpavingblackfoot.com", "hostname": "asphaltpavingblackfoot.com", "service": "asphalt-paving-blackfoot", "environment": "production", "cert_id": "c3000000-0000-4000-8000-000000000001", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a6", "zone_id": "z3000000000000000000000000000003", "zone_name": "asphaltpavingblackfoot.com", "hostname": "www.asphaltpavingblackfoot.com", "service": "asphalt-paving-blackfoot", "environment": "production", "cert_id": null, "enabled": false },
+    { "id": "d0000000000000000000000000000000000000a7", "zone_id": "z4000000000000000000000000000004", "zone_name": "dumpsterrentalhainescity.com", "hostname": "dumpsterrentalhainescity.com", "service": "dumpster-rental-haines-city", "environment": "production", "cert_id": "c4000000-0000-4000-8000-000000000001", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a8", "zone_id": "z4000000000000000000000000000004", "zone_name": "dumpsterrentalhainescity.com", "hostname": "www.dumpsterrentalhainescity.com", "service": "dumpster-rental-haines-city", "environment": "production", "cert_id": "c4000000-0000-4000-8000-000000000002", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000a9", "zone_id": "z5000000000000000000000000000005", "zone_name": "carsoncitysolarinstallation.com", "hostname": "carsoncitysolarinstallation.com", "service": "solar-panel-sites", "environment": "production", "cert_id": "c5000000-0000-4000-8000-000000000001", "enabled": true },
+    { "id": "d0000000000000000000000000000000000000b0", "zone_id": "z6000000000000000000000000000006", "zone_name": "idahofallssolarinstallation.com", "hostname": "idahofallssolarinstallation.com", "service": "idaho-falls-solar-installation", "environment": "production", "cert_id": "c6000000-0000-4000-8000-000000000001", "enabled": true }
+  ],
+  "success": true,
+  "errors": [],
+  "messages": []
+}

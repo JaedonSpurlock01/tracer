@@ -1,0 +1,6 @@
+{
+  "data": null,
+  "errors": [
+    { "message": "unable to parse query", "path": null, "extensions": { "code": "invalidQuery", "timestamp": "2026-10-20T15:00:00Z" } }
+  ]
+}

@@ -6,8 +6,8 @@
  * @description
  *  Checks the root Home crumb, static segment labels with links to every
  *  crumb but the current page, a registered label replacing a dynamic
- *  segment's generic noun, the unlinked Account segment, and a Workspace
- *  Settings section label.
+ *  segment's generic noun, the unlinked Account segment, the Site page
+ *  label, and a Workspace Settings section label.
  *
  * @see
  *  components/tracer/breadcrumbs.tsx
@@ -50,6 +50,8 @@ describe("breadcrumbs", () => {
   it("falls back to generic nouns and section labels, and leaves Account unlinked", () => {
     expect(crumbsFor("/workspaces/ws-1/calls/call-9", {}).map((crumb) => crumb.label)).toEqual(["Workspaces", "Workspace", "Calls", "Call"]);
     expect(crumbsFor("/workspaces/ws-1/settings/recording", {}).map((crumb) => crumb.label)).toEqual(["Workspaces", "Workspace", "Settings", "Recording and AI"]);
+    expect(crumbsFor("/workspaces/ws-1/site", {}).map((crumb) => crumb.label)).toEqual(["Workspaces", "Workspace", "Site"]);
+    expect(crumbsFor("/pricing", {}).map((crumb) => crumb.label)).toEqual(["Pricing"]);
     expect(crumbsFor("/account/settings", {})).toEqual([
       { href: "/account", label: "Account", link: false },
       { href: "/account/settings", label: "Settings", link: true },

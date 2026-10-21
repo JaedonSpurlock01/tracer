@@ -4,23 +4,32 @@
  * @brief  Renders the role-aware Tracer application Sidebar.
  *
  * @description
- *  Provides global navigation and an account menu at the top of the Sidebar.
- *  The menu trigger carries the Tracer orb. The menu lists the
- *  current Organization with a disabled New organization action, the
- *  signed-in user with a DiceBear avatar, Account Settings, and Sign out.
- *  The Sidebar is flat on the root color with one hairline on its edge.
+ *  Provides navigation and an account menu at the top of the Sidebar.
+ *  Outside a Workspace the navigation is global. Inside a Workspace, which
+ *  the Workspace layout registers through WorkspaceNav, the navigation
+ *  swaps to an All Workspaces back link, the Workspace name as a heading,
+ *  Overview, a Website group with Site, a Phone group with Calls and the
+ *  Operator-only Flow, Reports, and the Operator-only Settings. The menu
+ *  trigger carries the Tracer orb. The menu lists the current Organization
+ *  with a disabled New organization action, the signed-in user with a
+ *  DiceBear avatar, Account Settings, and Sign out. The Sidebar is flat on
+ *  the root color with one hairline on its edge.
  *
  * @remarks
  *  Workspace selection lives on the Workspaces page, so the Sidebar carries
  *  no Workspace switcher. The first release has one Organization; New
  *  organization stays disabled until multiple Organizations are supported.
  *  Operator navigation is hidden for Client Viewers while server guards
- *  remain authoritative for protected routes. The avatar is the DiceBear
- *  Gaze face the user picked in Account Settings, or one seeded by the
- *  opaque user id, so no email or name is sent to DiceBear.
+ *  remain authoritative for protected routes. Overview is current only on
+ *  its exact route; every other Workspace item is current for its route
+ *  and the routes below it, so Call Detail marks Calls and every Workspace
+ *  Settings section marks Settings. The avatar is the DiceBear Gaze face
+ *  the user picked in Account Settings, or one seeded by the opaque user
+ *  id, so no email or name is sent to DiceBear.
  *
  * @see
  *  DESIGN.md
+ *  components/tracer/workspace-nav.tsx
  *  data/avatar.ts
  *
  * @author Jaedon Spurlock
@@ -30,9 +39,11 @@
 
 import {
   Activity,
+  ArrowLeft,
   Check,
   ChevronsUpDown,
   FileText,
+  Globe,
   House,
   LayoutGrid,
   LogOut,
@@ -41,6 +52,7 @@ import {
   Plus,
   Settings,
   Users,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -48,6 +60,7 @@ import type { ComponentType } from "react";
 
 import { Badge } from "@/components/reui/badge";
 import { BrandMark } from "@/components/tracer/brand";
+import { useWorkspaceNav, type WorkspaceNavRegistration } from "@/components/tracer/workspace-nav";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -61,6 +74,9 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -79,10 +95,12 @@ interface NavigationItem {
   href: string;
   icon: ComponentType<{ className?: string }>;
   operatorOnly?: boolean;
+  /** Current only on the exact route rather than on the routes below it. */
+  exact?: boolean;
 }
 
 const navigation: NavigationItem[] = [
-  { label: "Home", href: "/", icon: House },
+  { label: "Home", href: "/", icon: House, exact: true },
   { label: "Activity", href: "/activity", icon: Activity },
   { label: "Calls", href: "/calls", icon: Phone },
   { label: "Workspaces", href: "/workspaces", icon: LayoutGrid },
@@ -157,9 +175,91 @@ function AccountMenu({ actor, organization }: AppSidebarProps) {
   );
 }
 
-export default function AppSidebar({ actor, organization }: AppSidebarProps) {
+function isCurrent(item: NavigationItem, pathname: string): boolean {
+  if (item.exact) return pathname === item.href;
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
+
+function NavigationMenu({ items, operator }: { items: NavigationItem[]; operator: boolean }) {
   const pathname = usePathname();
-  const items = navigation.filter((item) => !item.operatorOnly || actor.role === "Operator");
+  return (
+    <SidebarMenu>
+      {items
+        .filter((item) => !item.operatorOnly || operator)
+        .map((item) => {
+          const Icon = item.icon;
+          const active = isCurrent(item, pathname);
+          return (
+            <SidebarMenuItem key={item.href}>
+              <SidebarMenuButton render={<Link href={item.href} prefetch aria-current={active ? "page" : undefined} />} isActive={active}>
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          );
+        })}
+    </SidebarMenu>
+  );
+}
+
+function workspaceNavigation(workspaceId: string): Record<"overview" | "website" | "phone" | "tail", NavigationItem[]> {
+  const base = `/workspaces/${workspaceId}`;
+  return {
+    overview: [{ label: "Overview", href: base, icon: House, exact: true }],
+    website: [{ label: "Site", href: `${base}/site`, icon: Globe }],
+    phone: [
+      { label: "Calls", href: `${base}/calls`, icon: Phone },
+      { label: "Flow", href: `${base}/flow`, icon: Workflow, operatorOnly: true },
+    ],
+    tail: [
+      { label: "Reports", href: `${base}/reports`, icon: FileText },
+      { label: "Settings", href: `${base}/settings`, icon: Settings, operatorOnly: true },
+    ],
+  };
+}
+
+function WorkspaceNavigation({ workspace }: { workspace: WorkspaceNavRegistration }) {
+  const groups = workspaceNavigation(workspace.id);
+  return (
+    <nav aria-label="Workspace" className="flex flex-col">
+      <SidebarGroup>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton render={<Link href="/workspaces" prefetch />} className="text-muted-foreground">
+              <ArrowLeft aria-hidden="true" />
+              <span>All Workspaces</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+      <SidebarGroup>
+        <SidebarGroupLabel className="text-sidebar-foreground">{workspace.name}</SidebarGroupLabel>
+        <SidebarGroupContent>
+          <NavigationMenu items={groups.overview} operator={workspace.operator} />
+        </SidebarGroupContent>
+      </SidebarGroup>
+      <SidebarGroup>
+        <SidebarGroupLabel>Website</SidebarGroupLabel>
+        <SidebarGroupContent>
+          <NavigationMenu items={groups.website} operator={workspace.operator} />
+        </SidebarGroupContent>
+      </SidebarGroup>
+      <SidebarGroup>
+        <SidebarGroupLabel>Phone</SidebarGroupLabel>
+        <SidebarGroupContent>
+          <NavigationMenu items={groups.phone} operator={workspace.operator} />
+        </SidebarGroupContent>
+      </SidebarGroup>
+      <SidebarGroup>
+        <NavigationMenu items={groups.tail} operator={workspace.operator} />
+      </SidebarGroup>
+    </nav>
+  );
+}
+
+export default function AppSidebar({ actor, organization }: AppSidebarProps) {
+  const workspace = useWorkspaceNav();
+  const operator = actor.role === "Operator";
 
   return (
     <Sidebar>
@@ -167,20 +267,7 @@ export default function AppSidebar({ actor, organization }: AppSidebarProps) {
         <AccountMenu actor={actor} organization={organization} />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarMenu>
-          {items.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            return (
-              <SidebarMenuItem key={item.href}>
-                <SidebarMenuButton render={<Link href={item.href} prefetch />} isActive={isActive}>
-                  <Icon aria-hidden="true" />
-                  <span>{item.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
+        {workspace ? <WorkspaceNavigation workspace={workspace} /> : <NavigationMenu items={navigation} operator={operator} />}
       </SidebarContent>
     </Sidebar>
   );

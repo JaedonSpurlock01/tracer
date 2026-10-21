@@ -5,11 +5,15 @@
  *
  * @description
  *  Displays the Workspace header with its state, numbers, reporting
- *  timezone, date controls, and actions, then the KPI row and Call trends
- *  chart in the Workspace reporting timezone, routing health, the
+ *  timezone, date controls, and actions, then the Scorecard (Visits,
+ *  Calls, Visit-to-Call, and Search Visibility once a score exists, when a
+ *  Site is linked, plus Monthly Cost with its yearly projection and Profit
+ *  with the Deal for Operators), the Site summary panel
+ *  linking to the Site page or offering Link Site, the KPI row and Call
+ *  trends chart in the Workspace reporting timezone, routing health, the
  *  published Call Flow summary, and the five Recent Calls linking to Call
- *  Detail, with View Calls opening Workspace Calls over the same range. The
- *  Workspace tabs sit below the header. Operators get Edit Flow and
+ *  Detail, with View Calls opening Workspace Calls over the same range.
+ *  Operators get Edit Flow and
  *  Workspace Settings; Client Viewers get Generate Report, scoped to this
  *  Workspace and its reporting timezone, and Workspace Reports.
  *
@@ -19,7 +23,7 @@
  *  provider events, and a webhook Warning stays inside routing health with
  *  an Operator-only action that opens the Number settings. Analytics,
  *  routing health, and Recent Calls each fail alone with an inline Retry
- *  that rerenders the page. Setup Required replaces the analytics with
+ *  that rerenders the page, and so does the Site region. Setup Required replaces the analytics with
  *  Resume Setup and its checklist. Archived keeps historical analytics and
  *  Calls readable under an archived label and removes live-routing actions.
  *
@@ -35,7 +39,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
@@ -51,13 +55,18 @@ import {
 } from "@/components/tracer/analytics-panels";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock } from "@/components/tracer/call-format";
+import { EmptyState } from "@/components/tracer/empty-state";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
 import GenerateReportButton from "@/components/tracer/generate-report-dialog";
-import WorkspaceTabs from "@/components/tracer/workspace-tabs";
+import { describeDeal } from "@/components/tracer/deal-editor";
+import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SiteResponse } from "@/components/tracer/site-picker";
 import type { AnalyticsSummary, WebhookHealth, WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { RecentCall } from "@/data/call-details";
 import type { CallFlowGraph } from "@/data/call-flow";
+import type { DealRecord } from "@/data/deals";
+import { formatUsdCents, yearlyCents } from "@/data/pricing";
+import type { ClientViewerSiteSummary, SiteSummary } from "@/data/sites";
 import type { WorkspaceRecord } from "@/data/workspaces";
 import { describeSetupChecklist } from "@/data/workspace-policy";
 
@@ -68,7 +77,19 @@ interface WorkspaceOverviewProps {
   recentCalls?: RecentCall[] | null;
   routingHealth?: WorkspaceRoutingHealth | null;
   analytics?: { range: AnalyticsRange; summary: AnalyticsSummary | null; callsHref: string };
+  site?: { record: SiteResponse | null; summary: SiteSummary | ClientViewerSiteSummary | null; searchScore?: number | null } | null;
+  money?: WorkspaceMoney | null;
 }
+
+export interface WorkspaceMoney {
+  month: string;
+  costCents: number;
+  profitCents: number;
+  deal: DealRecord | null;
+}
+
+const count = new Intl.NumberFormat("en-US");
+const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
 const healthBadges = {
   Healthy: ["Healthy", "success-light"],
@@ -166,6 +187,97 @@ function RoutingHealth({ workspace, health, operator, pending, onRetry }: { work
   );
 }
 
+function ScorecardTile({ id, label, value, definition, valueClass = "" }: { id: string; label: string; value: string; definition: string; valueClass?: string }) {
+  return (
+    <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
+      <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
+      <p className={`font-mono text-2xl font-semibold tracking-tight tabular-nums${valueClass ? ` ${valueClass}` : ""}`}>{value}</p>
+      <p className="text-xs text-muted-foreground">{definition}</p>
+    </FramePanel>
+  );
+}
+
+const scorecardColumns = ["", "xl:grid-cols-1", "xl:grid-cols-2", "xl:grid-cols-3", "xl:grid-cols-4", "xl:grid-cols-5", "xl:grid-cols-6"];
+
+function Scorecard({ visits, calls, searchScore, siteLinked, money }: { visits: number | null; calls: number | null; searchScore: number | null; siteLinked: boolean; money: WorkspaceMoney | null | undefined }) {
+  const funnel = visits === null || calls === null || visits === 0 ? "-" : percent.format(calls / visits);
+  const tiles = (siteLinked ? 3 + (searchScore === null ? 0 : 1) : 0) + (money ? 2 : 0);
+  if (tiles === 0) return null;
+  return (
+    <Frame className={`grid gap-2 sm:grid-cols-2 ${scorecardColumns[tiles]}`}>
+      {siteLinked ? (
+        <>
+          <ScorecardTile id="scorecard-visits" label="Visits" value={visits === null ? "-" : count.format(visits)} definition="Sessions on the linked Site" />
+          <ScorecardTile id="scorecard-calls" label="Calls" value={calls === null ? "-" : count.format(calls)} definition="Calls to the Tracking Number" />
+          <ScorecardTile id="scorecard-visit-to-call" label="Visit-to-Call" value={funnel} definition="Calls divided by Visits" valueClass="text-[var(--chart-1)]" />
+          {searchScore === null ? null : <ScorecardTile id="scorecard-search-visibility" label="Search Visibility" value={String(searchScore)} definition="of 100" />}
+        </>
+      ) : null}
+      {money ? (
+        <>
+          <ScorecardTile id="scorecard-monthly-cost" label="Monthly Cost" value={formatUsdCents(money.costCents)} definition={`Projected ${formatUsdCents(yearlyCents(money.costCents))} per year`} />
+          <ScorecardTile id="scorecard-profit" label="Profit" value={formatUsdCents(money.profitCents)} definition={describeDeal(money.deal)} valueClass={money.profitCents < 0 ? "text-destructive" : "text-success"} />
+        </>
+      ) : null}
+    </Frame>
+  );
+}
+
+function SiteSummaryPanel({ workspace, site, operator, pending, onRetry, onLink }: { workspace: WorkspaceRecord; site: NonNullable<WorkspaceOverviewProps["site"]> | null; operator: boolean; pending: boolean; onRetry: () => void; onLink: () => void }) {
+  const zone = workspace.reportingTimezone;
+  const record = site?.record ?? null;
+  return (
+    <Frame>
+      <FramePanel role="region" aria-labelledby="site-summary-title" className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="site-summary-title" className="font-semibold">Site</h2>
+          {record ? (
+            <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/site`} prefetch />}>
+              View Site
+            </Button>
+          ) : null}
+        </div>
+        {site === null ? (
+          <RegionRetry message="The Site summary is unavailable." pending={pending} onRetry={onRetry} />
+        ) : !record ? (
+          operator ? (
+            <EmptyState
+              title="No Site is linked to this Workspace"
+              description="Link a Site from the connected Cloudflare account to see its preview, traffic, and health here."
+              action={
+                <Button type="button" onClick={onLink}>
+                  Link Site
+                </Button>
+              }
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">No Site is linked to this Workspace.</p>
+          )
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-[12rem_1fr]">
+            <SitePreviewThumbnail src={record.latestPreview ? previewImageSrc(workspace.id, record.latestPreview.capturedAt) : null} alt={`Preview of ${record.primaryHostname}`} />
+            <dl className="grid content-start gap-3 sm:grid-cols-2">
+              <Fact label="Primary hostname">{record.primaryHostname}</Fact>
+              <Fact label="Site Health">
+                <span className="flex flex-wrap items-center gap-2">
+                  <Badge variant={siteHealthBadges[record.health][1]}>{siteHealthBadges[record.health][0]}</Badge>
+                  {record.healthReason ? <span className="font-sans text-xs text-muted-foreground">{record.healthReason}</span> : null}
+                </span>
+              </Fact>
+              <Fact label="Last check">
+                {record.latestCheck
+                  ? `${record.latestCheck.ok ? "" : "Failed: "}${record.latestCheck.statusCode ?? "No response"}, ${record.latestCheck.responseMs === null ? "-" : `${record.latestCheck.responseMs} ms`}, ${formatCallTime(record.latestCheck.checkedAt, zone)}`
+                  : "No check yet"}
+              </Fact>
+              <Fact label="Last deploy">{record.lastDeployedAt ? formatCallTime(record.lastDeployedAt, zone) : "-"}</Fact>
+            </dl>
+          </div>
+        )}
+      </FramePanel>
+    </Frame>
+  );
+}
+
 function Analytics({ analytics, pending, onRetry }: { analytics: NonNullable<WorkspaceOverviewProps["analytics"]>; pending: boolean; onRetry: () => void }) {
   const { summary } = analytics;
   if (!pending && !summary) {
@@ -193,8 +305,9 @@ function Analytics({ analytics, pending, onRetry }: { analytics: NonNullable<Wor
   );
 }
 
-export default function WorkspaceOverview({ workspace, flow, readOnly = false, recentCalls, routingHealth, analytics }: WorkspaceOverviewProps) {
+export default function WorkspaceOverview({ workspace, flow, readOnly = false, recentCalls, routingHealth, analytics, site, money }: WorkspaceOverviewProps) {
   const { pending, changeRange, retry } = useAnalyticsNavigation();
+  const [linkSiteOpen, setLinkSiteOpen] = useState(false);
   const checklist = describeSetupChecklist(workspace);
   const published = flow?.published ?? null;
   const operator = !readOnly;
@@ -238,7 +351,6 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
           )}
         </div>
       </div>
-      <WorkspaceTabs workspaceId={workspace.id} operator={operator} current="overview" />
       {setupRequired && operator ? (
         <Frame>
           <FramePanel className="flex flex-col gap-4">
@@ -257,12 +369,14 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
           </FramePanel>
         </Frame>
       ) : null}
+      {analytics && !setupRequired ? <AnalyticsRangeControls range={analytics.range} onRangeChange={changeRange} disabled={pending} /> : null}
       {analytics && !setupRequired ? (
-        <>
-          <AnalyticsRangeControls range={analytics.range} onRangeChange={changeRange} disabled={pending} />
-          <Analytics analytics={analytics} pending={pending} onRetry={retry} />
-        </>
+        <Scorecard visits={site?.summary?.visits ?? null} calls={analytics.summary?.kpis.totalCalls.value ?? null} searchScore={site?.searchScore ?? null} siteLinked={Boolean(site?.record)} money={operator ? money : undefined} />
       ) : null}
+      {site !== undefined ? (
+        <SiteSummaryPanel workspace={workspace} site={site} operator={operator} pending={pending} onRetry={retry} onLink={() => setLinkSiteOpen(true)} />
+      ) : null}
+      {analytics && !setupRequired ? <Analytics analytics={analytics} pending={pending} onRetry={retry} /> : null}
       <RoutingHealth workspace={workspace} health={routingHealth} operator={operator && !archived} pending={pending} onRetry={retry} />
       <Frame>
         <FramePanel>
@@ -279,6 +393,7 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
       {recentCalls !== undefined ? (
         <RecentCalls workspace={workspace} calls={recentCalls} viewCallsHref={analytics?.callsHref ?? `/workspaces/${workspace.id}/calls`} onRetry={retry} pending={pending} />
       ) : null}
+      {operator ? <SitePickerDialog open={linkSiteOpen} onOpenChange={setLinkSiteOpen} workspaceId={workspace.id} mode="link" timeZone={workspace.reportingTimezone} onLinked={retry} /> : null}
     </div>
   );
 }
