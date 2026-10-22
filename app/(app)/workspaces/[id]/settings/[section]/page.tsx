@@ -11,7 +11,7 @@
  *  Unknown section names return Not Found. Settings remain separate from
  *  provider integration mutation. The Access section's users and the Site
  *  section's linked Site with its Service Area, Keywords, and Domain
- *  renewal, the Workspace's open Deal, and the Forms section's Forwarding
+ *  renewal, the Workspace's Business and open Deal, and the Forms section's Forwarding
  *  Recipients load on the server with the Workspace so the
  *  page renders without a loading Skeleton.
  *
@@ -27,6 +27,7 @@ import { resolveRequestActor } from "@/app/(app)/actor";
 import { workspaceSettingsSections } from "@/components/tracer/workspace-settings-sections";
 import WorkspaceSettingsView from "@/components/tracer/workspace-settings-view";
 import { isActiveOperatorActor } from "@/data/authorization";
+import { createBusinesses } from "@/data/business";
 import { createDeals } from "@/data/deals";
 import { createFormSubmissions } from "@/data/form-submissions";
 import { createOperatorAdministration } from "@/data/operator-administration";
@@ -47,9 +48,10 @@ export default async function WorkspaceSettingsSectionPage({ params }: { params:
     const site = workspace && match.slug === "site" ? await createSites(pool, actor).findLinked(workspace.id) : null;
     const keywords = site ? await createSiteKeywords(pool, actor).list(site.id).catch(() => null) : null;
     const deal = workspace && match.slug === "site" ? await createDeals(pool, actor).current(workspace.id).catch(() => null) : undefined;
+    const business = workspace && match.slug === "site" ? await createBusinesses(pool, actor).find(workspace.id).catch(() => null) : undefined;
     const forms = workspace && match.slug === "forms" ? await createFormSubmissions(pool, actor, email).list(workspace.id).catch(() => null) : undefined;
-    return { workspace, accessUsers, site: site ? siteResponseForActor(actor, site) : null, keywords, deal, forms };
+    return { workspace, accessUsers, site: site ? siteResponseForActor(actor, site) : null, keywords, deal, business, forms };
   });
   if (!data.workspace) notFound();
-  return <WorkspaceSettingsView initialWorkspace={data.workspace} section={match.slug} initialAccessUsers={data.accessUsers} initialSite={data.site} initialKeywords={data.keywords} initialDeal={data.deal} initialForms={data.forms} />;
+  return <WorkspaceSettingsView initialWorkspace={data.workspace} section={match.slug} initialAccessUsers={data.accessUsers} initialSite={data.site} initialKeywords={data.keywords} initialDeal={data.deal} initialBusiness={data.business} initialForms={data.forms} />;
 }

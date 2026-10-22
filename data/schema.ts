@@ -22,6 +22,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -991,6 +992,35 @@ export const deals = pgTable(
 
 export const formSubmissionForwardStatuses = ["Sent", "Failed", "Not configured", "Held", "Rejected"] as const;
 
+export const businesses = pgTable(
+  "business",
+  {
+    id: text().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text(),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    email: text(),
+    niche: text(),
+    website: text(),
+    city: text(),
+    cityLatitude: doublePrecision("city_latitude"),
+    cityLongitude: doublePrecision("city_longitude"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("business_workspace_idx").on(table.workspaceId),
+    index("business_organization_id_idx").on(table.organizationId),
+    check("business_city_point_check", sql`(${table.cityLatitude} is null) = (${table.cityLongitude} is null)`),
+  ],
+);
+
 export const formSubmissions = pgTable(
   "form_submission",
   {
@@ -1085,5 +1115,6 @@ export const schema = {
   siteKeyword: siteKeywords,
   keywordRankDay: keywordRankDays,
   deal: deals,
+  business: businesses,
   formSubmission: formSubmissions,
 };

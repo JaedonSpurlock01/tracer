@@ -24,6 +24,7 @@ There is no public sign-up. Spurlock Labs staff (Operators) set everything up an
 | Transcripts and lead scores | OpenAI | Speech-to-text and the lead assessment. |
 | Sign-in codes and form emails | Cloudflare Email Service | Sends the 6-digit sign-in code and forwards website form submissions. |
 | Search rankings | DataForSEO | Daily keyword positions for each Site. |
+| City lookup | Photon (komoot), free OpenStreetMap geocoder | Finds a Business's city and its map point in Site settings. No account or key. |
 
 There are three places Tracer runs:
 

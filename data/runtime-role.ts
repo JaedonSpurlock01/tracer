@@ -77,7 +77,8 @@ export async function provisionRuntimeRole(
       public.site_preview,
       public.site_keyword,
       public.keyword_rank_day,
-      public.deal
+      public.deal,
+      public.business
     TO ${runtimeRole}
   `);
   await connection.query(`GRANT SELECT, INSERT, UPDATE ON TABLE public.workspace TO ${runtimeRole}`);

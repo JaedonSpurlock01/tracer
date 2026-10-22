@@ -9,8 +9,9 @@
  *  the linked Site with its preview thumbnail, hostname, and Site Link
  *  start, replaces it through the Site picker, or detaches it after
  *  confirmation without changing Cloudflare, edits the Site's Service
- *  Area, Keywords, and Domain renewal, and adds, edits, or ends the
- *  Workspace's Deal. The Forms page edits the Forwarding Recipients. The
+ *  Area, Keywords, and Domain renewal, edits the Workspace's Business
+ *  beside a map of its city, and adds, edits, or ends the Workspace's
+ *  Deal. The Forms page edits the Forwarding Recipients. The
  *  Number page replaces or detaches the Tracking Number. An Archived Workspace keeps only Access and
  *  Restore editable.
  *
@@ -53,11 +54,12 @@ import { EmptyState } from "@/components/tracer/empty-state";
 import { formatCallTime } from "@/components/tracer/call-format";
 import { ForwardingRecipientsSettings } from "@/components/tracer/forms-settings";
 import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
-import { DealSettings, DomainRenewalSettings } from "@/components/tracer/site-deal-settings";
+import { BusinessAndDealSettings, DomainRenewalSettings } from "@/components/tracer/site-deal-settings";
 import SiteSearchSettings, { type SiteSearchSettingsData } from "@/components/tracer/site-search-settings";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import type { BusinessRecord } from "@/data/business";
 import type { DealRecord } from "@/data/deals";
 import type { FormSubmissionList } from "@/data/form-submissions";
 import type { OperatorRecord } from "@/data/operator-administration";
@@ -75,6 +77,7 @@ export default function WorkspaceSettingsView({
   initialSite = null,
   initialKeywords = null,
   initialDeal,
+  initialBusiness = null,
   initialForms = null,
 }: {
   initialWorkspace: WorkspaceRecord;
@@ -83,6 +86,7 @@ export default function WorkspaceSettingsView({
   initialSite?: SiteResponse | null;
   initialKeywords?: SiteSearchSettingsData | null;
   initialDeal?: DealRecord | null;
+  initialBusiness?: BusinessRecord | null;
   initialForms?: FormSubmissionList | null;
 }) {
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -388,7 +392,7 @@ export default function WorkspaceSettingsView({
                 )}
                 {initialDeal !== undefined ? (
                   <div className="mt-8">
-                    <DealSettings workspaceId={workspace.id} initial={initialDeal} onMessage={setMessage} />
+                    <BusinessAndDealSettings workspaceId={workspace.id} initialBusiness={initialBusiness} initialDeal={initialDeal} onMessage={setMessage} />
                   </div>
                 ) : null}
               </section>

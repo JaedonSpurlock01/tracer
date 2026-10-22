@@ -1,0 +1,138 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_type": "R",
+        "osm_id": 113314,
+        "osm_key": "place",
+        "osm_value": "city",
+        "type": "city",
+        "name": "Austin",
+        "county": "Travis",
+        "state": "Texas",
+        "country": "United States",
+        "countrycode": "US",
+        "extra": {
+          "admin_level": "8"
+        },
+        "extent": [
+          -97.9367663,
+          30.5166255,
+          -97.5605288,
+          30.0985133
+        ]
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.7474086,
+          30.2649261
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_type": "R",
+        "osm_id": 137800,
+        "osm_key": "place",
+        "osm_value": "town",
+        "type": "city",
+        "name": "Austin",
+        "county": "Mower",
+        "state": "Minnesota",
+        "country": "United States",
+        "postcode": "55912",
+        "countrycode": "US",
+        "extra": {
+          "admin_level": "8"
+        },
+        "extent": [
+          -93.0494353,
+          43.7133409,
+          -92.9190107,
+          43.641701
+        ]
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -92.9746498,
+          43.6679992
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_type": "N",
+        "osm_id": 150946632,
+        "osm_key": "place",
+        "osm_value": "village",
+        "type": "city",
+        "name": "Austin",
+        "county": "Lander",
+        "state": "Nevada",
+        "country": "United States",
+        "countrycode": "US"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.0714484,
+          39.4929853
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_type": "N",
+        "osm_id": 1,
+        "osm_key": "place",
+        "osm_value": "city",
+        "type": "city"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_type": "R",
+        "osm_id": 113314,
+        "osm_key": "place",
+        "osm_value": "city",
+        "type": "city",
+        "name": "Austin",
+        "county": "Travis",
+        "state": "Texas",
+        "country": "United States",
+        "countrycode": "US",
+        "extra": {
+          "admin_level": "8"
+        },
+        "extent": [
+          -97.9367663,
+          30.5166255,
+          -97.5605288,
+          30.0985133
+        ]
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.7474086,
+          30.2649261
+        ]
+      }
+    }
+  ]
+}

@@ -18,8 +18,10 @@
  *  Service Area, Keywords, and Search read model for any reader of the
  *  Workspace, and lets an Operator set the Service Area and add, reweight,
  *  and remove Keywords. Lets an Operator record the Site's Domain renewal
- *  and create, edit, and end the Workspace's Deal; Client Viewers get 403
- *  on every Deal and Domain route. Form Submission routes list a Workspace's
+ *  and create, edit, and end the Workspace's Deal, and read and save the
+ *  Workspace's Business with a city lookup through the Places client;
+ *  Client Viewers get 403 on every Deal, Business, Places, and Domain
+ *  route. Form Submission routes list a Workspace's
  *  submissions for any reader and reserve approve, reject, resend, review,
  *  and the forwarding recipients for Operators.
  *
@@ -43,6 +45,7 @@ import type { Pool } from "pg";
 import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
 import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
+import { BusinessError, createBusinesses } from "@/data/business";
 import { createCallDetails } from "@/data/call-details";
 import { createDeals, DealsError } from "@/data/deals";
 import { createFormSubmissions, FormSubmissionsError } from "@/data/form-submissions";
@@ -50,6 +53,7 @@ import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { Integrations } from "@/data/integrations";
 import { IntegrationsError } from "@/data/integrations-error";
 import { parseLeadReviewInput } from "@/data/lead-classification";
+import { PlacesClientError, type PlacesClient } from "@/data/places-client";
 import { saveLeadReview } from "@/data/lead-reviews";
 import { purgeCallMedia } from "@/data/media-purge";
 import type { RecordingProcessing } from "@/data/recording";
@@ -75,6 +79,8 @@ export interface WorkspacesHandlerOptions {
   pool: Pool;
   /** Forwards Form Submissions; without it every forward records Forward failed with Resend. */
   email?: TransactionalEmail;
+  /** Looks up cities for the Business form; without it the lookup answers 503. */
+  places?: PlacesClient;
   twilio: TwilioClient;
   integrations: (organizationId: string) => Integrations;
   baseURL: string;
@@ -96,11 +102,12 @@ function errorResponse(error: unknown): Response {
     return response({ error: error.status === 401 ? "unauthenticated" : "forbidden" }, error.status);
   }
   if (error instanceof AnalysisRetryError) return response({ error: "provider_unavailable" }, 502);
+  if (error instanceof PlacesClientError) return response({ error: "provider_unavailable" }, 502);
   if (error instanceof IntegrationsError) {
     const status = error.code === "master_key_missing" ? 503 : error.code === "not_connected" ? 404 : 502;
     return response(error.detail ? { error: error.code, detail: error.detail } : { error: error.code }, status);
   }
-  if (error instanceof WorkspacesError || error instanceof SitesError || error instanceof SiteKeywordsError || error instanceof DealsError || error instanceof FormSubmissionsError) {
+  if (error instanceof WorkspacesError || error instanceof SitesError || error instanceof SiteKeywordsError || error instanceof DealsError || error instanceof BusinessError || error instanceof FormSubmissionsError) {
     const status = error.code === "invalid_input" ? 400 : error.code === "not_found" ? 404 : 409;
     return response({ error: error.code }, status);
   }
@@ -226,7 +233,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         const summary = await sites.summary(site.id, analyticsRangeFromSearchParams(new URL(request.url).searchParams), workspace.reportingTimezone);
         return response({ site: siteResponseForActor(actor, site), summary: summaryResponseForActor(actor, summary) });
       }
-      if (request.method === "GET" && (route === "" || (route !== "numbers" && route !== "sites" && /^[^/]+$/.test(route)))) {
+      if (request.method === "GET" && (route === "" || (route !== "numbers" && route !== "sites" && route !== "places" && /^[^/]+$/.test(route)))) {
         const readable = createReadableWorkspaces(options.pool, actor);
         if (route !== "") {
           const workspace = await readable.find(route);
@@ -292,6 +299,10 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         );
       }
       if (request.method === "GET" && route === "numbers") return response({ numbers: await routing.listAvailableNumbers() });
+      if (request.method === "GET" && route === "places") {
+        if (!options.places) return response({ error: "places_unavailable" }, 503);
+        return response({ places: await options.places.searchCities(new URL(request.url).searchParams.get("q") ?? "") });
+      }
       if (request.method === "GET" && route === "sites") {
         const url = new URL(request.url);
         return response(await createSites(options.pool, actor).listForPicker({
@@ -398,6 +409,14 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
             return response({ submission: await forms.review(id, submissionId, { classification: body.classification, note: body.note }) });
           }
           if (request.method === "DELETE" && action === "review") return response({ submission: await forms.clearReview(id, submissionId) });
+        }
+      }
+      if (subroute === "business") {
+        const businesses = createBusinesses(options.pool, actor);
+        if (request.method === "GET") return response({ business: await businesses.find(id) });
+        if (request.method === "PUT") {
+          const body = await readBody(request);
+          return response({ business: await businesses.save(id, body) });
         }
       }
       if (subroute === "deal" || subroute.startsWith("deal/")) {

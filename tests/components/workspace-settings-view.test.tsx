@@ -498,7 +498,36 @@ describe("WorkspaceSettingsView", () => {
   });
 });
 
-describe("WorkspaceSettingsView Domain renewal and Deal", () => {
+describe("WorkspaceSettingsView Domain renewal, Business, and Deal", () => {
+  it("saves the Business with PUT after a city is picked from the lookup", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      if (String(request).startsWith("/api/workspaces/places?q=")) {
+        return new Response(JSON.stringify({ places: [{ label: "Austin, Texas, United States", latitude: 30.26, longitude: -97.74 }, { label: "Austin, Minnesota, United States", latitude: 43.67, longitude: -92.97 }] }), { status: 200 });
+      }
+      if (String(request) === "/api/workspaces/workspace-1/business" && init?.method === "PUT") {
+        return new Response(JSON.stringify({ business: { workspaceId: "workspace-1", ...JSON.parse(String(init.body)), updatedAt: "" } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={null} initialDeal={null} initialBusiness={null} />);
+    const region = screen.getByRole("region", { name: "Business and Deal" });
+    expect(within(region).getByRole("button", { name: "Save Business" })).toBeDisabled();
+    fireEvent.change(within(region).getByLabelText("Business name"), { target: { value: "Acme Plumbing" } });
+    fireEvent.change(within(region).getByLabelText("Their website"), { target: { value: "acmeplumbing.example" } });
+    fireEvent.change(within(region).getByLabelText("Email"), { target: { value: "jordan@acmeplumbing.example" } });
+    fireEvent.change(within(region).getByLabelText("City"), { target: { value: "Austin" } });
+    fireEvent.click(await within(region).findByRole("option", { name: "Austin, Texas, United States" }));
+    expect(within(region).getByLabelText("City")).toHaveValue("Austin, Texas, United States");
+    expect(within(region).getByRole("img", { name: "Map of Austin, Texas, United States" })).toBeVisible();
+    fireEvent.click(within(region).getByRole("button", { name: "Save Business" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/business", expect.objectContaining({ method: "PUT" })));
+    const body = JSON.parse(String((fetch.mock.calls.find((call) => call[0] === "/api/workspaces/workspace-1/business")?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ name: "Acme Plumbing", website: "acmeplumbing.example", email: "jordan@acmeplumbing.example", city: "Austin, Texas, United States", cityPoint: { latitude: 30.26, longitude: -97.74 } });
+    expect(await screen.findByRole("status")).toHaveTextContent("Business saved.");
+    expect(within(region).getByRole("button", { name: "Save Business" })).toBeDisabled();
+  });
+
   it("saves the Site's Domain renewal with PUT in cents", async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       if (String(request) === "/api/workspaces/workspace-1/site/domain" && init?.method === "PUT") {
@@ -526,7 +555,7 @@ describe("WorkspaceSettingsView Domain renewal and Deal", () => {
     vi.stubGlobal("fetch", fetch);
     render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={null} initialDeal={null} />);
     expect(screen.queryByRole("region", { name: "Domain renewal" })).not.toBeInTheDocument();
-    const region = screen.getByRole("region", { name: "Deal" });
+    const region = screen.getByRole("region", { name: "Business and Deal" });
     expect(within(region).getByText("No Deal")).toBeVisible();
     fireEvent.click(within(region).getByRole("button", { name: "Add Deal" }));
     const dialog = await screen.findByRole("dialog", { name: "Add Deal" });
