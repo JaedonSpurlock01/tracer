@@ -23,8 +23,8 @@ import type { Pool, PoolClient } from "pg";
 
 import {
   generateInitialCallFlow,
+  isTtsVoice,
   parseCallFlowGraph,
-  ttsVoices,
   validateCallFlow,
   type CallFlowGraph,
   type FlowNode,
@@ -394,7 +394,7 @@ export function createWorkspaceRouting(options: {
     const destinationNumber = normalizeE164PhoneNumber(input.destinationNumber);
     if (!destinationNumber || (input.analysisEnabled && !input.recordingEnabled)) throw new RoutingError("invalid_input");
     const disclosureVoice = input.disclosureVoice ?? "Polly.Joanna";
-    if (!ttsVoices.includes(disclosureVoice)) throw new RoutingError("invalid_input");
+    if (!isTtsVoice(disclosureVoice)) throw new RoutingError("invalid_input");
     if (
       input.whisperEnabled &&
       (typeof input.whisperMessage !== "string" || input.whisperMessage.trim().length < 1 || input.whisperMessage.trim().length > 500)

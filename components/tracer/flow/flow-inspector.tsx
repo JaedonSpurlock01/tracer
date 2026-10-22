@@ -32,7 +32,6 @@ import {
   nodeHandles,
   outcomeKinds,
   promptMaxLength,
-  recordingDisclosureText,
   ttsVoices,
   voicemailLimits,
   type EdgeHandle,
@@ -107,7 +106,6 @@ function PromptField({
   text,
   voice,
   editing,
-  editableText = true,
   onTextChange,
   onVoiceChange,
 }: {
@@ -115,27 +113,20 @@ function PromptField({
   text: string;
   voice: TtsVoice;
   editing: boolean;
-  editableText?: boolean;
-  onTextChange?: (text: string) => void;
+  onTextChange: (text: string) => void;
   onVoiceChange: (voice: TtsVoice) => void;
 }) {
   return (
     <div className="grid gap-2">
-      {editableText ? (
-        <>
-          <Textarea aria-label={label} value={text} maxLength={promptMaxLength} disabled={!editing} onChange={(event) => onTextChange?.(event.target.value)} />
-          <p className="text-xs text-muted-foreground tabular-nums">
-            {text.trim().length} / {promptMaxLength} characters
-          </p>
-        </>
-      ) : (
-        <p className="rounded border p-2 text-sm">{text}</p>
-      )}
+      <Textarea aria-label={label} value={text} maxLength={promptMaxLength} disabled={!editing} onChange={(event) => onTextChange(event.target.value)} />
+      <p className="text-xs text-muted-foreground tabular-nums">
+        {text.trim().length} / {promptMaxLength} characters
+      </p>
       <InspectorSelect
         label="Voice"
         value={voice}
         disabled={!editing}
-        options={ttsVoices.map((option) => ({ value: option, label: option }))}
+        options={ttsVoices.map((option) => ({ value: option.id, label: `${option.label}, ${option.gender.toLowerCase()}` }))}
         onChange={(value) => onVoiceChange(value as TtsVoice)}
       />
       <div className="flex items-center gap-2">
@@ -158,7 +149,7 @@ export default function FlowInspector({ node, nodes, issues, targets, editing, t
           {describeFlowNode(node).title}
         </h2>
         {node.type === "recording_disclosure" ? (
-          <PromptField label="Disclosure" text={recordingDisclosureText} voice={node.voice} editing={editing} editableText={false} onVoiceChange={(voice) => patch({ voice })} />
+          <PromptField label="Disclosure" text={node.message} voice={node.voice} editing={editing} onTextChange={(message) => patch({ message })} onVoiceChange={(voice) => patch({ voice })} />
         ) : null}
         {node.type === "keypad_gate" ? (
           <>

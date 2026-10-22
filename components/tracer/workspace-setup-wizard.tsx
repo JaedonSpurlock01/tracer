@@ -51,7 +51,7 @@ import FlowSummary from "@/components/tracer/flow/flow-summary";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { SitePickerList } from "@/components/tracer/site-picker";
 import { formatCallDate } from "@/components/tracer/call-format";
-import { recordingDisclosureText, ttsVoices, type CallFlowGraph } from "@/data/call-flow";
+import { recordingDisclosureText, type CallFlowGraph, type TtsVoice } from "@/data/call-flow";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
 const steps = ["Basics", "Site", "Number", "Routing", "Review"];
@@ -64,7 +64,7 @@ type RoutingForm = {
   spamGateEnabled: boolean;
   whisperEnabled: boolean;
   whisperMessage: string | null;
-  disclosureVoice: (typeof ttsVoices)[number];
+  disclosureVoice: TtsVoice;
 };
 type FlowResponse = {
   draft: { graph: CallFlowGraph } | null;
@@ -444,7 +444,12 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                   }
                 />
               </label>
-              {routing.recordingEnabled ? <p className="rounded-md border p-3 text-sm">{recordingDisclosureText}</p> : null}
+              {routing.recordingEnabled ? (
+                <div className="grid gap-1">
+                  <p className="rounded-md border p-3 text-sm">{recordingDisclosureText}</p>
+                  <p className="text-xs text-muted-foreground">You can change this disclosure later on the Call Flow.</p>
+                </div>
+              ) : null}
               <label className="flex items-center justify-between">
                 <span>Analysis enabled</span>
                 <Switch

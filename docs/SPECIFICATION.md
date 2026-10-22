@@ -102,7 +102,7 @@ Supported nodes:
 - Voicemail
 - Fixed Outcome nodes
 
-Business Hours supports weekly windows and specific-date overrides in the Workspace timezone. Prompts use English text-to-speech. Voicemail is capped at 120 seconds, stops after 5 seconds of detectable silence, and allows `#` to finish. Recording disclosure uses the fixed sentence `This call may be recorded for quality purposes.`
+Business Hours supports weekly windows and specific-date overrides in the Workspace timezone. Prompts use English text-to-speech. Voicemail is capped at 120 seconds, stops after 5 seconds of detectable silence, and allows `#` to finish. A new Recording Disclosure starts with the sentence `This call may be recorded for quality purposes.`, which an Operator can rewrite (1 to 500 characters) like any other prompt; a disclosure published before its text became editable keeps that sentence. Each spoken step uses one of 16 English Amazon Polly voices through Twilio, 8 female and 8 male, and Tracer sends the voice's language with it.
 
 Operators edit a draft and publish it atomically after validation. Existing Calls remain pinned to the Flow Version active at their start. The first release validates structure and configuration but does not simulate branches or place test calls.
 
@@ -520,7 +520,7 @@ An agent must not claim completion while a required check is failing. Pre-existi
 - Authentication responses do not reveal whether an email is provisioned.
 - Destructive media purge requires explicit confirmation.
 
-The fixed recording disclosure is a product safeguard, not a substitute for reviewing recording and privacy requirements in every jurisdiction where Tracking Numbers operate.
+The required Recording Disclosure step is a product safeguard, not a substitute for reviewing recording and privacy requirements in every jurisdiction where Tracking Numbers operate. Its wording is editable, so the Operator is responsible for keeping it an adequate notice.
 
 ## Cost posture
 

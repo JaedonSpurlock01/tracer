@@ -27,8 +27,25 @@ import { normalizeE164PhoneNumber } from "@/data/phone-number";
 export type OutcomeKind = "Answered" | "Voicemail" | "Missed" | "Abandoned" | "Blocked" | "Failed";
 export const outcomeKinds: readonly OutcomeKind[] = ["Answered", "Voicemail", "Missed", "Abandoned", "Blocked", "Failed"];
 
-export type TtsVoice = "Polly.Joanna" | "Polly.Matthew" | "Polly.Salli" | "Polly.Joey";
-export const ttsVoices: readonly TtsVoice[] = ["Polly.Joanna", "Polly.Matthew", "Polly.Salli", "Polly.Joey"];
+export const ttsVoices = [
+  { id: "Polly.Joanna", label: "Joanna (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Salli", label: "Salli (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Kendra", label: "Kendra (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Kimberly", label: "Kimberly (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Danielle-Neural", label: "Danielle (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Ruth-Neural", label: "Ruth (US)", gender: "Female", language: "en-US" },
+  { id: "Polly.Amy", label: "Amy (British)", gender: "Female", language: "en-GB" },
+  { id: "Polly.Nicole", label: "Nicole (Australian)", gender: "Female", language: "en-AU" },
+  { id: "Polly.Matthew", label: "Matthew (US)", gender: "Male", language: "en-US" },
+  { id: "Polly.Joey", label: "Joey (US)", gender: "Male", language: "en-US" },
+  { id: "Polly.Stephen-Neural", label: "Stephen (US)", gender: "Male", language: "en-US" },
+  { id: "Polly.Gregory-Neural", label: "Gregory (US)", gender: "Male", language: "en-US" },
+  { id: "Polly.Brian", label: "Brian (British)", gender: "Male", language: "en-GB" },
+  { id: "Polly.Arthur-Neural", label: "Arthur (British)", gender: "Male", language: "en-GB" },
+  { id: "Polly.Russell", label: "Russell (Australian)", gender: "Male", language: "en-AU" },
+  { id: "Polly.Geraint", label: "Geraint (Welsh)", gender: "Male", language: "en-GB-WLS" },
+] as const;
+export type TtsVoice = (typeof ttsVoices)[number]["id"];
 
 export const recordingDisclosureText = "This call may be recorded for quality purposes.";
 export const voicemailLimits = { maxSeconds: 120, silenceTimeoutSeconds: 5, finishOnKey: "#" } as const;
@@ -54,7 +71,7 @@ export interface DateOverride {
 
 export type FlowNode =
   | { id: string; type: "incoming_call"; position: FlowPosition }
-  | { id: string; type: "recording_disclosure"; position: FlowPosition; voice: TtsVoice }
+  | { id: string; type: "recording_disclosure"; position: FlowPosition; message: string; voice: TtsVoice }
   | { id: string; type: "business_hours"; position: FlowPosition; weeklyWindows: WeeklyWindow[]; dateOverrides: DateOverride[] }
   | { id: string; type: "keypad_gate"; position: FlowPosition; prompt: string; voice: TtsVoice; digit: string; timeoutSeconds: number }
   | { id: string; type: "forward_call"; position: FlowPosition; destinationNumber: string; timeoutSeconds: number }
@@ -162,8 +179,8 @@ function isOutcomeKind(value: unknown): value is OutcomeKind {
   return typeof value === "string" && outcomeKinds.includes(value as OutcomeKind);
 }
 
-function isTtsVoice(value: unknown): value is TtsVoice {
-  return typeof value === "string" && ttsVoices.includes(value as TtsVoice);
+export function isTtsVoice(value: unknown): value is TtsVoice {
+  return ttsVoices.some((voice) => voice.id === value);
 }
 
 function parsePosition(value: unknown): FlowPosition | null {
@@ -196,7 +213,9 @@ function parseNode(value: unknown): FlowNode | null {
     case "incoming_call":
       return { id: value.id, type: value.type, position };
     case "recording_disclosure":
-      return isTtsVoice(value.voice) ? { id: value.id, type: value.type, position, voice: value.voice } : null;
+      return isTtsVoice(value.voice) && (value.message === undefined || typeof value.message === "string")
+        ? { id: value.id, type: value.type, position, message: value.message ?? recordingDisclosureText, voice: value.voice }
+        : null;
     case "business_hours": {
       if (!Array.isArray(value.weeklyWindows) || !Array.isArray(value.dateOverrides)) return null;
       const weeklyWindows = value.weeklyWindows.map(parseWeeklyWindow);
@@ -400,6 +419,9 @@ export function validateCallFlow(graph: CallFlowGraph, context: { recordingEnabl
     if (node.type === "keypad_gate" && (typeof node.prompt !== "string" || node.prompt.trim().length < 1 || node.prompt.trim().length > promptMaxLength)) {
       issues.push(issue("invalid_prompt", "Prompt must be 1 to 500 characters.", { nodeId: node.id }));
     }
+    if (node.type === "recording_disclosure" && (typeof node.message !== "string" || node.message.trim().length < 1 || node.message.trim().length > promptMaxLength)) {
+      issues.push(issue("invalid_prompt", "Disclosure must be 1 to 500 characters.", { nodeId: node.id }));
+    }
     if (node.type === "whisper" && (typeof node.message !== "string" || node.message.trim().length < 1 || node.message.trim().length > promptMaxLength)) {
       issues.push(issue("invalid_prompt", "Message must be 1 to 500 characters.", { nodeId: node.id }));
     }
@@ -440,7 +462,7 @@ export function generateInitialCallFlow(options: InitialFlowOptions): CallFlowGr
   addNode<Extract<FlowNode, { type: "incoming_call" }>>({ id: "incoming", type: "incoming_call" });
   let previousId = "incoming";
   if (options.recordingEnabled) {
-    addNode<Extract<FlowNode, { type: "recording_disclosure" }>>({ id: "disclosure", type: "recording_disclosure", voice: options.disclosureVoice });
+    addNode<Extract<FlowNode, { type: "recording_disclosure" }>>({ id: "disclosure", type: "recording_disclosure", message: recordingDisclosureText, voice: options.disclosureVoice });
     addEdge(previousId, "next", "disclosure");
     previousId = "disclosure";
   }
@@ -545,7 +567,7 @@ export function describeFlowNode(node: FlowNode): FlowNodeDescription {
     case "incoming_call":
       return { title, detail: "Caller dials the Tracking Number" };
     case "recording_disclosure":
-      return { title, detail: `"${recordingDisclosureText}" · ${node.voice}` };
+      return { title, detail: `"${node.message}" · ${node.voice}` };
     case "business_hours": {
       const windows = node.weeklyWindows.map((window) => `${weekdayNames[window.day]} ${window.start}–${window.end}`).join(", ") || "No weekly windows";
       const overrides = node.dateOverrides.length === 0 ? "" : ` · ${node.dateOverrides.length} date override${node.dateOverrides.length === 1 ? "" : "s"}`;
@@ -583,7 +605,7 @@ export function createFlowNode(type: FlowNodeType, context: { destinationNumber:
     case "incoming_call":
       return { id, type, position };
     case "recording_disclosure":
-      return { id, type, position, voice: "Polly.Joanna" };
+      return { id, type, position, message: recordingDisclosureText, voice: "Polly.Joanna" };
     case "business_hours":
       return {
         id,

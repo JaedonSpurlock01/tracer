@@ -26,10 +26,13 @@ import {
   generateInitialCallFlow,
   nodeHandles,
   parseCallFlowGraph,
+  recordingDisclosureText,
   summarizeCallFlow,
+  ttsVoices,
   validateCallFlow,
   type CallFlowGraph,
   type FlowNode,
+  type TtsVoice,
 } from "@/data/call-flow";
 
 const baseOptions = {
@@ -359,5 +362,46 @@ describe("Call Flow descriptions, catalog, and tree", () => {
     graph.edges = graph.edges.filter((edge) => edge.id !== "forward-failed");
     const forward = callFlowTree(graph)!.branches[0].child!;
     expect(forward.branches.find((branch) => branch.handle === "failed")).toEqual({ handle: "failed", child: null, shared: false });
+  });
+});
+
+describe("Recording Disclosure message and voices", () => {
+  it("starts a generated or added disclosure with the default sentence, which the Operator can change", () => {
+    const graph = generateInitialCallFlow(baseOptions);
+    expect(node(graph, "disclosure")).toMatchObject({ type: "recording_disclosure", message: recordingDisclosureText });
+    expect(createFlowNode("recording_disclosure", { destinationNumber: "+14155552671" })).toMatchObject({ message: recordingDisclosureText });
+
+    const edited = { ...graph, nodes: graph.nodes.map((candidate) => (candidate.id === "disclosure" ? { ...candidate, message: "Calls are recorded." } : candidate)) };
+    expect(issueCodes(edited, true)).toEqual([]);
+    expect(parseCallFlowGraph(JSON.parse(JSON.stringify(edited)))).toEqual(edited);
+    expect(describeFlowNode(node(edited, "disclosure")).detail).toContain("Calls are recorded.");
+  });
+
+  it("reads a disclosure published before it had a message as the default sentence", () => {
+    const graph = generateInitialCallFlow(baseOptions);
+    const published = JSON.parse(JSON.stringify(graph));
+    for (const candidate of published.nodes) if (candidate.type === "recording_disclosure") delete candidate.message;
+
+    expect(node(parseCallFlowGraph(published)!, "disclosure")).toMatchObject({ message: recordingDisclosureText });
+  });
+
+  it("requires a disclosure message of 1 to 500 characters", () => {
+    const graph = generateInitialCallFlow(baseOptions);
+    const withMessage = (message: string) => ({ ...graph, nodes: graph.nodes.map((candidate) => (candidate.id === "disclosure" ? { ...candidate, message } : candidate)) });
+
+    expect(issueCodes(withMessage("   "), true)).toContain("invalid_prompt");
+    expect(issueCodes(withMessage("x".repeat(501)), true)).toContain("invalid_prompt");
+  });
+
+  it("offers eight female and eight male English voices, keeping the original four", () => {
+    expect(ttsVoices.filter((voice) => voice.gender === "Female")).toHaveLength(8);
+    expect(ttsVoices.filter((voice) => voice.gender === "Male")).toHaveLength(8);
+    expect(new Set(ttsVoices.map((voice) => voice.id)).size).toBe(16);
+    expect(ttsVoices.map((voice) => voice.id)).toEqual(expect.arrayContaining<TtsVoice>(["Polly.Joanna", "Polly.Matthew", "Polly.Salli", "Polly.Joey"]));
+    expect(ttsVoices.every((voice) => voice.language.startsWith("en-"))).toBe(true);
+
+    const graph = generateInitialCallFlow({ ...baseOptions, disclosureVoice: "Polly.Brian" });
+    expect(issueCodes(graph, true)).toEqual([]);
+    expect(issueCodes({ ...graph, nodes: graph.nodes.map((candidate) => (candidate.id === "disclosure" ? { ...candidate, voice: "Polly.Unknown" as TtsVoice } : candidate)) }, true)).toContain("invalid_voice");
   });
 });

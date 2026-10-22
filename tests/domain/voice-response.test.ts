@@ -55,6 +55,16 @@ const forwardTwiml =
   "</Dial>";
 
 describe("Call start TwiML", () => {
+  it("speaks the Operator's disclosure message in the chosen voice and its language", () => {
+    const graph = flow({ recordingEnabled: true });
+    const edited = {
+      ...graph,
+      nodes: graph.nodes.map((node) => (node.type === "recording_disclosure" ? { ...node, message: "Calls are recorded & reviewed.", voice: "Polly.Brian" as const } : node)),
+    };
+
+    expect(renderCallStart(edited, { ...context, recordingEnabled: true }).twiml).toContain('<Say voice="Polly.Brian" language="en-GB">Calls are recorded &amp; reviewed.</Say>');
+  });
+
   it("forwards an Incoming Call straight to the Destination Number", () => {
     expect(renderCallStart(flow(), context)).toEqual({
       twiml: `<?xml version="1.0" encoding="UTF-8"?><Response>${forwardTwiml}</Response>`,
@@ -64,9 +74,9 @@ describe("Call start TwiML", () => {
     });
   });
 
-  it("plays the fixed Recording Disclosure before forwarding when recording is enabled", () => {
+  it("plays the default Recording Disclosure before forwarding when recording is enabled", () => {
     expect(renderCallStart(flow({ recordingEnabled: true }), context)).toEqual({
-      twiml: `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">${recordingDisclosureText}</Say>${forwardTwiml}</Response>`,
+      twiml: `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna" language="en-US">${recordingDisclosureText}</Say>${forwardTwiml}</Response>`,
       forwardNodeId: "forward",
       outcome: null,
       pending: null,
@@ -126,7 +136,7 @@ describe("Whisper execution", () => {
   });
 
   it("speaks the Whisper message to the business", () => {
-    expect(renderWhisper(flow({ whisperEnabled: true }), "whisper")).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">Tracer lead</Say></Response>');
+    expect(renderWhisper(flow({ whisperEnabled: true }), "whisper")).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna" language="en-US">Tracer lead</Say></Response>');
   });
 
   it("connects the business without a message when the Whisper step is unknown", () => {
@@ -142,7 +152,7 @@ describe("Whisper execution", () => {
 describe("Keypad Gate execution", () => {
   const gather = (attempt: number) =>
     `<Gather numDigits="1" timeout="10" action="https://tracer.example.com/api/twilio/gather/assignment-1?node=gate&amp;attempt=${attempt}" method="POST" actionOnEmptyResult="true">` +
-    '<Say voice="Polly.Joanna">Press 1 to be connected.</Say></Gather>';
+    '<Say voice="Polly.Joanna" language="en-US">Press 1 to be connected.</Say></Gather>';
   const gated = () => flow({ spamGateEnabled: true });
 
   it("prompts for the gate digit and treats a hang-up during the gate as Blocked", () => {
@@ -241,7 +251,7 @@ describe("Forward Call result", () => {
 
 describe("Voicemail execution", () => {
   const record =
-    '<Say voice="Polly.Matthew">Please leave a message.</Say>' +
+    '<Say voice="Polly.Matthew" language="en-US">Please leave a message.</Say>' +
     '<Record maxLength="120" timeout="5" finishOnKey="#" action="https://tracer.example.com/api/twilio/voicemail/assignment-1?node=voicemail" method="POST" ' +
     'recordingStatusCallback="https://tracer.example.com/api/twilio/voicemail-status/assignment-1?node=voicemail" recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed absent"/>';
 

@@ -870,7 +870,7 @@ Selecting a node docks its configuration over the right edge of the canvas, head
 ### Node catalog
 
 1. **Incoming Call:** Fixed start node; exactly one
-2. **Recording Disclosure:** System-managed and required when Workspace recording is enabled
+2. **Recording Disclosure:** Required when Workspace recording is enabled; its spoken text starts as the default sentence and is editable like other prompts
 3. **Business Hours:** Optional Open and Closed branches
 4. **Keypad Gate:** Optional Pass and Blocked branches; a wrong digit or timeout replays the prompt once, then follows Blocked, and a caller hang-up during the gate is Blocked
 5. **Forward Call:** Required destination routing with Answered, Missed, and Failed paths
@@ -895,7 +895,7 @@ Selecting a node docks its configuration over the right edge of the canvas, head
 Disclosure, keypad instructions, whisper, and voicemail greeting use text-to-speech.
 
 - Editable text with concise character guidance
-- Small supported voice list
+- Sixteen English Amazon Polly voices, 8 female and 8 male, labeled by name, accent, and gender
 - Preview action using the browser's speech synthesis, labeled as an approximation of the selected Twilio voice
 - No uploaded prompt audio in the first release
 - Recording disclosure includes required compliance wording whenever recording is enabled
@@ -1378,7 +1378,7 @@ Detach Number is available for any Active Workspace when no replacement number i
 ### Recording and AI
 
 - Recording enabled or disabled
-- Fixed disclosure preview: `This call may be recorded for quality purposes.`
+- Default disclosure preview: `This call may be recorded for quality purposes.`, changeable afterwards on the Call Flow's Recording Disclosure step
 - Supported text-to-speech voice selection
 - Automatic transcription and Lead Assessment enabled or disabled
 - Read-only 15-second eligibility threshold
