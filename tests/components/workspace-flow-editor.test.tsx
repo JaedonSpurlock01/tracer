@@ -17,7 +17,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fitView = vi.fn();
@@ -395,6 +395,23 @@ describe("WorkspaceFlowEditor", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Window 1 end" }), { target: { value: "24:00" } });
     expect(screen.getByRole("combobox", { name: "Window 1 end" })).toHaveValue("24:00");
     expect(screen.getByRole("combobox", { name: "Window 1 start" })).toHaveValue("22:00");
+  });
+
+  it("edits the Recording Disclosure message and offers sixteen voices", async () => {
+    vi.useFakeTimers();
+    renderDraft([{ id: "disclosure-node", type: "recording_disclosure", position: { x: 0, y: 0 }, message: "This call may be recorded for quality purposes.", voice: "Polly.Joanna" }]);
+    fireEvent.click(screen.getByRole("button", { name: "disclosure-node" }));
+    fireEvent.change(screen.getByLabelText("Disclosure"), { target: { value: "Calls are recorded for training." } });
+    const voice = screen.getByRole("combobox", { name: "Voice" });
+    expect(within(voice).getAllByRole("option")).toHaveLength(16);
+    fireEvent.change(voice, { target: { value: "Polly.Brian" } });
+    expect(within(voice).getByRole("option", { name: "Brian (British), male" })).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/workspaces/workspace-1/flow",
+      expect.objectContaining({ method: "PUT", body: expect.stringMatching(/"message":"Calls are recorded for training\.".*"voice":"Polly\.Brian"/) }),
+    );
   });
 
   it("shows character guidance for a text-to-speech prompt", () => {

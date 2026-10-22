@@ -35,7 +35,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { businessHoursOpen, recordingDisclosureText, voicemailLimits, type CallFlowGraph, type EdgeHandle, type FlowNode, type OutcomeKind } from "@/data/call-flow";
+import { businessHoursOpen, ttsVoices, voicemailLimits, type CallFlowGraph, type EdgeHandle, type FlowNode, type OutcomeKind, type TtsVoice } from "@/data/call-flow";
 
 export interface VoiceUrls {
   forwardAction(nodeId: string): string;
@@ -82,8 +82,9 @@ function ended(outcome: StepOutcome | null): VoiceStep {
   return { twiml: hangup, forwardNodeId: null, outcome, pending: null };
 }
 
-function say(voice: string, text: string): string {
-  return `<Say voice="${escapeXml(voice)}">${escapeXml(text)}</Say>`;
+function say(voice: TtsVoice, text: string): string {
+  const language = ttsVoices.find((option) => option.id === voice)?.language ?? "en-US";
+  return `<Say voice="${escapeXml(voice)}" language="${language}">${escapeXml(text)}</Say>`;
 }
 
 function nextNode(graph: CallFlowGraph, nodeId: string, handle: EdgeHandle): FlowNode | undefined {
@@ -134,7 +135,7 @@ function walk(graph: CallFlowGraph, start: FlowNode | undefined, context: VoiceC
         node = nextNode(graph, node.id, "next");
         break;
       case "recording_disclosure":
-        verbs.push(say(node.voice, recordingDisclosureText));
+        verbs.push(say(node.voice, node.message));
         node = nextNode(graph, node.id, "next");
         break;
       case "business_hours":

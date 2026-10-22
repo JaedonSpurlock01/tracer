@@ -569,7 +569,7 @@ describe.sequential("First-release Call routing", () => {
       Direction: "outbound-dial",
     });
     expect(whisper.status).toBe(200);
-    expect(await whisper.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">Tracer lead</Say></Response>');
+    expect(await whisper.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna" language="en-US">Tracer lead</Say></Response>');
     const events = await pool!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
     expect(events.rows.map((row) => row.kind)).toEqual(["voice", "whisper"]);
   });
