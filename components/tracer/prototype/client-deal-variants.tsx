@@ -106,7 +106,7 @@ export function VariantA({ workspaceId, deal: initialDeal, initialClient, onMess
           </div>
         </div>
         <div className="flex flex-col gap-2">
-          <OsmMap point={geocode.point} title="Client location" className="h-64 lg:h-full lg:min-h-80" placeholder="Enter a city to place this business on the map." />
+          <OsmMap point={geocode.point} zoom={12} title="Client location" className="h-64 lg:h-full lg:min-h-80" placeholder="Enter a city to place this business on the map." />
           <GeocodeNote status={geocode.status} label={geocode.label} />
         </div>
       </div>
@@ -160,7 +160,7 @@ export function VariantB({ workspaceId, deal: initialDeal, initialClient, onMess
         <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>Edit Client</Button>
       </div>
       <div className="overflow-hidden rounded-lg border">
-        <OsmMap point={geocode.point} span={0.2} title="Client location" className="h-44 rounded-none border-0" placeholder={<span className="flex items-center gap-2"><MapPin className="size-4" aria-hidden="true" />Add a city to show the business on the map.</span>} />
+        <OsmMap point={geocode.point} zoom={11} title="Client location" className="h-44 rounded-none border-0" placeholder={<span className="flex items-center gap-2"><MapPin className="size-4" aria-hidden="true" />Add a city to show the business on the map.</span>} />
         <div className="flex flex-col gap-4 p-4">
           <div className="flex items-start gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-muted">
@@ -259,7 +259,7 @@ export function VariantC({ workspaceId, deal: initialDeal, initialClient, onMess
         <div className="flex w-full flex-col gap-1 sm:w-72">
           {geocode.point ? (
             <button type="button" className="group relative block overflow-hidden rounded-lg" onClick={() => setExpanded(true)} aria-label="Expand the map">
-              <OsmMap point={geocode.point} span={0.3} title="Client location" className="pointer-events-none h-52" />
+              <OsmMap point={geocode.point} zoom={10} title="Client location" className="pointer-events-none h-52" />
               <span className="absolute bottom-1 right-1 rounded-md border bg-background/90 px-1.5 py-0.5 text-xs opacity-0 transition-opacity group-hover:opacity-100">Expand</span>
             </button>
           ) : (
@@ -275,7 +275,7 @@ export function VariantC({ workspaceId, deal: initialDeal, initialClient, onMess
               <DialogTitle>{client.businessName || "Client"} in {client.city}</DialogTitle>
               <DialogDescription>{geocode.label}</DialogDescription>
             </DialogHeader>
-            <OsmMap point={geocode.point} span={0.12} title="Client location, expanded" className="h-[28rem]" />
+            <OsmMap point={geocode.point} zoom={13} title="Client location, expanded" className="h-[28rem]" />
           </DialogContent>
         </Dialog>
       ) : null}

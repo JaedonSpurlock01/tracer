@@ -1,13 +1,14 @@
 /**
- * PROTOTYPE - OpenStreetMap embed with one marker, plus a Nominatim
- * geocode hook. No dependency: the openstreetmap.org export iframe draws
- * tiles, attribution, and the marker. The real component (also meant for
+ * PROTOTYPE - OpenStreetMap tile mosaic with one marker, plus a Nominatim
+ * geocode hook. No dependency: the tiles around the point are laid out as
+ * plain images for the measured box. The real component (also meant for
  * GMB pins and a Service Area ring) should move to Leaflet or MapLibre
  * with OSM tiles and geocode on the server with a cache per Workspace.
  */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { MapPin } from "lucide-react";
 
 export interface MapPoint {
   lat: number;
@@ -43,21 +44,26 @@ export function useGeocode(query: string): { point: MapPoint | null; label: stri
   return trimmed ? state : { point: null, label: "", status: "idle" };
 }
 
-/** Renders an OSM embed centred on `point`, or the `placeholder` when there is no point. */
-export function OsmMap({ point, span = 0.12, title, className = "", placeholder }: { point: MapPoint | null; span?: number; title: string; className?: string; placeholder?: React.ReactNode }) {
-  // The embed's Leaflet sizes itself once on load, so the iframe is re-keyed when its box changes.
+const tileSize = 256;
+
+/** World pixel position of a point at a zoom, in the Web Mercator tile grid. */
+function project(point: MapPoint, zoom: number): { x: number; y: number } {
+  const scale = tileSize * 2 ** zoom;
+  const lat = (Math.min(85, Math.max(-85, point.lat)) * Math.PI) / 180;
+  return {
+    x: ((point.lon + 180) / 360) * scale,
+    y: ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * scale,
+  };
+}
+
+/** Renders OSM tiles around `point` in the box, or the `placeholder` when there is no point. */
+export function OsmMap({ point, zoom = 12, title, className = "", placeholder }: { point: MapPoint | null; zoom?: number; title: string; className?: string; placeholder?: React.ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState("");
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     const element = box.current;
     if (!element) return;
-    let last = "";
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      const next = `${Math.round(width / 40)}x${Math.round(height / 40)}`;
-      if (last && next !== last) setSize(next);
-      last = next;
-    });
+    const observer = new ResizeObserver(([entry]) => setSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
     observer.observe(element);
     return () => observer.disconnect();
   }, [point]);
@@ -68,18 +74,31 @@ export function OsmMap({ point, span = 0.12, title, className = "", placeholder 
       </div>
     );
   }
-  const half = span / 2;
-  const bbox = [point.lon - half, point.lat - half * 0.6, point.lon + half, point.lat + half * 0.6].map((value) => value.toFixed(5)).join(",");
+  const centre = project(point, zoom);
+  const tiles: Array<{ x: number; y: number; left: number; top: number }> = [];
+  if (size) {
+    const left = centre.x - size.width / 2;
+    const top = centre.y - size.height / 2;
+    const max = 2 ** zoom;
+    for (let x = Math.floor(left / tileSize); x * tileSize < left + size.width; x += 1) {
+      for (let y = Math.floor(top / tileSize); y * tileSize < top + size.height; y += 1) {
+        if (y < 0 || y >= max) continue;
+        tiles.push({ x: ((x % max) + max) % max, y, left: x * tileSize - left, top: y * tileSize - top });
+      }
+    }
+  }
   return (
-    <div ref={box} className={`overflow-hidden rounded-lg border ${className}`}>
-      <iframe
-        key={size}
-        title={title}
-        className="block size-full dark:[filter:invert(0.92)_hue-rotate(180deg)_saturate(0.6)]"
-        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${point.lat.toFixed(5)},${point.lon.toFixed(5)}`}
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-      />
+    <div ref={box} role="img" aria-label={title} className={`relative overflow-hidden rounded-lg border bg-muted ${className}`}>
+      <div className="absolute inset-0 dark:[filter:invert(0.92)_hue-rotate(180deg)_saturate(0.6)]">
+        {tiles.map((tile) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img key={`${tile.x}-${tile.y}`} src={`https://tile.openstreetmap.org/${zoom}/${tile.x}/${tile.y}.png`} alt="" width={tileSize} height={tileSize} className="absolute max-w-none" style={{ left: tile.left, top: tile.top }} />
+        ))}
+      </div>
+      <MapPin className="absolute left-1/2 top-1/2 size-8 -translate-x-1/2 -translate-y-full fill-brand text-background drop-shadow" aria-hidden="true" />
+      <a href={`https://www.openstreetmap.org/#map=${zoom}/${point.lat.toFixed(5)}/${point.lon.toFixed(5)}`} target="_blank" rel="noreferrer" className="absolute bottom-0 right-0 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:underline">
+        © OpenStreetMap contributors
+      </a>
     </div>
   );
 }
