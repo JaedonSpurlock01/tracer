@@ -20,6 +20,10 @@
  *  than left Queued with no run, except that the explicit non-production
  *  E2E Trigger.dev fake accepts the request so a browser journey can
  *  complete the job itself.
+ *  The request pool gives up on a connection after 10 seconds and a
+ *  query after 30, because neither node-postgres nor the Cloudflare socket
+ *  adapter has a default timeout and a stalled Hyperdrive connection would
+ *  otherwise hang the page indefinitely.
  *
  * @see
  *  data/tracer-auth.ts
@@ -97,6 +101,10 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
   );
 }
 
+export function createRequestPool(connectionString: string): Pool {
+  return new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+}
+
 export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Promise<T>): Promise<T> {
   const { env, ctx } = await getCloudflareContext({ async: true });
   const bindings = env as AuthBindings;
@@ -109,7 +117,7 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
   if (!connectionString) {
     throw new Error("HYPERDRIVE is required");
   }
-  const pool = new Pool({ connectionString, max: 1 });
+  const pool = createRequestPool(connectionString);
 
   try {
     if (!bindings.EMAIL && !fakeEnabled) {
