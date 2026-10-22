@@ -6,6 +6,9 @@
  * @description
  *  Lays the page out as a provider navigation beside one provider's detail,
  *  chosen by the `provider` search parameter so a provider is linkable.
+ *  Switching providers happens on the client from the data the page
+ *  already holds, and only rewrites the address, so a tab change never
+ *  waits on the server.
  *  A Needs attention lane above them lists unconnected Organization
  *  credentials, a missing Twilio Auth Token, and degraded providers with
  *  the action that resolves each. The detail shows the provider's facts,
@@ -32,7 +35,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -245,7 +248,7 @@ function summaryLine(provider: ProviderHealth, records: ConnectionRecords): stri
   }
 }
 
-function NavGroup({ label, providers, current, records }: { label: string; providers: ProviderHealth[]; current: ProviderId; records: ConnectionRecords }) {
+function NavGroup({ label, providers, current, records, onSelect }: { label: string; providers: ProviderHealth[]; current: ProviderId; records: ConnectionRecords; onSelect: (id: ProviderId) => void }) {
   return (
     <div className="flex shrink-0 flex-col gap-1">
       <p className="px-2 text-xs font-medium text-muted-foreground">{label}</p>
@@ -254,9 +257,13 @@ function NavGroup({ label, providers, current, records }: { label: string; provi
           const active = provider.id === current;
           return (
             <li key={provider.id}>
-              <Link
+              <a
                 href={`/integrations?provider=${provider.id}`}
-                scroll={false}
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                  event.preventDefault();
+                  onSelect(provider.id);
+                }}
                 aria-current={active ? "page" : undefined}
                 className={`flex items-center gap-2.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm transition-colors ${active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}
               >
@@ -266,7 +273,7 @@ function NavGroup({ label, providers, current, records }: { label: string; provi
                   <span className="hidden truncate text-xs text-muted-foreground md:block">{summaryLine(provider, records)}</span>
                 </span>
                 <StatusDot state={provider.state} />
-              </Link>
+              </a>
             </li>
           );
         })}
@@ -440,7 +447,9 @@ function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
   );
 }
 
-export default function IntegrationsView({ initial, provider: selectedId }: { initial: IntegrationsOverview; provider: ProviderId }) {
+export default function IntegrationsView({ initial, provider: requestedId }: { initial: IntegrationsOverview; provider: ProviderId }) {
+  const [chosenId, setChosenId] = useState<ProviderId | null>(null);
+  const selectedId = chosenId ?? requestedId;
   const [providers, setProviders] = useState<ProviderHealth[]>(initial.providers);
   const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
   const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
@@ -611,10 +620,10 @@ export default function IntegrationsView({ initial, provider: selectedId }: { in
     else setCloudflareRotateOpen(true);
   }
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => void reload(), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  function selectProvider(id: ProviderId) {
+    setChosenId(id);
+    window.history.replaceState(window.history.state, "", `/integrations?provider=${id}`);
+  }
 
   function resetForm() {
     setForm(emptyForm);
@@ -909,8 +918,8 @@ export default function IntegrationsView({ initial, provider: selectedId }: { in
 
       <div className="grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
         <nav aria-label="Providers" className="flex gap-4 overflow-x-auto md:flex-col md:overflow-visible">
-          <NavGroup label="Organization connections" providers={connections} current={selected.id} records={records} />
-          <NavGroup label="Platform services" providers={services} current={selected.id} records={records} />
+          <NavGroup label="Organization connections" providers={connections} current={selected.id} records={records} onSelect={selectProvider} />
+          <NavGroup label="Platform services" providers={services} current={selected.id} records={records} onSelect={selectProvider} />
         </nav>
         <section aria-labelledby={headingId} className="min-w-0">
           <Frame>

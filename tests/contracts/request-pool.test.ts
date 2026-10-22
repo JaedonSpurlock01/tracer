@@ -85,3 +85,20 @@ it("writes one tracer.request line with the ray, duration, outcome, and database
   log.mockRestore();
   error.mockRestore();
 });
+
+it("gives up closing the pool at the deadline when the socket close never answers", async () => {
+  const { closeRequestPool } = await import("@/data/tracer-runtime");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const neverCloses = { end: () => new Promise<void>(() => undefined) };
+
+  const closing = closeRequestPool(neverCloses, 2_000);
+  await vi.advanceTimersByTimeAsync(2_000);
+
+  await expect(closing).resolves.toBe("abandoned");
+});
+
+it("reports a pool that closes in time, including one whose close rejects", async () => {
+  const { closeRequestPool } = await import("@/data/tracer-runtime");
+  await expect(closeRequestPool({ end: () => Promise.resolve() }, 2_000)).resolves.toBe("closed");
+  await expect(closeRequestPool({ end: () => Promise.reject(new Error("Connection terminated")) }, 2_000)).resolves.toBe("closed");
+});
