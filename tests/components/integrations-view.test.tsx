@@ -185,6 +185,24 @@ describe("IntegrationsView", () => {
     expect(screen.queryByRole("button", { name: "Connect Twilio" })).not.toBeInTheDocument();
   });
 
+  it("switches providers on the client without a request, rewriting only the address", async () => {
+    const fetch = vi.fn(() => Promise.reject(new Error("no request expected")));
+    vi.stubGlobal("fetch", fetch);
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    render(<IntegrationsView initial={initialData()} provider="twilio" />);
+    const nav = screen.getByRole("navigation", { name: "Providers" });
+    expect(within(nav).getByRole("link", { name: /Twilio/ })).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(within(nav).getByRole("link", { name: /Cloudflare R2/ }));
+
+    expect(within(nav).getByRole("link", { name: /Cloudflare R2/ })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("region", { name: "Cloudflare R2" })).toBeVisible();
+    expect(replaceState.mock.calls.at(-1)?.slice(1)).toEqual(["", "/integrations?provider=r2"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetch).not.toHaveBeenCalled();
+    replaceState.mockRestore();
+  });
+
   it("falls back to the first provider when the requested provider is unknown to the overview", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<IntegrationsView initial={initialData({ providers: providers.slice(1) })} provider="twilio" />);
@@ -220,7 +238,7 @@ describe("IntegrationsView", () => {
     const fetch = fetchStub({
       ...responseRoutes(),
       "POST /api/integrations/twilio/connect": { body: { connection: connected }, status: 201 },
-      "GET /api/integrations": [{ body: { providers, twilio: null, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
+      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
       "GET /api/integrations/twilio/numbers": { body: { numbers } },
     });
     vi.stubGlobal("fetch", fetch);
@@ -283,7 +301,7 @@ describe("IntegrationsView", () => {
     const missingToken = { ...connected, authTokenConfigured: false };
     const fetch = fetchStub({
       ...responseRoutes({ connected: true, providers: twilioConnectedProviders }),
-      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: missingToken, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
+      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
       "GET /api/integrations/twilio/numbers": [{ body: { numbers } }, { body: { numbers } }],
       "POST /api/integrations/twilio/auth-token": { body: { connection: connected } },
     });
@@ -333,12 +351,17 @@ describe("IntegrationsView", () => {
     expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
   });
 
-  it("keeps the server-rendered Integrations and offers Retry when refreshing fails", async () => {
-    const fetch = vi.fn()
-      .mockRejectedValueOnce(new Error("network"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ providers, twilio: null, cloudflare: null })));
+  it("renders from the server data without refetching, and offers Retry when a refresh after an action fails", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ verified: true }));
+      if (fetch.mock.calls.filter((call) => String(call[0]) === "/api/integrations").length === 1) throw new Error("network");
+      return new Response(JSON.stringify({ providers: twilioConnectedProviders, twilio: connected, cloudflare: null }));
+    });
     vi.stubGlobal("fetch", fetch);
-    render(<IntegrationsView initial={initialData()} provider="twilio" />);
+    render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(within(detail("Twilio")).getByRole("button", { name: "Test Connection" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Integrations could not be refreshed.");
     expect(screen.getByRole("heading", { name: "Twilio" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -453,7 +476,7 @@ describe("IntegrationsView", () => {
     const fetch = fetchStub({
       ...responseRoutes(),
       "POST /api/integrations/cloudflare/connect": { body: { connection: cloudflareConnected }, status: 201 },
-      "GET /api/integrations": [{ body: { providers, twilio: null, cloudflare: null } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }],
+      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }],
       "GET /api/integrations/cloudflare/sites": { body: { sites } },
     });
     vi.stubGlobal("fetch", fetch);
@@ -532,7 +555,7 @@ describe("IntegrationsView", () => {
   it("connects DataForSEO from a dialog with a login and password and never renders the password", async () => {
     const fetch = fetchStub({
       ...responseRoutes(),
-      "GET /api/integrations": [{ body: { providers, twilio: null, cloudflare: null, dataforseo: null } }, { body: { providers: dataforseoConnectedProviders, twilio: null, cloudflare: null, dataforseo: dataforseoConnected } }],
+      "GET /api/integrations": [{ body: { providers: dataforseoConnectedProviders, twilio: null, cloudflare: null, dataforseo: dataforseoConnected } }],
       "POST /api/integrations/dataforseo/connect": { body: { connection: dataforseoConnected }, status: 201 },
     });
     vi.stubGlobal("fetch", fetch);
@@ -576,9 +599,7 @@ describe("IntegrationsView", () => {
       ...responseRoutes({ providers: dataforseoConnectedProviders, dataforseo: dataforseoConnected }),
       "GET /api/integrations": [
         { body: { providers: dataforseoConnectedProviders, twilio: null, cloudflare: null, dataforseo: dataforseoConnected } },
-        { body: { providers: dataforseoConnectedProviders, twilio: null, cloudflare: null, dataforseo: dataforseoConnected } },
-        { body: { providers, twilio: null, cloudflare: null, dataforseo: null } },
-      ],
+        { body: { providers, twilio: null, cloudflare: null, dataforseo: null } }],
       "POST /api/integrations/dataforseo/rotate": { body: { connection: dataforseoConnected } },
       "POST /api/integrations/dataforseo/disconnect": { body: { disconnected: true } },
     });

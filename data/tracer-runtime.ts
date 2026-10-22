@@ -23,7 +23,10 @@
  *  The request pool gives up on a connection after 10 seconds and a
  *  query after 30, because neither node-postgres nor the Cloudflare socket
  *  adapter has a default timeout and a stalled Hyperdrive connection would
- *  otherwise hang the page indefinitely. Every request writes one
+ *  otherwise hang the page indefinitely. Closing the pool is never
+ *  awaited by the response: a connection the database already dropped
+ *  can leave the Cloudflare socket's close unanswered, so the close runs
+ *  in the background with a two-second deadline. Every request writes one
  *  tracer.request log line with its Cloudflare ray, duration, outcome,
  *  and database timing so a slow or failed page can be read back from
  *  Workers Logs instead of guessed at.
@@ -110,6 +113,21 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
 
 export function createRequestPool(connectionString: string): Pool {
   return new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+}
+
+export const poolCloseDeadlineMs = 2_000;
+
+/** Ends the pool, giving up after the deadline so a dead connection never holds a request. */
+export async function closeRequestPool(pool: Pick<Pool, "end">, deadlineMs = poolCloseDeadlineMs): Promise<"closed" | "abandoned"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"abandoned">((resolve) => {
+    timer = setTimeout(() => resolve("abandoned"), deadlineMs);
+  });
+  try {
+    return await Promise.race([pool.end().then(() => "closed" as const, () => "closed" as const), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The Cloudflare ray of the current request, or null outside one. */
@@ -204,7 +222,7 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
     failure = error;
     throw error;
   } finally {
-    await pool.end().catch(() => undefined);
+    ctx.waitUntil(closeRequestPool(pool));
     logRequest({ ray: await currentRay(), durationMs: Date.now() - started, db, error: failure });
   }
 }
