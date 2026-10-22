@@ -17,6 +17,7 @@
  * -------------------------------------------------------------------------
  */
 import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
+import { createPlacesClient } from "@/data/places-client";
 import { sitePreviewObjectsFromBinding } from "@/data/site-preview";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
 import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
@@ -29,6 +30,7 @@ async function handle(request: Request): Promise<Response> {
     createWorkspacesHandler({
       ...runtime,
       email: runtime.email,
+      places: createPlacesClient(),
       twilio: createRuntimeTwilioClient(),
       twilioMedia: createTwilioRecordingMedia(),
       cloudflare: createRuntimeCloudflareClient(),

@@ -183,6 +183,13 @@
       "when": 1792607038875,
       "tag": "0025_unknown_jazinda",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792703873752,
+      "tag": "0026_parallel_luckman",
+      "breakpoints": true
     }
   ]
 }

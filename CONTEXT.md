@@ -120,6 +120,10 @@ _Avoid_: Destination Number, Client Viewer
 A Workspace's agreement with its business: Monthly, Weekly, or Per Lead with an amount, used to project revenue and profit; at most one open Deal per Workspace.
 _Avoid_: Subscription, invoice
 
+**Business**:
+The client a Workspace serves: its name, the contact's first and last name and email, its niche, its own website, and its city placed on a map through a city lookup; at most one Business per Workspace, and only Operators read it.
+_Avoid_: Client Viewer, Site, customer
+
 ## Relationships
 
 - The first release exposes exactly one **Organization**, Spurlock Labs
@@ -156,6 +160,7 @@ _Avoid_: Subscription, invoice
 - A **Form Submission**'s effective classification is its **Lead Review** when one exists, otherwise Good Lead unless Held
 - A **Workspace**'s Leads count Good Lead **Calls** and Good Lead **Form Submissions** together, and Per Lead revenue counts both
 - A **Workspace** has at most one open **Deal**; Per Lead revenue counts **Good Leads** with **Lead Review** precedence
+- A **Workspace** has at most one **Business**, whose own website is separate from the Tracer-hosted **Site**
 - A **Client Viewer** reads a linked **Site**'s traffic, performance, and Search results but never its hosting details, cost, or **Deal**
 
 ## Example dialogue
