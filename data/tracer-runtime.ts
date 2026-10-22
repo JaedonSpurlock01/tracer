@@ -23,10 +23,14 @@
  *  The request pool gives up on a connection after 10 seconds and a
  *  query after 30, because neither node-postgres nor the Cloudflare socket
  *  adapter has a default timeout and a stalled Hyperdrive connection would
- *  otherwise hang the page indefinitely.
+ *  otherwise hang the page indefinitely. Every request writes one
+ *  tracer.request log line with its Cloudflare ray, duration, outcome,
+ *  and database timing so a slow or failed page can be read back from
+ *  Workers Logs instead of guessed at.
  *
  * @see
  *  data/tracer-auth.ts
+ *  data/request-log.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -34,7 +38,10 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { headers } from "next/headers";
 import { Pool } from "pg";
+
+import { logRequest, observePool } from "@/data/request-log";
 
 import { rememberE2eOtp } from "@/data/e2e-auth-fake";
 import { schema } from "@/data/schema";
@@ -105,7 +112,17 @@ export function createRequestPool(connectionString: string): Pool {
   return new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
 }
 
+/** The Cloudflare ray of the current request, or null outside one. */
+async function currentRay(): Promise<string | null> {
+  try {
+    return (await headers()).get("cf-ray");
+  } catch {
+    return null;
+  }
+}
+
 export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Promise<T>): Promise<T> {
+  const started = Date.now();
   const { env, ctx } = await getCloudflareContext({ async: true });
   const bindings = env as AuthBindings;
   const fakeEnabled =
@@ -118,6 +135,8 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
     throw new Error("HYPERDRIVE is required");
   }
   const pool = createRequestPool(connectionString);
+  const db = observePool(pool);
+  let failure: unknown;
 
   try {
     if (!bindings.EMAIL && !fakeEnabled) {
@@ -181,7 +200,11 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       recordingBucket: bindings.R2,
       reportGeneration: createRuntimeReportGeneration(triggerSecretKey),
     });
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await pool.end();
+    await pool.end().catch(() => undefined);
+    logRequest({ ray: await currentRay(), durationMs: Date.now() - started, db, error: failure });
   }
 }

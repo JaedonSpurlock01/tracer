@@ -11,6 +11,11 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Workers Logs: every invocation, console line, and uncaught exception is kept for 7 days.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "previews": {
     "hyperdrive": [
       {
@@ -65,6 +70,10 @@
   "env": {
     "staging": {
       "name": "tracer-staging",
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      },
       "send_email": [
         {
           "name": "EMAIL",
