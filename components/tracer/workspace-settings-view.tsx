@@ -54,6 +54,7 @@ import { formatCallTime } from "@/components/tracer/call-format";
 import { ForwardingRecipientsSettings } from "@/components/tracer/forms-settings";
 import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
 import { DealSettings, DomainRenewalSettings } from "@/components/tracer/site-deal-settings";
+import ClientDealPrototype, { seedClient } from "@/components/tracer/prototype/client-deal-prototype";
 import SiteSearchSettings, { type SiteSearchSettingsData } from "@/components/tracer/site-search-settings";
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
@@ -388,7 +389,10 @@ export default function WorkspaceSettingsView({
                 )}
                 {initialDeal !== undefined ? (
                   <div className="mt-8">
-                    <DealSettings workspaceId={workspace.id} initial={initialDeal} onMessage={setMessage} />
+                    {/* PROTOTYPE: ?variant=A|B|C swaps this for a Client and Deal layout; remove with the prototype. */}
+                    <ClientDealPrototype workspaceId={workspace.id} deal={initialDeal} initialClient={seedClient(workspace.name, initialKeywords?.serviceArea)} onMessage={setMessage}>
+                      <DealSettings workspaceId={workspace.id} initial={initialDeal} onMessage={setMessage} />
+                    </ClientDealPrototype>
                   </div>
                 ) : null}
               </section>
