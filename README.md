@@ -100,7 +100,9 @@ Values never go in the repository, in issues, or in chat. Templates with every n
 
 ### 1. Cloudflare Worker secrets (the website)
 
-Set each one for Production with `pnpm exec wrangler secret put <NAME> --env ""` and for Staging with `--env staging`. Pull-request Previews use `pnpm exec wrangler preview base-config secret put <NAME>`.
+Set each one for Production with `pnpm exec wrangler secret put <NAME>` (no `--env` flag means the Production `tracer` Worker) and for Staging with `pnpm exec wrangler secret put <NAME> --env staging`. Pull-request Previews use `pnpm exec wrangler preview base-config secret put <NAME>`. Type only the name on the command line; Wrangler then asks for the value, so it never lands in your shell history.
+
+Add every value below as a **Secret** (the `wrangler secret put` command, or type **Secret** on the dashboard), never as a plain-text **Variable**. Each deploy replaces the Worker's plain-text variables with the ones in `wrangler.jsonc`, so a value added as a Variable disappears on the next deploy. Secrets survive deploys.
 
 | Name | In plain English | Where to get it |
 | --- | --- | --- |
