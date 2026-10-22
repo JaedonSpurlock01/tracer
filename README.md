@@ -189,6 +189,14 @@ The **Deploy Production** workflow is started by hand from the Actions tab, alwa
 
 The exact steps and checklists are in the [roadmap](./docs/IMPLEMENTATION_ROADMAP.md#phase-8---deployment-and-operation).
 
+## When Production misbehaves
+
+The `tracer` Worker keeps **Workers Logs** for 7 days: every request with its URL, status, duration, and Cloudflare ray, every `console` line, and every uncaught exception. Open the Cloudflare dashboard, **Workers & Pages**, the `tracer` Worker, then **Logs**. Staging logs the same way under `tracer-staging`.
+
+Each request also writes one `tracer.request` line with its database timing: `dbConnectMs` (how long the first connection took), `dbQueries`, `dbSlowestMs`, `dbFailed`, and `dbTimedOut`, which is true when a connection took more than 10 seconds or a query more than 30. Filter the logs on `event = tracer.request` and sort by `durationMs` to find the slow page; `dbTimedOut = true` means the database path stalled, not the page code. The `ray` matches the `cf-ray` response header, so a slow reload in the browser can be found by its ray.
+
+Both Neon computes pause after five idle minutes and take a couple of seconds to resume on the next request. If the logs show `dbTimedOut` lines right after an idle gap, the connection path through Hyperdrive to the paused compute is the place to look.
+
 ## Project status
 
 The [roadmap's Current state](./docs/IMPLEMENTATION_ROADMAP.md#current-state) is the single source of truth for which milestone is active.
