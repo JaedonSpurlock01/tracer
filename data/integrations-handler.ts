@@ -26,6 +26,7 @@
  */
 import type { Pool } from "pg";
 
+import type { Database } from "@/data/database";
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
@@ -42,6 +43,7 @@ import type { TwilioClient } from "@/data/twilio-client";
 
 export interface IntegrationsHandlerOptions {
   auth: TracerAuth;
+  database: Database;
   pool: Pool;
   twilio: TwilioClient;
   cloudflare: CloudflareClient;
@@ -143,7 +145,7 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
     try {
       const actor = await requireActiveOperator(options.auth, options.pool, request.headers);
       const integrations: Integrations = createIntegrations({
-        pool: options.pool,
+        database: options.database,
         organizationId: actor.organizationId,
         twilio: options.twilio,
         cloudflare: options.cloudflare,

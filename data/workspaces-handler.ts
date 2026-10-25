@@ -41,6 +41,7 @@
  */
 import type { Pool } from "pg";
 
+import type { Database } from "@/data/database";
 import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
 import { AnalysisRetryError, retryCallAnalysis } from "@/data/analysis-retry";
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
@@ -81,6 +82,7 @@ const serviceAreaCountryIso = "us";
 
 export interface WorkspacesHandlerOptions {
   auth: TracerAuth;
+  database: Database;
   pool: Pool;
   /** Forwards Form Submissions; without it every forward records Forward failed with Resend. */
   email?: TransactionalEmail;
@@ -296,9 +298,9 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         if (typeof purged === "string") return response({ error: purged }, 409);
         return response({ purge: purged });
       }
-      const workspaces: Workspaces = createWorkspaces(options.pool, actor.organizationId);
+      const workspaces: Workspaces = createWorkspaces(options.database, actor.organizationId);
       const routing = createWorkspaceRouting({
-        pool: options.pool,
+        database: options.database,
         organizationId: actor.organizationId,
         twilio: options.twilio,
         integrations: options.integrations(actor.organizationId),
@@ -387,9 +389,9 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         if (!linked) throw new WorkspacesError("not_found");
         if (!options.dataforseo) return response({ error: "provider_unavailable" }, 503);
         const query = new URL(request.url).searchParams.get("q") ?? "";
-        const locations = createSearchLocations(options.pool);
+        const locations = createSearchLocations(options.database);
         const dataforseo = options.dataforseo;
-        await createDataForSeoConnection({ pool: options.pool, organizationId: actor.organizationId, dataforseo, masterKey: options.masterKey })
+        await createDataForSeoConnection({ database: options.database, organizationId: actor.organizationId, dataforseo, masterKey: options.masterKey })
           .withDataForSeoCredential((credential) => locations.ensure(serviceAreaCountryIso, dataforseo, credential, new Date()));
         return response({ locations: await locations.search(serviceAreaCountryIso, query) });
       }
@@ -401,7 +403,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
           if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
           if (!options.openai || !options.dataforseo) return response({ error: "provider_unavailable" }, 503);
           const body = request.headers.get("content-type")?.includes("json") && request.headers.get("content-length") !== "0" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
-          const discovery = createKeywordDiscovery({ pool: options.pool, actor, responder: options.openai, dataforseo: options.dataforseo, masterKey: options.masterKey });
+          const discovery = createKeywordDiscovery({ database: options.database, actor, responder: options.openai, dataforseo: options.dataforseo, masterKey: options.masterKey });
           return response({ suggestions: await discovery.suggest(linked.id, { refresh: body.refresh === true }) });
         }
         if (request.method === "POST" && subroute === "site/keywords") {
@@ -478,7 +480,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         const linked = await sites.findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
         if (!options.cloudflare || !options.sitePreviews) return response({ error: "preview_unavailable" }, 503);
-        await captureSitePreview({ pool: options.pool, cloudflare: options.cloudflare, objects: options.sitePreviews, masterKey: options.masterKey, siteId: linked.id, now: new Date(), force: true });
+        await captureSitePreview({ database: options.database, cloudflare: options.cloudflare, objects: options.sitePreviews, masterKey: options.masterKey, siteId: linked.id, now: new Date(), force: true });
         const refreshed = await sites.findLinked(id);
         if (!refreshed) throw new WorkspacesError("not_found");
         return response({ site: siteResponseForActor(actor, refreshed) });

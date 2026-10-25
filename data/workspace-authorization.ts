@@ -22,11 +22,11 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
 
+import type { Queryable } from "@/data/database";
 import { isActiveOperatorActor, type Actor } from "@/data/authorization";
 import { accessGrantAuthorizesRead, workspaceStates } from "@/data/workspace-policy";
-import { createWorkspaces, type Workspaces } from "@/data/workspaces";
+import { createWorkspaceReads, type Workspaces } from "@/data/workspaces";
 
 export type ReadableWorkspaces = Pick<Workspaces, "list" | "find">;
 
@@ -34,14 +34,14 @@ export function canManageWorkspaces(actor: Actor | null): actor is Actor {
   return isActiveOperatorActor(actor);
 }
 
-export function createReadableWorkspaces(pool: Pool, actor: Actor): ReadableWorkspaces {
+export function createReadableWorkspaces(connection: Queryable, actor: Actor): ReadableWorkspaces {
   if (actor.state !== "Active") {
     throw new Error("Workspace reads require an Active actor");
   }
   if (actor.role === "Operator") {
-    return createWorkspaces(pool, actor.organizationId);
+    return createWorkspaceReads(connection, actor.organizationId);
   }
-  return createWorkspaces(pool, actor.organizationId, {
+  return createWorkspaceReads(connection, actor.organizationId, {
     grantedToUserId: actor.userId,
     readableStates: workspaceStates.filter(accessGrantAuthorizesRead),
   });

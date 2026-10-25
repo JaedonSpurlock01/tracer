@@ -24,8 +24,9 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import type { DataForSeoClient, DataForSeoKeywordOverviewQuery } from "@/data/dataforseo-client";
@@ -36,6 +37,7 @@ import { sealSecret } from "@/data/provider-credential";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -79,12 +81,13 @@ function viewerActor(): Actor {
 let now = new Date("2026-10-25T15:00:00.000Z");
 
 function discovery(actor: Actor = operatorActor()) {
-  return createKeywordDiscovery({ pool: pool!, actor, responder, dataforseo, masterKey, now: () => now });
+  return createKeywordDiscovery({ database: database!, actor, responder, dataforseo, masterKey, now: () => now });
 }
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;

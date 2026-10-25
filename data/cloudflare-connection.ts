@@ -26,11 +26,11 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import { CloudflareClientError, type CloudflareClient, type CloudflareCredential, type CloudflareSite } from "@/data/cloudflare-client";
 import { IntegrationsError } from "@/data/integrations-error";
-import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, withTransaction, type CredentialState } from "@/data/provider-credential";
+import { credentialReadability, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, type CredentialState } from "@/data/provider-credential";
 import { decideCloudflareDisconnect, isCloudflareAccountId } from "@/data/integrations-policy";
 import type { SiteHealth } from "@/data/site-health";
 import { siteHealthFromRow, siteHealthInputJsonSql, type SiteHealthRow } from "@/data/site-health-query";
@@ -62,7 +62,7 @@ export interface CloudflareSiteListEntry {
 }
 
 export interface CloudflareConnection {
-  getCloudflareConnection(client?: Pool | PoolClient): Promise<CloudflareConnectionRecord | null>;
+  getCloudflareConnection(client?: Queryable): Promise<CloudflareConnectionRecord | null>;
   withCloudflareCredential<T>(operation: (credential: CloudflareCredential) => Promise<T>): Promise<T>;
   connectCloudflare(input: { accountId: string; apiToken: string; actorUserId: string }): Promise<CloudflareConnectionRecord>;
   testCloudflare(): Promise<CloudflareConnectionRecord>;
@@ -73,7 +73,7 @@ export interface CloudflareConnection {
 }
 
 export interface CloudflareConnectionOptions {
-  pool: Pool;
+  database: Database;
   organizationId: string;
   cloudflare: CloudflareClient;
   masterKey: string | undefined;
@@ -154,7 +154,7 @@ function providerFailure(error: unknown): IntegrationsError {
   return new IntegrationsError("provider_unavailable", error instanceof CloudflareClientError ? error.message : "Cloudflare is unavailable");
 }
 
-export async function upsertDiscoveredSites(client: PoolClient, organizationId: string, discovered: CloudflareSite[], now: Date): Promise<void> {
+export async function upsertDiscoveredSites(client: Queryable, organizationId: string, discovered: CloudflareSite[], now: Date): Promise<void> {
   for (const site of discovered) {
     const inserted = await client.query<{ id: string }>(
       `insert into site (id, organization_id, script_name, primary_hostname, zone_id, rum_site_tag, first_seen_at, last_seen_at, created_at, updated_at)
@@ -188,18 +188,16 @@ export async function upsertDiscoveredSites(client: PoolClient, organizationId: 
 
 export function createCloudflareConnection(options: CloudflareConnectionOptions): CloudflareConnection {
   const lock = "tracer:cloudflare:" + options.organizationId;
+  const transaction = <T>(operation: (client: Transaction) => Promise<T>) => options.database.transaction(operation, { lock });
 
-  async function selectConnection(client: Pool | PoolClient): Promise<ConnectionRow | null> {
+  async function selectConnection(client: Queryable): Promise<ConnectionRow | null> {
     const result = await client.query<ConnectionRow>(connectionQuery, [options.organizationId]);
     return result.rows[0] ?? null;
   }
 
-  async function lockConnection(client: PoolClient): Promise<void> {
-    await lockOrganization(client, lock);
-  }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    await recordConnectionFailure(options.pool, "cloudflare_connection", lock, options.organizationId, error);
+    await recordConnectionFailure(options.database, "cloudflare_connection", lock, options.organizationId, error);
   }
 
   async function recordOf(row: ConnectionRow): Promise<CloudflareConnectionRecord> {
@@ -233,25 +231,25 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     }
   }
 
-  async function requireConnection(client: Pool | PoolClient): Promise<ConnectionRow> {
+  async function requireConnection(client: Queryable): Promise<ConnectionRow> {
     const row = await selectConnection(client);
     if (!row) throw new IntegrationsError("not_connected");
     return row;
   }
 
-  async function recordVerified(client: PoolClient, now: Date): Promise<CloudflareConnectionRecord> {
+  async function recordVerified(client: Queryable, now: Date): Promise<CloudflareConnectionRecord> {
     await recordConnectionVerified(client, "cloudflare_connection", options.organizationId, now);
     return recordOf(await requireConnection(client));
   }
 
   return {
     async getCloudflareConnection(client) {
-      const row = await selectConnection(client ?? options.pool);
+      const row = await selectConnection(client ?? options.database);
       return row ? recordOf(row) : null;
     },
 
     async withCloudflareCredential(operation) {
-      const credential = await decryptConnection(await requireConnection(options.pool));
+      const credential = await decryptConnection(await requireConnection(options.database));
       try {
         return await operation(credential);
       } catch (error) {
@@ -268,8 +266,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
       if (!isCloudflareAccountId(accountId) || !apiToken) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         if (await selectConnection(client)) throw new IntegrationsError("already_connected");
         const credential = { accountId, apiToken };
         await verifyCredential(credential);
@@ -288,7 +285,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     },
 
     async testCloudflare() {
-      const credential = await decryptConnection(await requireConnection(options.pool));
+      const credential = await decryptConnection(await requireConnection(options.database));
       try {
         await verifyCredential(credential);
       } catch (error) {
@@ -296,8 +293,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
         await recordFailure(failure);
         throw failure;
       }
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         return recordVerified(client, new Date());
       });
     },
@@ -307,8 +303,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
       if (!apiToken) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         const current = await requireConnection(client);
         await verifyCredential({ accountId: current.account_id, apiToken });
         const now = new Date();
@@ -322,8 +317,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     },
 
     async disconnectCloudflare() {
-      await withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      await transaction(async (client) => {
         await requireConnection(client);
         const open = await client.query<{ count: string }>("select count(*) from site_link where organization_id = $1 and ended_at is null", [options.organizationId]);
         const decision = decideCloudflareDisconnect({ openSiteLinkCount: Number(open.rows[0]?.count ?? 0) });
@@ -333,7 +327,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     },
 
     async syncSites() {
-      const credential = await decryptConnection(await requireConnection(options.pool));
+      const credential = await decryptConnection(await requireConnection(options.database));
       let discovered: CloudflareSite[];
       try {
         discovered = await discover(credential);
@@ -343,8 +337,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
         throw failure;
       }
       const syncedAt = new Date();
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         await upsertDiscoveredSites(client, options.organizationId, discovered, syncedAt);
         await client.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [options.organizationId, syncedAt]);
         return { siteCount: discovered.length, syncedAt: syncedAt.toISOString() };
@@ -352,7 +345,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     },
 
     async listCloudflareSites() {
-      const result = await options.pool.query<SiteListRow>(siteListQuery, [options.organizationId]);
+      const result = await options.database.query<SiteListRow>(siteListQuery, [options.organizationId]);
       return result.rows.map((row) => {
         const health = siteHealthFromRow(row);
         return {

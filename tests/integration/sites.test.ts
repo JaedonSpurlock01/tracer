@@ -22,19 +22,18 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { upsertDiscoveredSites } from "@/data/cloudflare-connection";
 import { createE2eCloudflareFake } from "@/data/e2e-cloudflare-fake";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
-import { schema } from "@/data/schema";
 import { createSites } from "@/data/sites";
 import { createTracerAuth } from "@/data/tracer-auth";
 import type { TwilioClient } from "@/data/twilio-client";
@@ -44,6 +43,7 @@ import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -59,9 +59,8 @@ const fakeTwilio: TwilioClient = {
   async updateIncomingPhoneNumberVoice() { throw new Error("not implemented"); },
 };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
   emailFrom: "auth@example.com",
   allowedRecipients: new Set(["operator@example.com", "viewer@example.com"]),
@@ -73,9 +72,9 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
+    integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }
@@ -117,7 +116,8 @@ async function openLinks(workspaceId: string): Promise<{ site_id: string; ended_
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
@@ -333,9 +333,9 @@ describe.sequential("Sites", () => {
     expect(archived.response.status).toBe(200);
     expect((await openLinks("workspace-c")).map((link) => link.ended_at !== null)).toEqual([true]);
 
-    await createWorkspaces(pool!, organizationId).restore("workspace-c");
+    await createWorkspaces(database!, organizationId).restore("workspace-c");
     expect((await json(post(cookie, "workspace-c/site/link", { siteId: blackfoot }))).response.status).toBe(200);
-    await createWorkspaces(pool!, organizationId).archive("workspace-c");
+    await createWorkspaces(database!, organizationId).archive("workspace-c");
     expect((await openLinks("workspace-c")).map((link) => link.ended_at !== null)).toEqual([true, true]);
     expect((await json(post(cookie, "workspace-b/site/link", { siteId: blackfoot }))).response.status).toBe(409);
     const picker = await createSites(pool!, operatorActor()).listForPicker({ search: "blackfoot" });

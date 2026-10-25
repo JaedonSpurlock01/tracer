@@ -27,9 +27,14 @@
  */
 import type { Pool } from "pg";
 
-import { openDatabase } from "@/data/database";
+import { openDatabase, type Database } from "@/data/database";
 
-/** The pool integration tests hand to repositories until they take a Database: the same module Production runs. */
+/** The same Database module Production opens, against the test container. */
+export function createTestDatabase(connectionString: string, options: { max?: number } = {}): Database {
+  return openDatabase(connectionString, { max: options.max ?? 10 });
+}
+
+/** Its pool, for repositories that have not yet taken a Database. */
 export function createTestPool(connectionString: string, options: { max?: number } = {}): Pool {
-  return openDatabase(connectionString, { max: options.max ?? 10 }).pool;
+  return createTestDatabase(connectionString, options).pool;
 }

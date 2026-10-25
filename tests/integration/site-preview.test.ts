@@ -25,12 +25,12 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
 import { upsertDiscoveredSites } from "@/data/cloudflare-connection";
@@ -40,7 +40,6 @@ import { createIntegrations } from "@/data/integrations";
 import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { migrateDatabase } from "@/data/migrate";
 import { masterKeyFingerprint } from "@/data/provider-credential";
-import { schema } from "@/data/schema";
 import { sitePreviewObjectsFromBinding, type SitePreviewBinding } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
 import { createTracerAuth } from "@/data/tracer-auth";
@@ -50,6 +49,7 @@ import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 const viewerId = "viewer-user-id";
 const messages: TransactionalEmailMessage[] = [];
@@ -92,9 +92,8 @@ const binding: SitePreviewBinding = {
   },
 };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
   emailFrom: "auth@example.com",
   allowedRecipients: new Set(["operator@example.com", "viewer@example.com"]),
@@ -106,9 +105,9 @@ const auth = () => createTracerAuth({
 function workspacesHandler(options: { withBucket?: boolean } = {}) {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
+    integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
     masterKey,
     cloudflare,
@@ -121,7 +120,7 @@ const fullSyncRuns: string[] = [];
 function integrationsHandler(options: { local?: boolean } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     twilio: fakeTwilio,
     cloudflare,
     masterKey,
@@ -133,7 +132,7 @@ function integrationsHandler(options: { local?: boolean } = {}) {
       ? {
           syncSitesLocally: async (orgId: string) => {
             fullSyncRuns.push(orgId);
-            return syncSites({ pool: pool!, cloudflare, objects: sitePreviewObjectsFromBinding(binding), masterKey, fetch: async () => new Response("", { status: 200 }), now: new Date(), organizationId: orgId });
+            return syncSites({ database: database!, cloudflare, objects: sitePreviewObjectsFromBinding(binding), masterKey, fetch: async () => new Response("", { status: 200 }), now: new Date(), organizationId: orgId });
           },
         }
       : {}),
@@ -163,7 +162,8 @@ function post(cookie: string, route: string): Request {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;

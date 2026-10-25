@@ -60,6 +60,9 @@ export interface Transaction {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
 }
 
+/** What a read helper may take: the Database itself or a transaction's handle. */
+export type Queryable = Pick<Transaction, "query">;
+
 export interface Database {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
   /** Runs the operation inside begin and commit, holding the named advisory lock for the transaction when given. */
@@ -89,7 +92,7 @@ function isPoolTimeout(error: unknown): boolean {
   return /connection timeout|timeout exceeded when trying to connect|timeout expired|query read timeout/i.test(message);
 }
 
-type Queryable = { query: (...args: unknown[]) => unknown };
+type Instrumented = { query: (...args: unknown[]) => unknown };
 
 export function openDatabase(connectionString: string, options: DatabaseOptions): Database {
   const sockets = options.sockets ?? (isCloudflareWorker() ? loadCloudflareSockets : undefined);
@@ -151,7 +154,7 @@ export function openDatabase(connectionString: string, options: DatabaseOptions)
   const wrapped = new WeakSet<object>();
   const servingPoolQuery = new WeakSet<object>();
 
-  function instrument(target: Queryable) {
+  function instrument(target: Instrumented) {
     if (wrapped.has(target)) return;
     wrapped.add(target);
     const original = target.query.bind(target);
@@ -167,8 +170,8 @@ export function openDatabase(connectionString: string, options: DatabaseOptions)
     }
   }
 
-  pool.on("acquire", (client: PoolClient) => instrument(client as unknown as Queryable));
-  instrument(pool as unknown as Queryable);
+  pool.on("acquire", (client: PoolClient) => instrument(client as unknown as Instrumented));
+  instrument(pool as unknown as Instrumented);
   const originalConnect = pool.connect.bind(pool) as (...inner: unknown[]) => unknown;
   (pool as { connect: unknown }).connect = ((...args: unknown[]) => {
     const callback = typeof args[0] === "function" ? (args[0] as (error: unknown, ...rest: unknown[]) => void) : undefined;

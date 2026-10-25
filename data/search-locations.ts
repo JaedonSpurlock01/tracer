@@ -31,10 +31,9 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { DataForSeoClient, DataForSeoCredential, DataForSeoLocation } from "@/data/dataforseo-client";
-import { withTransaction } from "@/data/provider-credential";
 
 export const searchLocationLimit = 8;
 export const searchLocationMinimumQuery = 2;
@@ -46,9 +45,9 @@ export interface SearchLocations {
   search(countryIso: string, query: string, limit?: number): Promise<DataForSeoLocation[]>;
 }
 
-export function createSearchLocations(pool: Pool): SearchLocations {
+export function createSearchLocations(database: Database): SearchLocations {
   async function countFor(countryIso: string): Promise<number> {
-    const result = await pool.query<{ count: string }>("select count(*) from search_location where country_iso = $1", [countryIso]);
+    const result = await database.query<{ count: string }>("select count(*) from search_location where country_iso = $1", [countryIso]);
     return Number(result.rows[0]?.count ?? 0);
   }
 
@@ -58,7 +57,7 @@ export function createSearchLocations(pool: Pool): SearchLocations {
       const existing = await countFor(iso);
       if (existing > 0) return existing;
       const locations = [...new Map((await dataforseo.listLocations(credential, iso)).map((location) => [location.code, location])).values()];
-      await withTransaction(pool, async (client) => {
+      await database.transaction(async (client) => {
         await client.query("delete from search_location where country_iso = $1", [iso]);
         for (let start = 0; start < locations.length; start += importBatchSize) {
           const batch = locations.slice(start, start + importBatchSize);
@@ -76,7 +75,7 @@ export function createSearchLocations(pool: Pool): SearchLocations {
     async search(countryIso, query, limit = searchLocationLimit) {
       const needle = query.trim().toLowerCase();
       if (needle.length < searchLocationMinimumQuery) return [];
-      const result = await pool.query<{ code: number; name: string; kind: string }>(
+      const result = await database.query<{ code: number; name: string; kind: string }>(
         `select code, name, kind from search_location
           where country_iso = $1 and lower(name) like '%' || $2 || '%'
           order by position($2 in lower(name)), length(name), name

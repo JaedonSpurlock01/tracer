@@ -31,13 +31,13 @@ export interface WorkspaceRoutingRuntimeParts {
 }
 
 export function createWorkspaceRoutingRuntimeParts(
-  runtime: Pick<TracerRuntime, "pool" | "masterKey">,
+  runtime: Pick<TracerRuntime, "database" | "masterKey">,
   organizationId: string,
 ): WorkspaceRoutingRuntimeParts {
   const twilio = createRuntimeTwilioClient();
-  const workspaces = createWorkspaces(runtime.pool, organizationId);
+  const workspaces = createWorkspaces(runtime.database, organizationId);
   const integrations = createIntegrations({
-    pool: runtime.pool,
+    database: runtime.database,
     organizationId,
     twilio,
     masterKey: runtime.masterKey,
@@ -46,12 +46,12 @@ export function createWorkspaceRoutingRuntimeParts(
 }
 
 export function createWorkspaceRoutingFromRuntime(
-  runtime: Pick<TracerRuntime, "pool" | "masterKey" | "baseURL">,
+  runtime: Pick<TracerRuntime, "database" | "masterKey" | "baseURL">,
   organizationId: string,
 ): WorkspaceRouting {
   const parts = createWorkspaceRoutingRuntimeParts(runtime, organizationId);
   return createWorkspaceRouting({
-    pool: runtime.pool,
+    database: runtime.database,
     organizationId,
     ...parts,
     baseURL: runtime.baseURL,

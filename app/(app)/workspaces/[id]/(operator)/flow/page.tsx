@@ -30,7 +30,7 @@ export default async function WorkspaceFlowPage({ params }: { params: Promise<{ 
   if (!isActiveOperatorActor(actor)) notFound();
   const { id } = await params;
   const data = await withRequestRuntime(async (runtime) => {
-    const workspaces = createWorkspaces(runtime.pool, actor.organizationId);
+    const workspaces = createWorkspaces(runtime.database, actor.organizationId);
     const workspace = await workspaces.find(id);
     if (!workspace) return null;
     const flow = await createWorkspaceRoutingFromRuntime(runtime, actor.organizationId).getFlow(id);

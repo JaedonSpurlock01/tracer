@@ -26,11 +26,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
 import { activityFiltersFromSearchParams } from "@/data/activity-query";
 import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
@@ -53,9 +52,8 @@ import {
   type PageRuntime,
 } from "@/data/page-loaders";
 import type { ProviderConfiguration } from "@/data/provider-health";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
-import { openDatabase, type DatabaseStats } from "@/data/database";
+import { openDatabase, type Database, type DatabaseStats, type Queryable } from "@/data/database";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 import type { TwilioClient } from "@/data/twilio-client";
 import { findUserAvatarSeed } from "@/data/user-avatar";
@@ -65,6 +63,7 @@ import { workspaceListQueryFromSearchParams } from "@/data/workspaces";
 let container: StartedPostgreSqlContainer | undefined;
 let connectionUri = "";
 let pool: Pool | undefined;
+let database: Database | undefined;
 let actor: Actor;
 const workspaceId = "workspace-budget";
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
@@ -99,9 +98,9 @@ const budgets = {
   activity: { waves: 3, queries: 8 },
 } as const;
 
-function auth(connection: Pool) {
+function auth(connection: Database) {
   return createTracerAuth({
-    database: drizzle(connection, { schema }),
+    database: connection.drizzle,
     email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
     emailFrom: "auth@example.com",
     allowedRecipients: new Set(["operator@example.com"]),
@@ -112,7 +111,7 @@ function auth(connection: Pool) {
 }
 
 async function signIn(): Promise<string> {
-  const instance = auth(pool!);
+  const instance = auth(database!);
   const send = await instance.handler(new Request("http://localhost:3000/api/auth/email-otp/send-verification-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "operator@example.com", type: "sign-in" }) }));
   expect(send.status).toBe(200);
   await Promise.all(backgroundTasks.splice(0));
@@ -122,20 +121,20 @@ async function signIn(): Promise<string> {
   return (verify.headers.get("set-cookie") ?? "").split(";", 1)[0];
 }
 
-function runtimeFor(connection: Pool): PageRuntime {
-  return { pool: connection, masterKey, baseURL: "http://localhost:3000", providerConfiguration };
+function runtimeFor(connection: Database): PageRuntime {
+  return { database: connection, pool: connection.pool, masterKey, baseURL: "http://localhost:3000", providerConfiguration };
 }
 
 /** Everything the shell reads for a navigation besides the actor: the Organization and the avatar seed. */
-function layoutReads(connection: Pool): Promise<unknown> {
+function layoutReads(connection: Queryable): Promise<unknown> {
   return Promise.all([createOrganizationRepository(connection).findById(actor.organizationId), findUserAvatarSeed(connection, actor.userId)]);
 }
 
-async function navigation(name: keyof typeof budgets, run: (connection: Pool) => Promise<unknown>): Promise<DatabaseStats> {
+async function navigation(name: keyof typeof budgets, run: (connection: Database) => Promise<unknown>): Promise<DatabaseStats> {
   const database = openDatabase(connectionUri, { max: 6 });
   const stats = database.stats;
   try {
-    await run(database.pool);
+    await run(database);
   } finally {
     await database.close();
   }
@@ -145,7 +144,7 @@ async function navigation(name: keyof typeof budgets, run: (connection: Pool) =>
   return stats;
 }
 
-async function workspaceNavigation(name: keyof typeof budgets, load: (connection: Pool, workspace: NonNullable<Awaited<ReturnType<ReturnType<typeof createReadableWorkspaces>["find"]>>>) => Promise<unknown>) {
+async function workspaceNavigation(name: keyof typeof budgets, load: (connection: Database, workspace: NonNullable<Awaited<ReturnType<ReturnType<typeof createReadableWorkspaces>["find"]>>>) => Promise<unknown>) {
   return navigation(name, async (connection) => {
     const [workspace] = await Promise.all([createReadableWorkspaces(connection, actor).find(workspaceId), layoutReads(connection)]);
     if (!workspace) throw new Error("budget Workspace missing");
@@ -156,7 +155,8 @@ async function workspaceNavigation(name: keyof typeof budgets, load: (connection
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   connectionUri = container.getConnectionUri();
-  pool = createTestPool(connectionUri);
+  database = createTestDatabase(connectionUri);
+  pool = database.pool;
   await migrateDatabase(connectionUri);
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   actor = { userId: bootstrapped.userId, organizationId: bootstrapped.organizationId, name: "Example Operator", email: "operator@example.com", timezone: "America/Chicago", state: "Active", role: "Operator" };

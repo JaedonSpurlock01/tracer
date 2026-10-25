@@ -28,6 +28,7 @@
  */
 import type { Pool } from "pg";
 
+import type { Database } from "@/data/database";
 import { createActivity } from "@/data/activity";
 import { createAnalytics, withWorkspaceListStats, type AnalyticsSummary, type WorkspaceListWithStats, type WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
@@ -51,6 +52,7 @@ import { createWorkspaceRouting } from "@/data/workspace-routing";
 import { createWorkspaces, type WorkspaceListQuery, type WorkspaceRecord } from "@/data/workspaces";
 
 export interface PageRuntime {
+  database: Database;
   pool: Pool;
   masterKey: string | undefined;
   baseURL: string;
@@ -114,9 +116,9 @@ export interface WorkspacesPageData {
 export async function loadWorkspacesPage(runtime: PageRuntime, actor: Actor, query: WorkspaceListQuery, cloudflare: CloudflareClient): Promise<WorkspacesPageData> {
   const operator = canManageWorkspaces(actor);
   const [initialResult, connection] = await Promise.all([
-    createReadableWorkspaces(runtime.pool, actor).list(query).then((result) => withWorkspaceListStats(createAnalytics(runtime.pool, actor), result)),
+    createReadableWorkspaces(runtime.database, actor).list(query).then((result) => withWorkspaceListStats(createAnalytics(runtime.pool, actor), result)),
     operator
-      ? createCloudflareConnection({ pool: runtime.pool, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey })
+      ? createCloudflareConnection({ database: runtime.database, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey })
           .getCloudflareConnection()
           .catch(() => null)
       : null,
@@ -147,13 +149,13 @@ export interface WorkspaceOverviewPageData {
 /** Workspace Overview: six independent reads at once; only the Site's summary and score wait for the Site Link. */
 export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Actor, workspace: WorkspaceRecord, range: AnalyticsRange, twilio: TwilioClient): Promise<WorkspaceOverviewPageData> {
   const organizationId = actor.organizationId;
-  const workspaces = createWorkspaces(runtime.pool, organizationId);
+  const workspaces = createWorkspaces(runtime.database, organizationId);
   const routing = createWorkspaceRouting({
-    pool: runtime.pool,
+    database: runtime.database,
     organizationId,
     twilio,
     workspaces,
-    integrations: createIntegrations({ pool: runtime.pool, organizationId, twilio, masterKey: runtime.masterKey }),
+    integrations: createIntegrations({ database: runtime.database, organizationId, twilio, masterKey: runtime.masterKey }),
     baseURL: runtime.baseURL,
   });
   const analytics = createAnalytics(runtime.pool, actor);
@@ -201,7 +203,7 @@ export interface SitePageData {
 /** Site: the Site Link, analytics, connection, and money together, then the Site's traffic and Search together. */
 export async function loadSitePage(runtime: PageRuntime, actor: Actor, workspace: WorkspaceRecord, range: AnalyticsRange, cloudflare: CloudflareClient): Promise<SitePageData> {
   const sites = createSites(runtime.pool, actor);
-  const connection = createCloudflareConnection({ pool: runtime.pool, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey });
+  const connection = createCloudflareConnection({ database: runtime.database, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey });
   const operator = canManageWorkspaces(actor);
   const month = calendarMonth(new Date(), workspace.reportingTimezone);
   const [site, analytics, cloudflareRecord, money] = await Promise.all([
@@ -232,7 +234,7 @@ export interface IntegrationsClients {
 /** Integrations: one parallel pass over the three connections, health, numbers, Sites, and the Forms key. */
 export async function loadIntegrationsPage(runtime: PageRuntime, actor: Actor, clients: IntegrationsClients): Promise<IntegrationsOverview> {
   const integrations = createIntegrations({
-    pool: runtime.pool,
+    database: runtime.database,
     organizationId: actor.organizationId,
     twilio: clients.twilio,
     cloudflare: clients.cloudflare,

@@ -27,22 +27,22 @@ import { schedules } from "@trigger.dev/sdk";
 
 import { createDataForSeoClient } from "@/data/dataforseo-client";
 import { checkRankings } from "@/data/rank-check";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const rankCheck = schedules.task({
   id: "rank-check",
   cron: "41 6 * * *",
   run: async (payload) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       return await checkRankings({
-        pool,
+        database,
         dataforseo: createDataForSeoClient(),
         masterKey: requiredEnvironment("TWILIO_CREDENTIAL_MASTER_KEY"),
         now: payload.timestamp,
       });
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

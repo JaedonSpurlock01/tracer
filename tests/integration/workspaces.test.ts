@@ -17,17 +17,16 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
 import { masterKeyFingerprint } from "@/data/provider-credential";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
@@ -36,6 +35,7 @@ import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let firstOrganizationId = "";
 let firstOperatorId = "";
 let secondOrganizationId = "";
@@ -50,9 +50,8 @@ const fakeTwilio: TwilioClient = {
   async updateIncomingPhoneNumberVoice() { throw new Error("not implemented"); },
 };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
   emailFrom: "auth@example.com",
   allowedRecipients: new Set(["first@example.com", "second@example.com", "viewer@example.com"]),
@@ -64,9 +63,9 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     twilio: fakeTwilio,
-    integrations: (organizationId) => createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }),
+    integrations: (organizationId) => createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }
@@ -91,7 +90,8 @@ async function json(request: Request): Promise<{ response: Response; body: Recor
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const first = await bootstrapInitialOperator(pool, { email: "first@example.com", name: "First Operator", timezone: "America/Chicago" });
   firstOrganizationId = first.organizationId;
@@ -190,14 +190,14 @@ describe.sequential("Workspaces", () => {
       [firstOrganizationId, id],
     );
 
-    await expect(createWorkspaces(pool!, firstOrganizationId).find(id)).resolves.toMatchObject({
+    await expect(createWorkspaces(database!, firstOrganizationId).find(id)).resolves.toMatchObject({
       trackingNumber: "+14155550101",
       numberAssignmentStartedAt: startedAt,
       voiceRestoreNeeded: null,
       publishedFlowVersion: { version: 2, publishedAt: "2026-01-04T05:06:07.000Z" },
       hasDraft: true,
     });
-    await expect(createWorkspaces(pool!, firstOrganizationId).list({ search: "Flow Metadata" })).resolves.toMatchObject({
+    await expect(createWorkspaces(database!, firstOrganizationId).list({ search: "Flow Metadata" })).resolves.toMatchObject({
       workspaces: [expect.objectContaining({ id, hasDraft: true })],
     });
   });
@@ -252,7 +252,7 @@ describe.sequential("Workspaces", () => {
     expect((await json(new Request(`http://localhost:3000/api/workspaces/${id}/restore`, { method: "POST", headers: { cookie } }))).response.status).toBe(409);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
-    await expect(createWorkspaces(pool!, firstOrganizationId).countActive()).resolves.toBe(0);
+    await expect(createWorkspaces(database!, firstOrganizationId).countActive()).resolves.toBe(0);
   });
 
   it("does not expose another Organization Workspace", async () => {

@@ -16,7 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Queryable } from "@/data/database";
 
 import {
   toCanonicalRole,
@@ -45,7 +45,7 @@ export class AuthorizationError extends Error {
 
 export async function resolveActor(
   auth: TracerAuth,
-  connection: Pick<Pool, "query">,
+  connection: Queryable,
   headers: Headers,
 ): Promise<Actor | null> {
   const session = await auth.api.getSession({ headers });
@@ -87,7 +87,7 @@ export function isActiveOperatorActor(actor: Actor | null): actor is Actor {
 
 export async function requireActiveActor(
   auth: TracerAuth,
-  connection: Pick<Pool, "query">,
+  connection: Queryable,
   headers: Headers,
 ): Promise<Actor> {
   const actor = await resolveActor(auth, connection, headers);
@@ -102,7 +102,7 @@ export async function requireActiveActor(
 
 export async function requireActiveOperator(
   auth: TracerAuth,
-  connection: Pick<Pool, "query">,
+  connection: Queryable,
   headers: Headers,
 ): Promise<Actor> {
   const actor = await resolveActor(auth, connection, headers);
