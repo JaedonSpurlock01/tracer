@@ -41,6 +41,8 @@ describe("rate table", () => {
       workersPaidMonthlyUsd: 5,
       r2StoragePerGbMonthUsd: 0.015,
       dataforseoPerLookupUsd: 0.002,
+      dataforseoLabsPerTaskUsd: 0.012,
+      dataforseoLabsPerPhraseUsd: 0.00012,
       openaiWhisperPerMinuteUsd: 0.006,
       openaiGpt5MiniInputPerMillionTokensUsd: 0.25,
       openaiGpt5MiniOutputPerMillionTokensUsd: 2,

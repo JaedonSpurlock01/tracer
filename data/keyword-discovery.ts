@@ -20,7 +20,8 @@
  *  rows match the proposed ones. A phrase DataForSEO has no data for stays
  *  in the set at zero volume because a small Service Area often has none,
  *  and the Operator decides. A served cache is still filtered against live
- *  Keywords so a suggestion disappears once it is tracked. A Site whose
+ *  Keywords so a suggestion disappears once it is tracked. Each measured
+ *  run counts one lookup on the DataForSEO connection. A Site whose
  *  Service Area predates the location picker is measured for the United
  *  States as a whole.
  *
@@ -39,7 +40,7 @@ import type { Pool } from "pg";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import type { DataForSeoClient, DataForSeoSearchIntent } from "@/data/dataforseo-client";
-import { createDataForSeoConnection } from "@/data/dataforseo-connection";
+import { createDataForSeoConnection, recordDataForSeoLookup } from "@/data/dataforseo-connection";
 import type { StructuredRequest, StructuredResponder } from "@/data/openai-client";
 import { canManageWorkspaces } from "@/data/workspace-authorization";
 
@@ -192,6 +193,7 @@ export function createKeywordDiscovery(options: KeywordDiscoveryOptions): Keywor
         ? await connection.withDataForSeoCredential((credential) =>
           options.dataforseo.keywordOverview(credential, { keywords: phrases, locationCode: site.service_area_location_code ?? unitedStatesLocationCode, languageCode: "en" }))
         : [];
+      if (phrases.length) await recordDataForSeoLookup(pool, actor.organizationId, now());
       const byPhrase = new Map(measured.map((row) => [row.phrase, row]));
       const set: KeywordSuggestionSet = {
         suggestedAt: now().toISOString(),

@@ -174,6 +174,11 @@ describe.sequential("Keyword Discovery", () => {
     expect(stored.rows[0].keyword_suggestions).toEqual(set);
   });
 
+  it("counts one DataForSEO lookup on the connection per suggestion run", async () => {
+    const counted = await pool!.query<{ lookups_this_month: number; lookups_month: string }>("select lookups_this_month, lookups_month::text from dataforseo_connection where organization_id = $1", [organizationId]);
+    expect(counted.rows[0]).toEqual({ lookups_this_month: 1, lookups_month: "2026-10-01" });
+  });
+
   it("serves the cached set without calling either provider and hides a suggestion once it is tracked", async () => {
     await pool!.query("insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values ('keyword-added', 'site-pocatello', 'Sealcoating Pocatello', 3, now(), now())");
     now = new Date("2026-10-26T09:00:00.000Z");
@@ -192,6 +197,7 @@ describe.sequential("Keyword Discovery", () => {
     const set = await discovery().suggest("site-pocatello", { refresh: true });
 
     expect(structuredRequests).toHaveLength(2);
+    expect((await pool!.query<{ lookups_this_month: number }>("select lookups_this_month from dataforseo_connection where organization_id = $1", [organizationId])).rows[0].lookups_this_month).toBe(2);
     expect(structuredRequests[1].input).toContain("sealcoating pocatello");
     expect(overviewQueries[1]).toEqual({ keywords: ["pocatello asphalt contractor"], locationCode: 1016141, languageCode: "en" });
     expect(set).toEqual({ suggestedAt: "2026-10-26T09:00:00.000Z", suggestions: [{ phrase: "pocatello asphalt contractor", monthlyVolume: 90, difficulty: 20, intent: "commercial" }] });
