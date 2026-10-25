@@ -121,8 +121,19 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
   );
 }
 
+/**
+ * One pool per request. An idle client's socket error is logged while the
+ * request runs and ignored once the pool is closing: pg-cloudflare reports
+ * the reader being cancelled by our own close as an error, and pg-pool
+ * re-emits an idle client's error on the pool, where a missing listener
+ * surfaced as an unhandledRejection on every Production request.
+ */
 export function createRequestPool(connectionString: string): Pool {
-  return new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+  const pool = new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+  pool.on("error", (error) => {
+    if (!(pool as unknown as { ending?: boolean }).ending) console.error("request pool connection failed", error);
+  });
+  return pool;
 }
 
 export const poolCloseDeadlineMs = 2_000;
