@@ -35,6 +35,7 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
+import type { StructuredRequest, StructuredResponder } from "@/data/openai-client";
 import { sealSecret } from "@/data/provider-credential";
 import { schema } from "@/data/schema";
 import { siteSearch } from "@/data/site-search";
@@ -61,10 +62,19 @@ const fakeTwilio: TwilioClient = {
 };
 
 const locationLookups: string[] = [];
+const structuredRequests: StructuredRequest[] = [];
+const openai: StructuredResponder = {
+  async respond(request) {
+    structuredRequests.push(request);
+    return { text: JSON.stringify({ phrases: ["Pothole Repair Pocatello", "asphalt paving pocatello", "sealcoating pocatello idaho"] }), inputTokens: 100, outputTokens: 40 };
+  },
+};
 const fakeDataForSeo: DataForSeoClient = {
   async verify(credential) { return { login: credential.login }; },
   async serp() { throw new Error("not implemented"); },
-  async keywordOverview() { throw new Error("not implemented"); },
+  async keywordOverview(_credential, query) {
+    return query.keywords.map((phrase, index) => ({ phrase, monthlyVolume: (index + 1) * 100, difficulty: 25, intent: "commercial" as const }));
+  },
   async listLocations(_credential, countryIso) {
     locationLookups.push(countryIso);
     return [
@@ -94,6 +104,7 @@ function handler() {
     pool: pool!,
     twilio: fakeTwilio,
     dataforseo: fakeDataForSeo,
+    openai,
     masterKey,
     integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
@@ -148,6 +159,12 @@ beforeAll(async () => {
   );
   await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
   await pool.query(
+    `insert into business (id, organization_id, workspace_id, name, niche, created_at, updated_at) values
+       ('business-a', $1, 'workspace-a', 'Pocatello Paving', 'Asphalt paving', now(), now()),
+       ('business-b', $1, 'workspace-b', 'St George Paving', null, now(), now())`,
+    [organizationId],
+  );
+  await pool.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at) values
        ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now()),
        ('site-st-george', $1, 'asphalt-paving-st-george', 'asphaltpavingstgeorge.com', 'zone-2', now(), now(), now(), now())`,
@@ -178,7 +195,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect((await json(send(cookie, "GET", "workspace-c/site/keywords"))).response.status).toBe(404);
     const empty = await json(send(cookie, "GET", "workspace-a/site/keywords"));
     expect(empty.response.status).toBe(200);
-    expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] });
+    expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: null });
   });
 
   it("searches DataForSEO locations for the Service Area picker, importing the country list once", async () => {
@@ -262,6 +279,32 @@ describe.sequential("Site Keywords and Service Area", () => {
     const fillers = await pool!.query<{ id: string }>("select id from site_keyword where site_id = 'site-pocatello' and phrase like 'filler phrase %'");
     for (const filler of fillers.rows) expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${filler.id}`))).response.status).toBe(204);
     expect((await json(send(cookie, "GET", "workspace-a/site/keywords"))).body.keywords).toHaveLength(2);
+  });
+
+  it("suggests Keywords for the linked Site, serves the cached set on the Keywords read, and refuses a Business without a niche or a Client Viewer", async () => {
+    const cookie = await signIn("operator@example.com");
+    const suggested = await json(send(cookie, "POST", "workspace-a/site/keywords/suggest"));
+    expect(suggested.response.status).toBe(200);
+    expect(structuredRequests).toHaveLength(1);
+    expect((suggested.body.suggestions as { suggestions: unknown[] }).suggestions).toEqual([
+      { phrase: "sealcoating pocatello idaho", monthlyVolume: 200, difficulty: 25, intent: "commercial" },
+      { phrase: "pothole repair pocatello", monthlyVolume: 100, difficulty: 25, intent: "commercial" },
+    ]);
+    const read = await json(send(cookie, "GET", "workspace-a/site/keywords"));
+    expect(read.body.suggestions).toEqual(suggested.body.suggestions);
+    expect(structuredRequests).toHaveLength(1);
+    const added = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "sealcoating pocatello idaho", weight: 3 }));
+    expect(added.response.status).toBe(201);
+    expect(((await json(send(cookie, "GET", "workspace-a/site/keywords"))).body.suggestions as { suggestions: { phrase: string }[] }).suggestions.map((suggestion) => suggestion.phrase)).toEqual(["pothole repair pocatello"]);
+    expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${(added.body.keyword as { id: string }).id}`))).response.status).toBe(204);
+
+    const noNiche = await json(send(cookie, "POST", "workspace-b/site/keywords/suggest"));
+    expect(noNiche.response.status).toBe(409);
+    expect(noNiche.body).toEqual({ error: "business_niche_missing" });
+    expect((await json(send(cookie, "POST", "workspace-c/site/keywords/suggest"))).response.status).toBe(404);
+    const viewer = await signIn("viewer@example.com");
+    expect((await json(send(viewer, "POST", "workspace-a/site/keywords/suggest"))).response.status).toBe(403);
+    expect(structuredRequests).toHaveLength(1);
   });
 
   it("lets a Client Viewer read Keywords and Search inside a granted Workspace but never edit them", async () => {

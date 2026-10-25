@@ -4,8 +4,8 @@
  * @brief  Edits a Site's Service Area and Keywords under authorization.
  *
  * @description
- *  Lists a Site's Service Area and live Keywords for anyone who can read
- *  its linked Workspace, and lets an Operator set the Service Area, add a
+ *  Lists a Site's Service Area, live Keywords, and last Keyword Suggestion
+ *  set for anyone who can read its linked Workspace, and lets an Operator set the Service Area, add a
  *  Keyword with a phrase and a weight from 1 to 5, change a weight, and
  *  remove a Keyword. Phrases are trimmed and unique per Site without
  *  regard to case, and a Site keeps at most 25 live Keywords.
@@ -19,6 +19,7 @@
  *  concurrent requests.
  *
  * @see
+ *  data/keyword-discovery.ts
  *  data/site-search.ts
  *  data/rank-check.ts
  *  data/workspace-authorization.ts
@@ -31,6 +32,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
+import { withoutTrackedPhrases, type KeywordSuggestionSet } from "@/data/keyword-discovery";
 import { canManageWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
 
 /** Where a Site's business serves: a DataForSEO location picked by the Operator, with its name split for display. */
@@ -59,7 +61,7 @@ export class SiteKeywordsError extends Error {
 }
 
 export interface SiteKeywords {
-  list(siteId: string): Promise<{ serviceArea: ServiceArea; keywords: SiteKeywordRecord[] }>;
+  list(siteId: string): Promise<{ serviceArea: ServiceArea; keywords: SiteKeywordRecord[]; suggestions: KeywordSuggestionSet | null }>;
   add(siteId: string, input: { phrase: unknown; weight?: unknown }): Promise<SiteKeywordRecord>;
   update(siteId: string, keywordId: string, input: { weight: unknown }): Promise<SiteKeywordRecord>;
   remove(siteId: string, keywordId: string): Promise<void>;
@@ -167,13 +169,18 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
   return {
     async list(siteId) {
       const scope: unknown[] = [siteId];
-      const site = await pool.query<ServiceAreaRow>(
-        `select s.service_area_city, s.service_area_region, s.service_area_country, s.service_area_location_code, s.service_area_location_name from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
+      const site = await pool.query<ServiceAreaRow & { keyword_suggestions: KeywordSuggestionSet | null }>(
+        `select s.service_area_city, s.service_area_region, s.service_area_country, s.service_area_location_code, s.service_area_location_name, s.keyword_suggestions from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
         scope,
       );
       if (!site.rows[0]) throw new SiteKeywordsError("not_found");
       const keywords = await pool.query<KeywordRow>("select id, phrase, weight, created_at from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
-      return { serviceArea: toServiceArea(site.rows[0]), keywords: keywords.rows.map(toKeyword) };
+      const stored = site.rows[0].keyword_suggestions;
+      return {
+        serviceArea: toServiceArea(site.rows[0]),
+        keywords: keywords.rows.map(toKeyword),
+        suggestions: stored ? withoutTrackedPhrases(stored, keywords.rows.map((row) => row.phrase)) : null,
+      };
     },
 
     async add(siteId, input) {

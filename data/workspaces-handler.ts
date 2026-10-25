@@ -64,6 +64,8 @@ import { captureSitePreview, sitePreviewResponse, type SitePreviewBucket } from 
 import { createDataForSeoConnection } from "@/data/dataforseo-connection";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { createSearchLocations } from "@/data/search-locations";
+import { createKeywordDiscovery, KeywordDiscoveryError } from "@/data/keyword-discovery";
+import { OpenAIError, type StructuredResponder } from "@/data/openai-client";
 import { createSiteKeywords, SiteKeywordsError } from "@/data/site-keywords";
 import { siteSearch } from "@/data/site-search";
 import { createSites, siteResponseForActor, SitesError, summaryResponseForActor } from "@/data/sites";
@@ -95,6 +97,8 @@ export interface WorkspacesHandlerOptions {
   cloudflare?: CloudflareClient;
   /** Serves the Service Area picker's location search; without it the search answers 503. */
   dataforseo?: DataForSeoClient;
+  /** Proposes phrases for Suggest Keywords; without it the suggestion answers 503. */
+  openai?: StructuredResponder;
   masterKey?: string;
   twilioMedia?: TwilioRecordingMedia;
   recordingTranscription?: RecordingProcessing;
@@ -111,6 +115,10 @@ function errorResponse(error: unknown): Response {
   }
   if (error instanceof AnalysisRetryError) return response({ error: "provider_unavailable" }, 502);
   if (error instanceof PlacesClientError) return response({ error: "provider_unavailable" }, 502);
+  if (error instanceof OpenAIError) return response({ error: "provider_unavailable", detail: error.message }, 502);
+  if (error instanceof KeywordDiscoveryError) {
+    return response({ error: error.code }, error.code === "not_found" ? 404 : error.code === "invalid_output" ? 502 : 409);
+  }
   if (error instanceof IntegrationsError) {
     const status = error.code === "master_key_missing" ? 503 : error.code === "not_connected" ? 404 : 502;
     return response(error.detail ? { error: error.code, detail: error.detail } : { error: error.code }, status);
@@ -390,6 +398,13 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         const linked = await createSites(options.pool, actor).findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
         const keywords = createSiteKeywords(options.pool, actor);
+        if (request.method === "POST" && subroute === "site/keywords/suggest") {
+          if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
+          if (!options.openai || !options.dataforseo) return response({ error: "provider_unavailable" }, 503);
+          const body = request.headers.get("content-type")?.includes("json") && request.headers.get("content-length") !== "0" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
+          const discovery = createKeywordDiscovery({ pool: options.pool, actor, responder: options.openai, dataforseo: options.dataforseo, masterKey: options.masterKey });
+          return response({ suggestions: await discovery.suggest(linked.id, { refresh: body.refresh === true }) });
+        }
         if (request.method === "POST" && subroute === "site/keywords") {
           const body = await readBody(request);
           return response({ keyword: await keywords.add(linked.id, { phrase: body.phrase, weight: body.weight }) }, 201);

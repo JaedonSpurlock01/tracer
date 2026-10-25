@@ -438,7 +438,7 @@ describe("WorkspaceSettingsView", () => {
       return new Response(JSON.stringify({}), { status: 404 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] }} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: null }} />);
     const area = screen.getByRole("region", { name: "Service Area" });
     expect(within(area).getByText("No Service Area yet")).toBeVisible();
     fireEvent.change(within(area).getByRole("combobox", { name: "Search locations" }), { target: { value: "Poca" } });
@@ -470,7 +470,7 @@ describe("WorkspaceSettingsView", () => {
         initialWorkspace={workspace}
         section="site"
         initialSite={linkedSite}
-        initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords: [{ id: "keyword-1", phrase: "asphalt paving pocatello", weight: 2, createdAt: "2026-10-19T00:00:00.000Z" }] }}
+        initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords: [{ id: "keyword-1", phrase: "asphalt paving pocatello", weight: 2, createdAt: "2026-10-19T00:00:00.000Z" }], suggestions: null }}
       />,
     );
     const keywords = screen.getByRole("region", { name: "Keywords" });
@@ -502,9 +502,78 @@ describe("WorkspaceSettingsView", () => {
     expect(within(keywords).getByText("1 of 25 Keywords")).toBeVisible();
   });
 
+  it("suggests Keywords, shows Finding keywords while waiting, and adds the ticked suggestions at weight 3", async () => {
+    let resolveSuggest: ((response: Response) => void) | undefined;
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url === "/api/workspaces/workspace-1/site/keywords/suggest" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => { resolveSuggest = resolve; });
+      }
+      if (url === "/api/workspaces/workspace-1/site/keywords" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { phrase: string; weight: number };
+        return new Response(JSON.stringify({ keyword: { id: `keyword-${body.phrase}`, phrase: body.phrase, weight: body.weight, createdAt: "2026-10-25T00:00:00.000Z" } }), { status: 201 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <WorkspaceSettingsView
+        initialWorkspace={workspace}
+        section="site"
+        initialSite={linkedSite}
+        initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords: [{ id: "keyword-1", phrase: "asphalt paving pocatello", weight: 2, createdAt: "2026-10-19T00:00:00.000Z" }], suggestions: null }}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Suggested Keywords" });
+    expect(within(region).queryByRole("checkbox")).not.toBeInTheDocument();
+
+    fireEvent.click(within(region).getByRole("button", { name: "Suggest Keywords" }));
+    expect(await within(region).findByRole("status")).toHaveTextContent("Finding keywords");
+    expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/keywords/suggest", expect.objectContaining({ method: "POST", body: JSON.stringify({ refresh: false }) }));
+    resolveSuggest!(new Response(JSON.stringify({ suggestions: { suggestedAt: "2026-10-25T15:00:00.000Z", suggestions: [
+      { phrase: "driveway paving pocatello idaho", monthlyVolume: 480, difficulty: 31, intent: "transactional" },
+      { phrase: "sealcoating pocatello", monthlyVolume: 90, difficulty: 20, intent: "commercial" },
+      { phrase: "asphalt repair pocatello", monthlyVolume: 0, difficulty: null, intent: null },
+    ] } }), { status: 200 }));
+
+    expect(await within(region).findByRole("checkbox", { name: "driveway paving pocatello idaho" })).toBeVisible();
+    expect(within(region).getByText("480 / mo")).toBeVisible();
+    expect(within(region).getByText("No volume data")).toBeVisible();
+    expect(within(region).getByRole("button", { name: "Add selected" })).toBeDisabled();
+    fireEvent.click(within(region).getByRole("checkbox", { name: "driveway paving pocatello idaho" }));
+    fireEvent.click(within(region).getByRole("checkbox", { name: "sealcoating pocatello" }));
+    fireEvent.click(within(region).getByRole("button", { name: "Add selected" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/keywords", expect.objectContaining({ method: "POST", body: JSON.stringify({ phrase: "driveway paving pocatello idaho", weight: 3 }) })));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/keywords", expect.objectContaining({ method: "POST", body: JSON.stringify({ phrase: "sealcoating pocatello", weight: 3 }) })));
+    await waitFor(() => expect(within(region).queryByRole("checkbox", { name: "driveway paving pocatello idaho" })).not.toBeInTheDocument());
+    const keywords = screen.getByRole("region", { name: "Keywords" });
+    expect(within(keywords).getByText("3 of 25 Keywords")).toBeVisible();
+    expect(within(keywords).getByRole("combobox", { name: "Weight for sealcoating pocatello" })).toHaveTextContent("3");
+    expect(within(region).getByRole("checkbox", { name: "asphalt repair pocatello" })).toBeVisible();
+    expect(within(region).getByRole("button", { name: "Suggest again" })).toBeVisible();
+  });
+
+  it("shows the cached suggestion set on load and points at Business settings when the Business has no niche", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "business_niche_missing" }), { status: 409 })));
+    render(
+      <WorkspaceSettingsView
+        initialWorkspace={workspace}
+        section="site"
+        initialSite={linkedSite}
+        initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: { suggestedAt: "2026-10-24T10:00:00.000Z", suggestions: [{ phrase: "asphalt paving near me", monthlyVolume: 1300, difficulty: 40, intent: "commercial" }] } }}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Suggested Keywords" });
+    expect(within(region).getByRole("checkbox", { name: "asphalt paving near me" })).toBeVisible();
+    fireEvent.click(within(region).getByRole("button", { name: "Suggest again" }));
+    expect(await within(region).findByText("Add the Business niche first so Tracer knows what to suggest.")).toBeVisible();
+    expect(within(region).getByRole("link", { name: "Business settings" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/business");
+    expect(within(region).getByRole("checkbox", { name: "asphalt paving near me" })).toBeVisible();
+  });
+
   it("disables adding a Keyword at the 25 Keyword limit", () => {
     const keywords = Array.from({ length: 25 }, (_, index) => ({ id: `keyword-${index}`, phrase: `phrase ${index}`, weight: 1, createdAt: "2026-10-19T00:00:00.000Z" }));
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords }} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords, suggestions: null }} />);
     const region = screen.getByRole("region", { name: "Keywords" });
     expect(within(region).getByText("25 of 25 Keywords")).toBeVisible();
     expect(within(region).getByRole("button", { name: "Add Keyword" })).toBeDisabled();
@@ -549,7 +618,7 @@ describe("WorkspaceSettingsView Domain renewal, Business, and Deal", () => {
       return new Response(JSON.stringify({}), { status: 404 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={{ ...linkedSite, domain: { registrar: null, renewalCents: null, renewsOn: null } }} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] }} initialDeal={null} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={{ ...linkedSite, domain: { registrar: null, renewalCents: null, renewsOn: null } }} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: null }} initialDeal={null} />);
     const region = screen.getByRole("region", { name: "Domain renewal" });
     fireEvent.change(within(region).getByLabelText("Registrar"), { target: { value: "Porkbun" } });
     fireEvent.change(within(region).getByLabelText("Annual price"), { target: { value: "12.99" } });

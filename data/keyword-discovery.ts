@@ -139,6 +139,12 @@ export function parseProposals(text: string): string[] {
   return phrases;
 }
 
+/** The stored set less any phrase that is now a live Keyword, so a suggestion disappears once it is tracked. */
+export function withoutTrackedPhrases(set: KeywordSuggestionSet, trackedPhrases: Iterable<string>): KeywordSuggestionSet {
+  const tracked = new Set([...trackedPhrases].map((phrase) => phrase.toLowerCase()));
+  return { suggestedAt: set.suggestedAt, suggestions: set.suggestions.filter((suggestion) => !tracked.has(suggestion.phrase)) };
+}
+
 function rank(suggestions: KeywordSuggestion[]): KeywordSuggestion[] {
   return [...suggestions].sort((a, b) => b.monthlyVolume - a.monthlyVolume || a.phrase.localeCompare(b.phrase));
 }
@@ -166,15 +172,11 @@ export function createKeywordDiscovery(options: KeywordDiscoveryOptions): Keywor
     return new Set(result.rows.map((row) => row.phrase.toLowerCase()));
   }
 
-  function withoutTracked(set: KeywordSuggestionSet, tracked: Set<string>): KeywordSuggestionSet {
-    return { suggestedAt: set.suggestedAt, suggestions: set.suggestions.filter((suggestion) => !tracked.has(suggestion.phrase)) };
-  }
-
   return {
     async suggest(siteId, suggestOptions = {}) {
       const site = await requireSite(siteId);
       const tracked = await livePhrases(siteId);
-      if (site.keyword_suggestions && !suggestOptions.refresh) return withoutTracked(site.keyword_suggestions, tracked);
+      if (site.keyword_suggestions && !suggestOptions.refresh) return withoutTrackedPhrases(site.keyword_suggestions, tracked);
       if (!site.niche) throw new KeywordDiscoveryError("business_niche_missing");
 
       const response = await options.responder.respond(keywordDiscoveryRequest({

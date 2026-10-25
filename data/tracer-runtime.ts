@@ -58,6 +58,8 @@ import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
 import { type ProviderConfiguration } from "@/data/provider-health";
 import type { RecordingProcessing } from "@/data/recording";
 import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId } from "@/data/recording-processing";
+import type { StructuredResponder } from "@/data/openai-client";
+import { createRuntimeStructuredResponder } from "@/data/openai-runtime";
 import { createRuntimeReportGeneration } from "@/data/report-generation-runtime";
 import type { ReportGeneration } from "@/data/report-jobs";
 import {
@@ -98,6 +100,8 @@ export interface TracerRuntime {
   recordingLeadAssessment: RecordingProcessing | undefined;
   recordingBucket: R2Bucket | undefined;
   reportGeneration: ReportGeneration | undefined;
+  /** Structured output for request-time OpenAI use such as Suggest Keywords; absent without a key. */
+  openai: StructuredResponder | undefined;
 }
 
 function requiredBinding(bindings: AuthBindings, name: keyof AuthBindings): string {
@@ -240,6 +244,7 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
       recordingLeadAssessment: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingLeadAssessmentTaskId }) : undefined,
       recordingBucket: bindings.R2,
       reportGeneration: createRuntimeReportGeneration(triggerSecretKey),
+      openai: createRuntimeStructuredResponder(bindings.OPENAI_API_KEY ?? process.env.OPENAI_API_KEY),
     };
     return {
       runtime,

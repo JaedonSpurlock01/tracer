@@ -36,6 +36,7 @@ export default defineConfig({
       E2E_TWILIO_FAKE: "true",
       E2E_CLOUDFLARE_FAKE: "true",
       E2E_DATAFORSEO_FAKE: "true",
+      E2E_OPENAI_FAKE: "true",
       E2E_TRIGGER_FAKE: "true",
       NODE_ENV: "development",
       DATABASE_MIGRATION_URL: "postgresql://postgres:postgres@127.0.0.1:5433/tracer_e2e",
