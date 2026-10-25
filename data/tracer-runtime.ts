@@ -26,12 +26,13 @@
  *  The request pool holds up to six connections so queries issued together
  *  run together instead of queueing behind one socket; Hyperdrive owns the
  *  real pooling. It gives up on a connection after 10 seconds and a
- *  query after 30, because neither node-postgres nor the Cloudflare socket
- *  adapter has a default timeout and a stalled Hyperdrive connection would
- *  otherwise hang the page indefinitely. Closing the pool is never
- *  awaited by the response: a connection the database already dropped
- *  can leave the Cloudflare socket's close unanswered, so the close runs
- *  in the background with a two-second deadline. Every request writes one
+ *  query after 30, and inside the Worker it drives RequestSocket instead
+ *  of pg-cloudflare: pg reports a connect timeout only through the
+ *  socket's close, and pg-cloudflare's close waits for Hyperdrive to
+ *  confirm, which a stalled connection never does, so Production hung
+ *  for minutes with those timeouts in place. Closing the pool is never
+ *  awaited by the response and keeps a two-second deadline as a
+ *  backstop. Every request writes one
  *  tracer.request log line with its Cloudflare ray, duration, outcome,
  *  and database timing so a slow or failed page can be read back from
  *  Workers Logs instead of guessed at.
@@ -48,7 +49,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
+import { isCloudflareWorker, loadCloudflareSockets, RequestSocket } from "@/data/request-socket";
 
 import { logRequest, observePool } from "@/data/request-log";
 
@@ -128,8 +130,9 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
  * re-emits an idle client's error on the pool, where a missing listener
  * surfaced as an unhandledRejection on every Production request.
  */
-export function createRequestPool(connectionString: string): Pool {
-  const pool = new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+export function createRequestPool(connectionString: string, sockets = isCloudflareWorker() ? loadCloudflareSockets : undefined): Pool {
+  const stream = sockets ? (config: { ssl?: unknown }) => new RequestSocket(Boolean(config.ssl), sockets) : undefined;
+  const pool = new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000, stream: stream as PoolConfig["stream"] });
   pool.on("error", (error) => {
     if (!(pool as unknown as { ending?: boolean }).ending) console.error("request pool connection failed", error);
   });
