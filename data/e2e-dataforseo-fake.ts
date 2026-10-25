@@ -25,7 +25,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { DataForSeoClient, DataForSeoSerpItem } from "@/data/dataforseo-client";
+import type { DataForSeoClient, DataForSeoLocation, DataForSeoSerpItem } from "@/data/dataforseo-client";
 
 function cityHostname(locationName: string): string {
   const city = locationName.split(",")[0]?.trim().toLowerCase().replace(/[^a-z]/g, "") ?? "";
@@ -38,8 +38,19 @@ export function fakePosition(phrase: string): number | null {
   return (phrase.length % 12) + 2;
 }
 
+export const fakeLocations: DataForSeoLocation[] = [
+  { code: 2840, name: "United States", kind: "Country" },
+  { code: 21146, name: "Idaho,United States", kind: "State" },
+  { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
+  { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" },
+  { code: 1026339, name: "St. George,Utah,United States", kind: "City" },
+];
+
 export function createE2eDataForSeoFake(): DataForSeoClient {
   return {
+    async listLocations() {
+      return fakeLocations;
+    },
     async verify(credential) {
       return { login: credential.login };
     },
@@ -48,10 +59,10 @@ export function createE2eDataForSeoFake(): DataForSeoClient {
       const items: DataForSeoSerpItem[] = [];
       for (let rank = 1; rank <= 20; rank += 1) {
         if (rank === position) {
-          const hostname = cityHostname(query.locationName);
-          items.push({ position: rank, domain: hostname, url: `https://${hostname}/`, title: `${query.keyword} | ${hostname}` });
+          const hostname = cityHostname(query.locationName ?? fakeLocations.find((location) => location.code === query.locationCode)?.name ?? "");
+          items.push({ position: rank, type: rank === 1 ? "local_pack" : "organic", domain: hostname, url: `https://${hostname}/`, title: `${query.keyword} | ${hostname}` });
         } else {
-          items.push({ position: rank, domain: `competitor-${rank}.example`, url: `https://competitor-${rank}.example/`, title: `Competitor ${rank}` });
+          items.push({ position: rank, type: "organic", domain: `competitor-${rank}.example`, url: `https://competitor-${rank}.example/`, title: `Competitor ${rank}` });
         }
       }
       return { items };

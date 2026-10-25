@@ -43,23 +43,29 @@ const queries: { login: string; query: DataForSeoSerpQuery }[] = [];
 const failing = new Set<string>();
 
 function competitor(position: number): DataForSeoSerpItem {
-  return { position, domain: `competitor-${position}.example`, url: `https://competitor-${position}.example/`, title: `Competitor ${position}` };
+  return { position, type: "organic", domain: `competitor-${position}.example`, url: `https://competitor-${position}.example/`, title: `Competitor ${position}` };
 }
 
 const results: Record<string, DataForSeoSerpItem[]> = {
-  "asphalt paving pocatello": [competitor(1), competitor(2), { position: 4, domain: "www.pocatelloasphaltpaving.com", url: "https://www.pocatelloasphaltpaving.com/services", title: "Services" }, competitor(5)],
+  "asphalt paving pocatello": [competitor(1), competitor(2), { position: 4, type: "organic", domain: "www.pocatelloasphaltpaving.com", url: "https://www.pocatelloasphaltpaving.com/services", title: "Services" }, competitor(5)],
   "driveway paving pocatello": [competitor(1), competitor(2), competitor(3)],
-  "paving contractor pocatello": Array.from({ length: 14 }, (_, index) => (index === 11 ? { position: 12, domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Home" } : competitor(index + 1))),
-  "asphalt paving st george": [{ position: 1, domain: "asphaltpavingstgeorge.com", url: "https://asphaltpavingstgeorge.com/", title: "St George Asphalt" }],
+  "paving contractor pocatello": Array.from({ length: 14 }, (_, index): DataForSeoSerpItem =>
+    index === 2
+      ? { position: 3, type: "local_pack", domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" }
+      : index === 11
+        ? { position: 12, type: "organic", domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Home" }
+        : competitor(index + 1)),
+  "asphalt paving st george": [{ position: 1, type: "organic", domain: "asphaltpavingstgeorge.com", url: "https://asphaltpavingstgeorge.com/", title: "St George Asphalt" }],
 };
 
 const dataforseo: DataForSeoClient = {
   async verify(credential) { return { login: credential.login }; },
   async serp(credential, query) {
     queries.push({ login: credential.login, query });
-    if (failing.has(query.keyword)) throw new DataForSeoClientError("provider_unavailable", 503);
+    if (failing.has(query.keyword)) throw new DataForSeoClientError("task_failed", 40501, "Invalid Field: 'location_name'.");
     return { items: results[query.keyword] ?? [] };
   },
+  async listLocations() { throw new Error("not implemented"); },
 };
 
 function utcDay(at: Date): string {
@@ -70,6 +76,12 @@ async function check(now: Date, organizationId?: string) {
   return checkRankings({ pool: runtime!, dataforseo, masterKey, now, organizationId });
 }
 
+async function rankStatus(keywordId: string) {
+  return (await owner!.query<{ day: string; check_status: string; failure_reason: string | null; matched_type: string | null }>(
+    "select day::text as day, check_status, failure_reason, matched_type from keyword_rank_day where site_keyword_id = $1 order by day",
+    [keywordId],
+  )).rows;
+}
 async function rankDays(keywordId: string) {
   return (await owner!.query<{ day: string; position: number | null; ranking_url: string | null; top_results: unknown[]; checked_at: Date }>(
     "select day::text as day, position, ranking_url, top_results, checked_at from keyword_rank_day where site_keyword_id = $1 order by day",
@@ -108,6 +120,7 @@ beforeAll(async () => {
        ('site-unlinked', 'fleet', 'paving-unlinked', 'unlinked.example', 'zone-4', 'Boise', 'Idaho', 'United States', now(), now(), now(), now()),
        ('site-solo', 'solo', 'solar', 'carsoncitysolar.com', 'zone-5', 'Carson City', 'Nevada', 'United States', now(), now(), now(), now())`,
   );
+  await owner.query("update site set service_area_location_code = 1026339, service_area_location_name = 'St. George,Utah,United States' where id = 'site-st-george'");
   await owner.query(
     `insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values
        ('link-1', 'fleet', 'site-pocatello', 'north', now(), 'fleet-operator'),
@@ -146,11 +159,15 @@ describe.sequential("Rank check", () => {
     expect(queries.map((entry) => entry.query.keyword).sort()).toEqual(["asphalt paving pocatello", "asphalt paving st george", "driveway paving pocatello", "paving contractor pocatello"]);
     expect(queries[0]).toMatchObject({ login: "fleet@example.com", query: { languageCode: "en", depth: 100 } });
     expect(queries.find((entry) => entry.query.keyword === "asphalt paving pocatello")?.query.locationName).toBe("Pocatello,Idaho,United States");
-    expect(queries.find((entry) => entry.query.keyword === "asphalt paving st george")?.query.locationName).toBe("St. George,Utah,United States");
+    expect(queries.find((entry) => entry.query.keyword === "asphalt paving st george")?.query).toMatchObject({ locationCode: 1026339 });
+    expect(queries.find((entry) => entry.query.keyword === "asphalt paving st george")?.query.locationName).toBeUndefined();
     expect(await rankDays("kw-paving")).toEqual([{ day: utcDay(firstRun), position: 4, ranking_url: "https://www.pocatelloasphaltpaving.com/services", top_results: results["asphalt paving pocatello"], checked_at: firstRun }]);
+    expect(await rankStatus("kw-paving")).toEqual([{ day: utcDay(firstRun), check_status: "checked", failure_reason: null, matched_type: "organic" }]);
     expect(await rankDays("kw-driveway")).toEqual([{ day: utcDay(firstRun), position: null, ranking_url: null, top_results: results["driveway paving pocatello"], checked_at: firstRun }]);
+    expect(await rankStatus("kw-driveway")).toEqual([{ day: utcDay(firstRun), check_status: "checked", failure_reason: null, matched_type: null }]);
     const contractor = await rankDays("kw-contractor");
-    expect(contractor[0]).toMatchObject({ position: 12, ranking_url: "https://pocatelloasphaltpaving.com/" });
+    expect(contractor[0]).toMatchObject({ position: 3, ranking_url: "https://pocatelloasphaltpaving.com/" });
+    expect(await rankStatus("kw-contractor")).toEqual([{ day: utcDay(firstRun), check_status: "checked", failure_reason: null, matched_type: "local_pack" }]);
     expect(contractor[0].top_results).toEqual(results["paving contractor pocatello"].slice(0, 10));
     expect(await rankDays("kw-st-george")).toEqual([{ day: utcDay(firstRun), position: 1, ranking_url: "https://asphaltpavingstgeorge.com/", top_results: results["asphalt paving st george"], checked_at: firstRun }]);
     for (const skipped of ["kw-removed", "kw-no-area", "kw-unlinked", "kw-solo"]) expect(await rankDays(skipped), skipped).toEqual([]);
@@ -170,18 +187,20 @@ describe.sequential("Rank check", () => {
     expect(await rankDays("kw-paving")).toHaveLength(1);
   });
 
-  it("records a provider failure on the connection, counts it, and keeps checking the other Keywords", async () => {
+  it("records a failed check on the rank day with the provider's reason and on the connection, keeps checking the other Keywords, and retries the failed Keyword", async () => {
     queries.length = 0;
     failing.add("driveway paving pocatello");
     expect(await check(nextDay)).toEqual({ sites: 2, keywords: 5, checked: 4, failed: 1 });
-    expect(await rankDays("kw-driveway")).toHaveLength(1);
+    expect(await rankDays("kw-driveway")).toHaveLength(2);
+    expect((await rankStatus("kw-driveway")).at(-1)).toEqual({ day: utcDay(nextDay), check_status: "failed", failure_reason: "DataForSEO rejected the task (40501): Invalid Field: 'location_name'.", matched_type: null });
     expect(await rankDays("kw-paving")).toHaveLength(2);
     expect(await rankDays("kw-st-george")).toHaveLength(2);
     const connection = (await owner!.query("select lookups_this_month, last_failure_detail, last_checked_at from dataforseo_connection where organization_id = 'fleet'")).rows[0];
-    expect(connection).toEqual({ lookups_this_month: 9, last_failure_detail: expect.stringContaining("DataForSEO"), last_checked_at: nextDay });
+    expect(connection).toEqual({ lookups_this_month: 9, last_failure_detail: "DataForSEO rejected the task (40501): Invalid Field: 'location_name'.", last_checked_at: nextDay });
     failing.clear();
     expect(await check(nextDay)).toEqual({ sites: 2, keywords: 5, checked: 1, failed: 0 });
     expect(await rankDays("kw-driveway")).toHaveLength(2);
+    expect((await rankStatus("kw-driveway")).at(-1)).toEqual({ day: utcDay(nextDay), check_status: "checked", failure_reason: null, matched_type: null });
   });
 
   it("stops cleanly for an Organization without a DataForSEO connection", async () => {

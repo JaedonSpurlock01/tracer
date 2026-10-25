@@ -33,10 +33,13 @@ import type { Pool, PoolClient } from "pg";
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { canManageWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
 
+/** Where a Site's business serves: a DataForSEO location picked by the Operator, with its name split for display. */
 export interface ServiceArea {
   city: string | null;
   region: string | null;
   country: string | null;
+  locationCode: number | null;
+  locationName: string | null;
 }
 
 export interface SiteKeywordRecord {
@@ -60,23 +63,38 @@ export interface SiteKeywords {
   add(siteId: string, input: { phrase: unknown; weight?: unknown }): Promise<SiteKeywordRecord>;
   update(siteId: string, keywordId: string, input: { weight: unknown }): Promise<SiteKeywordRecord>;
   remove(siteId: string, keywordId: string): Promise<void>;
-  setServiceArea(siteId: string, input: { city: unknown; region: unknown; country: unknown }): Promise<ServiceArea>;
+  setServiceArea(siteId: string, input: { locationCode: unknown; locationName: unknown }): Promise<ServiceArea>;
 }
 
 export const siteKeywordLimit = 25;
 export const defaultServiceAreaCountry = "United States";
 const phraseMaxLength = 120;
-const serviceAreaMaxLength = 80;
+const locationNameMaxLength = 160;
 
 type KeywordRow = { id: string; phrase: string; weight: number; created_at: Date };
-type ServiceAreaRow = { service_area_city: string | null; service_area_region: string | null; service_area_country: string | null };
+type ServiceAreaRow = { service_area_city: string | null; service_area_region: string | null; service_area_country: string | null; service_area_location_code: number | null; service_area_location_name: string | null };
+export const serviceAreaColumns = "service_area_city, service_area_region, service_area_country, service_area_location_code, service_area_location_name";
 
 function toKeyword(row: KeywordRow): SiteKeywordRecord {
   return { id: row.id, phrase: row.phrase, weight: row.weight, createdAt: row.created_at.toISOString() };
 }
 
-function toServiceArea(row: ServiceAreaRow): ServiceArea {
-  return { city: row.service_area_city, region: row.service_area_region, country: row.service_area_country ?? defaultServiceAreaCountry };
+export function toServiceArea(row: ServiceAreaRow): ServiceArea {
+  return {
+    city: row.service_area_city,
+    region: row.service_area_region,
+    country: row.service_area_country ?? defaultServiceAreaCountry,
+    locationCode: row.service_area_location_code,
+    locationName: row.service_area_location_name,
+  };
+}
+
+/** DataForSEO names a location "City,Region,Country"; the parts keep the display and the legacy columns in step. */
+export function splitLocationName(locationName: string): { city: string | null; region: string | null; country: string } {
+  const parts = locationName.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 1) return { city: null, region: null, country: parts[0] };
+  if (parts.length === 2) return { city: null, region: parts[0], country: parts[1] };
+  return { city: parts[0], region: parts.slice(1, -1).join(", "), country: parts[parts.length - 1] };
 }
 
 function parseWeight(value: unknown, fallback?: number): number {
@@ -92,12 +110,12 @@ function parsePhrase(value: unknown): string {
   return phrase;
 }
 
-function parseAreaValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "string") throw new SiteKeywordsError("invalid_input");
-  const trimmed = value.trim();
-  if (trimmed.length > serviceAreaMaxLength) throw new SiteKeywordsError("invalid_input");
-  return trimmed || null;
+function parseLocation(input: { locationCode: unknown; locationName: unknown }): { code: number; name: string } {
+  if (typeof input.locationCode !== "number" || !Number.isInteger(input.locationCode) || input.locationCode <= 0) throw new SiteKeywordsError("invalid_input");
+  if (typeof input.locationName !== "string") throw new SiteKeywordsError("invalid_input");
+  const name = input.locationName.trim();
+  if (!name || name.length > locationNameMaxLength) throw new SiteKeywordsError("invalid_input");
+  return { code: input.locationCode, name };
 }
 
 export function readableSiteSql(actor: Actor, siteAlias: string, scope: unknown[]): string {
@@ -150,7 +168,7 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
     async list(siteId) {
       const scope: unknown[] = [siteId];
       const site = await pool.query<ServiceAreaRow>(
-        `select s.service_area_city, s.service_area_region, s.service_area_country from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
+        `select s.service_area_city, s.service_area_region, s.service_area_country, s.service_area_location_code, s.service_area_location_name from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
         scope,
       );
       if (!site.rows[0]) throw new SiteKeywordsError("not_found");
@@ -197,13 +215,12 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
 
     async setServiceArea(siteId, input) {
       await requireOperatorSite(pool, siteId);
-      const city = parseAreaValue(input.city);
-      const region = parseAreaValue(input.region);
-      const country = parseAreaValue(input.country) ?? defaultServiceAreaCountry;
+      const location = parseLocation(input);
+      const parts = splitLocationName(location.name);
       const updated = await pool.query<ServiceAreaRow>(
-        `update site set service_area_city = $2, service_area_region = $3, service_area_country = $4, updated_at = $5
-          where id = $1 and organization_id = $6 returning service_area_city, service_area_region, service_area_country`,
-        [siteId, city, region, country, new Date(), organizationId],
+        `update site set service_area_city = $2, service_area_region = $3, service_area_country = $4, service_area_location_code = $5, service_area_location_name = $6, updated_at = $7
+          where id = $1 and organization_id = $8 returning ${serviceAreaColumns}`,
+        [siteId, parts.city, parts.region, parts.country, location.code, location.name, new Date(), organizationId],
       );
       if (!updated.rows[0]) throw new SiteKeywordsError("not_found");
       return toServiceArea(updated.rows[0]);

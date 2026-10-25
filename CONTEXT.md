@@ -101,7 +101,7 @@ The derived operational condition of a Site: Healthy, Warning, Down, or Unknown,
 _Avoid_: Workspace State, Integration health
 
 **Service Area**:
-The city, region, and country from which a Site's Keywords are checked, representing where its business serves.
+The Google location a Site's Keywords are checked from, picked by an Operator from DataForSEO's own location list and stored by its code and name; its city, region, and country are read from that name.
 _Avoid_: Address, location
 
 **Keyword**:

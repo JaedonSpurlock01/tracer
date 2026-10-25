@@ -6,16 +6,21 @@
  * @description
  *  For every Organization with a DataForSEO connection, for every Site
  *  that is not removed, has an open Site Link, and has a Service Area,
- *  looks up each live Keyword that has no rank day for today, finds the
- *  first organic result on the Site's primary hostname with or without
- *  www, stores the position, ranking URL, and top ten results into
- *  `keyword_rank_day`, counts the lookup on the connection, and stamps
- *  the connection's last check time.
+ *  looks up each live Keyword without a successful rank day for today,
+ *  finds the best-placed result on the Site's primary hostname with or
+ *  without www across the organic list, the local pack, and the map, and
+ *  stores the position, ranking URL, matched SERP feature, and top ten
+ *  results into `keyword_rank_day`, counts the lookup on the connection,
+ *  and stamps the connection's last check time. A lookup that fails is
+ *  stored on the day's row as a failed check with the provider's reason.
  *
  * @remarks
- *  The unique index on Keyword and day plus the "no row for today" filter
- *  make a rerun idempotent: a Keyword is never queried twice in a day,
- *  and a Keyword added later in the day is picked up by the next run.
+ *  The unique index on Keyword and day plus the "no successful row for
+ *  today" filter make a rerun idempotent: a Keyword is never queried twice
+ *  in a day once it succeeded, a failed Keyword is retried by the next run,
+ *  and a Keyword added later in the day is picked up by the next run. The
+ *  Service Area's DataForSEO location code is sent when the Operator picked
+ *  one; the concatenated name remains for Sites set before the picker.
  *  One Keyword's failure is counted and never stops the others; provider
  *  errors go through the connection's credential wrapper so the
  *  Integrations page shows the failure. The month's lookups reset when
@@ -36,6 +41,7 @@ import type { Pool } from "pg";
 
 import type { DataForSeoClient, DataForSeoSerpItem } from "@/data/dataforseo-client";
 import { createDataForSeoConnection, type DataForSeoConnection } from "@/data/dataforseo-connection";
+import { IntegrationsError } from "@/data/integrations-error";
 
 export interface RankCheckDeps {
   pool: Pool;
@@ -60,6 +66,7 @@ type KeywordRow = {
   site_id: string;
   primary_hostname: string;
   location_name: string;
+  location_code: number | null;
   checked_today: boolean;
 };
 
@@ -75,22 +82,40 @@ function bareHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, "");
 }
 
-export function siteRank(items: DataForSeoSerpItem[], primaryHostname: string): { position: number | null; rankingUrl: string | null } {
+export function siteRank(items: DataForSeoSerpItem[], primaryHostname: string): { position: number | null; rankingUrl: string | null; matchedType: string | null } {
   const target = bareHostname(primaryHostname);
-  const match = items.find((item) => bareHostname(item.domain) === target);
-  return match ? { position: match.position, rankingUrl: match.url } : { position: null, rankingUrl: null };
+  const match = items
+    .filter((item) => bareHostname(item.domain) === target)
+    .sort((left, right) => left.position - right.position)[0];
+  return match ? { position: match.position, rankingUrl: match.url, matchedType: match.type } : { position: null, rankingUrl: null, matchedType: null };
 }
 
 async function checkKeyword(deps: RankCheckDeps, connection: DataForSeoConnection, keyword: KeywordRow): Promise<void> {
+  const location = keyword.location_code !== null ? { locationCode: keyword.location_code } : { locationName: keyword.location_name };
   const { items } = await connection.withDataForSeoCredential((credential) =>
-    deps.dataforseo.serp(credential, { keyword: keyword.phrase, locationName: keyword.location_name, languageCode: "en", depth: 100 }),
+    deps.dataforseo.serp(credential, { keyword: keyword.phrase, ...location, languageCode: "en", depth: 100 }),
   );
   const rank = siteRank(items, keyword.primary_hostname);
   await deps.pool.query(
-    `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at)
-     values ($1, $2, $3::date, $4, $5, $6::jsonb, $7)
-     on conflict (site_keyword_id, day) do nothing`,
-    [randomUUID(), keyword.id, utcDay(deps.now), rank.position, rank.rankingUrl, JSON.stringify(items.slice(0, rankCheckTopResults)), deps.now],
+    `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, check_status, failure_reason, matched_type)
+     values ($1, $2, $3::date, $4, $5, $6::jsonb, $7, 'checked', null, $8)
+     on conflict (site_keyword_id, day) do update set
+       position = excluded.position, ranking_url = excluded.ranking_url, top_results = excluded.top_results, checked_at = excluded.checked_at,
+       check_status = 'checked', failure_reason = null, matched_type = excluded.matched_type
+     where keyword_rank_day.check_status = 'failed'`,
+    [randomUUID(), keyword.id, utcDay(deps.now), rank.position, rank.rankingUrl, JSON.stringify(items.slice(0, rankCheckTopResults)), deps.now, rank.matchedType],
+  );
+}
+
+/** Keeps the failed check on the day's row so the Site page can say why; a later run the same day replaces it. */
+async function recordFailedCheck(deps: RankCheckDeps, keyword: KeywordRow, error: unknown): Promise<void> {
+  const reason = error instanceof IntegrationsError ? (error.detail ?? error.code) : error instanceof Error ? error.message : "Rank check failed";
+  await deps.pool.query(
+    `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, check_status, failure_reason, matched_type)
+     values ($1, $2, $3::date, null, null, '[]'::jsonb, $4, 'failed', $5, null)
+     on conflict (site_keyword_id, day) do update set checked_at = excluded.checked_at, failure_reason = excluded.failure_reason
+     where keyword_rank_day.check_status = 'failed'`,
+    [randomUUID(), keyword.id, utcDay(deps.now), deps.now, reason.slice(0, 300)],
   );
 }
 
@@ -108,12 +133,13 @@ async function checkOrganization(deps: RankCheckDeps, organizationId: string, re
   const connection = createDataForSeoConnection({ pool: deps.pool, organizationId, dataforseo: deps.dataforseo, masterKey: deps.masterKey });
   const keywords = await deps.pool.query<KeywordRow>(
     `select k.id, k.phrase, s.id as site_id, s.primary_hostname,
-            concat_ws(',', s.service_area_city, s.service_area_region, s.service_area_country) as location_name,
-            exists (select 1 from keyword_rank_day r where r.site_keyword_id = k.id and r.day = $2::date) as checked_today
+            coalesce(s.service_area_location_name, concat_ws(',', s.service_area_city, s.service_area_region, s.service_area_country)) as location_name,
+            s.service_area_location_code as location_code,
+            exists (select 1 from keyword_rank_day r where r.site_keyword_id = k.id and r.day = $2::date and r.check_status = 'checked') as checked_today
        from site_keyword k
        join site s on s.id = k.site_id
       where s.organization_id = $1 and s.removed_at is null and k.removed_at is null
-        and s.service_area_city is not null and s.service_area_region is not null and s.service_area_country is not null
+        and (s.service_area_location_code is not null or (s.service_area_city is not null and s.service_area_region is not null and s.service_area_country is not null))
         and exists (select 1 from site_link l where l.site_id = s.id and l.ended_at is null)
       order by s.primary_hostname, k.created_at, k.id`,
     [organizationId, utcDay(deps.now)],
@@ -128,6 +154,7 @@ async function checkOrganization(deps: RankCheckDeps, organizationId: string, re
       result.checked += 1;
     } catch (error) {
       result.failed += 1;
+      await recordFailedCheck(deps, keyword, error);
       console.error(`Rank check failed for ${keyword.primary_hostname}: ${keyword.phrase}`, error);
     }
   }

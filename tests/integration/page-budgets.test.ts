@@ -75,7 +75,7 @@ const unavailable = () => {
 };
 const twilio: TwilioClient = { fetchAccount: unavailable, listIncomingPhoneNumbers: unavailable, fetchIncomingPhoneNumber: unavailable, updateIncomingPhoneNumberVoice: unavailable };
 const cloudflare: CloudflareClient = { verifyToken: unavailable, listSites: unavailable, listDeployments: unavailable, fetchDailyTraffic: unavailable, captureScreenshot: unavailable };
-const dataforseo: DataForSeoClient = { verify: unavailable, serp: unavailable };
+const dataforseo: DataForSeoClient = { verify: unavailable, serp: unavailable, listLocations: unavailable };
 const providerConfiguration: ProviderConfiguration = { twilioMasterKey: true, hyperdrive: true, email: true, emailFrom: "auth@example.com", emailAllowlistCount: 1, r2: false, r2Bucket: null, openai: false, triggerdev: false };
 
 /**

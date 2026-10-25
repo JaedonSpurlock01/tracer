@@ -124,12 +124,12 @@ const search: SiteSearch = {
   score: 42,
   trend: Array.from({ length: 30 }, (_, index) => ({ day: new Date(Date.UTC(2026, 9, 18) - (29 - index) * 86_400_000).toISOString().slice(0, 10), score: index < 5 ? null : 61 + index })),
   keywords: [
-    { id: "keyword-1", phrase: "asphalt paving pocatello", weight: 5, position: 2, change7d: 3, rankingUrl: "https://pocatelloasphaltpaving.com/", topResults: [{ position: 1, domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving" }], checkedAt: "2026-10-18T06:41:00.000Z" },
-    { id: "keyword-2", phrase: "driveway paving pocatello", weight: 1, position: 14, change7d: -2, rankingUrl: "https://pocatelloasphaltpaving.com/driveways", topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
-    { id: "keyword-3", phrase: "paving contractor pocatello", weight: 2, position: 7, change7d: 0, rankingUrl: "https://pocatelloasphaltpaving.com/", topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
-    { id: "keyword-4", phrase: "sealcoating pocatello", weight: 1, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
+    { id: "keyword-1", phrase: "asphalt paving pocatello", weight: 5, status: "ranking", position: 2, change7d: 3, rankingUrl: "https://pocatelloasphaltpaving.com/", matchedType: "local_pack", failureReason: null, topResults: [{ position: 1, type: "organic", domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving" }], checkedAt: "2026-10-18T06:41:00.000Z" },
+    { id: "keyword-2", phrase: "driveway paving pocatello", weight: 1, status: "ranking", position: 14, change7d: -2, rankingUrl: "https://pocatelloasphaltpaving.com/driveways", matchedType: "organic", failureReason: null, topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
+    { id: "keyword-3", phrase: "paving contractor pocatello", weight: 2, status: "ranking", position: 7, change7d: 0, rankingUrl: "https://pocatelloasphaltpaving.com/", matchedType: "organic", failureReason: null, topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
+    { id: "keyword-4", phrase: "sealcoating pocatello", weight: 1, status: "not_ranking", position: null, change7d: null, rankingUrl: null, matchedType: null, failureReason: null, topResults: [], checkedAt: "2026-10-18T06:41:00.000Z" },
   ],
-  serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" },
+  serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" },
   checkedAt: "2026-10-18T06:41:00.000Z",
 };
 
@@ -255,7 +255,7 @@ describe("SiteView", () => {
     const table = within(panel).getByRole("table", { name: "Keywords" });
     const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
     expect(rows).toEqual([
-      ["asphalt paving pocatello", "5", "2", "+3"],
+      ["asphalt paving pocatelloLocal pack", "5", "2", "+3"],
       ["driveway paving pocatello", "1", "14", "-2"],
       ["paving contractor pocatello", "2", "7", "0"],
       ["sealcoating pocatello", "1", "Not ranking", "-"],
@@ -264,7 +264,16 @@ describe("SiteView", () => {
     expect(within(table).getByText("-2")).toBeVisible();
     expect(within(table).getByText("0")).toHaveClass("text-muted-foreground");
     expect(within(table).getByText("Not ranking")).toHaveClass("text-muted-foreground");
+    expect(within(table).getByRole("row", { name: /asphalt paving pocatello/ })).toHaveTextContent("Local pack");
     expect(within(table).getByRole("link", { name: "asphalt paving pocatello" })).toHaveAttribute("href", "https://pocatelloasphaltpaving.com/");
+  });
+
+  it("says a Keyword's check failed and why, apart from Not ranking", () => {
+    const failed = { ...search, keywords: [{ ...search.keywords[3], status: "check_failed" as const, failureReason: "DataForSEO rejected the task (40501): Invalid Field: 'location_name'." }] };
+    renderView({ search: failed });
+    const row = within(screen.getByRole("table", { name: "Keywords" })).getByRole("row", { name: /sealcoating pocatello/ });
+    expect(within(row).getByText("Check failed")).toHaveAttribute("title", "DataForSEO rejected the task (40501): Invalid Field: 'location_name'.");
+    expect(within(row).queryByText("Not ranking")).not.toBeInTheDocument();
   });
 
   it("shows No rankings yet with a Keywords link for Operators before any check and a Retry when Search is unavailable", () => {
@@ -353,6 +362,12 @@ describe("SiteView", () => {
     renderView({ site: { ...site, latestPreview: null } });
     expect(screen.getByText("Preview pending")).toBeVisible();
     expect(screen.queryByRole("img", { name: /Preview of/ })).not.toBeInTheDocument();
+  });
+
+  it("says which sync stage failed and why when no preview exists", () => {
+    renderView({ site: { ...site, latestPreview: null, lastSync: { at: "2026-10-24T22:17:00.000Z", stage: "deployments", error: "The stored credential was sealed under a different master key. Re-enter it or disconnect." } } });
+    expect(screen.getByText("Preview failed at deployments: The stored credential was sealed under a different master key. Re-enter it or disconnect.")).toBeVisible();
+    expect(screen.queryByText("Preview pending")).not.toBeInTheDocument();
   });
 
   it("warns when Cloudflare is disconnected and links Operators to Integrations", () => {

@@ -230,7 +230,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(28);
+  expect(Number(result.rows[0].count)).toBe(29);
 }, 30_000);
 
 it("enforces Transcript, immutable Lead Assessment, and one current Lead Review per Call invariants", async () => {

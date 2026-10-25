@@ -59,6 +59,7 @@ export interface SiteResponse {
   health: SiteHealth;
   healthReason?: string | null;
   lastSyncedAt: string | null;
+  lastSync?: { at: string; stage: string | null; error: string | null } | null;
   linkedAt: string;
   scriptName?: string;
   liveVersionId?: string | null;

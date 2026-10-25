@@ -77,6 +77,7 @@ export async function provisionRuntimeRole(
       public.site_preview,
       public.site_keyword,
       public.keyword_rank_day,
+      public.search_location,
       public.deal,
       public.business
     TO ${runtimeRole}

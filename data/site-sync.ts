@@ -10,13 +10,19 @@
  *  and yesterday in UTC (or the last 30 days when the Site has no metric
  *  day yet), fetches the apex URL for an uptime check, captures a preview
  *  when the live deployment changed or the newest preview is older than a
- *  day, and finally stamps the connection's last sync time.
+ *  day, writes each Site's outcome on the Site (the sync time, and the
+ *  stage and reason when it failed), and stamps the connection's last sync
+ *  time only when at least one Site synced, so a run where every Site
+ *  failed never looks healthy.
  *
  * @remarks
  *  Every write is an upsert keyed by Site and day or version, so a rerun
  *  within the hour changes nothing but the synced time and adds one more
- *  check. One Site's failure is counted and never stops the others, and a
- *  discovery failure still syncs the Sites already stored. Provider errors
+ *  check. One Site's failure is counted, written on that Site, and never
+ *  stops the others, and a discovery failure still syncs the Sites already
+ *  stored. An unreadable credential fails each Site at its first stage and
+ *  is recorded on the connection, so the Integrations page and the Site
+ *  page both say so. Provider errors
  *  go through the connection's credential wrapper so the Integrations page
  *  shows the failure. The uptime check reads headers only, aborts after 10
  *  seconds, and records an unreachable host as a failed check with the
@@ -39,6 +45,7 @@ import type { Pool } from "pg";
 import { addCalendarDays } from "@/data/analytics-range";
 import type { CloudflareClient, CloudflareCredential, CloudflareDailyTraffic } from "@/data/cloudflare-client";
 import { createCloudflareConnection, type CloudflareConnection } from "@/data/cloudflare-connection";
+import { IntegrationsError } from "@/data/integrations-error";
 import { captureSitePreview, previewNeedsRefresh, type SitePreviewObjects } from "@/data/site-preview";
 
 export interface SiteSyncDeps {
@@ -145,13 +152,31 @@ async function refreshPreview(deps: SiteSyncDeps, siteId: string): Promise<void>
   await captureSitePreview({ pool: deps.pool, cloudflare: deps.cloudflare, objects: deps.objects, masterKey: deps.masterKey, siteId, now: deps.now });
 }
 
+export type SiteSyncStage = "deployments" | "traffic" | "check" | "preview";
+
+function failureReason(error: unknown): string {
+  if (error instanceof IntegrationsError) return (error.detail ?? error.code).slice(0, 300);
+  return (error instanceof Error ? error.message : "Sync failed").slice(0, 300);
+}
+
+/** Runs the four stages for one Site and writes the outcome on the Site: a clean sync, or the stage that failed and why. */
 async function syncSite(deps: SiteSyncDeps, connection: CloudflareConnection, site: SyncSiteRow): Promise<void> {
-  await connection.withCloudflareCredential(async (credential) => {
-    await recordDeployments(deps.pool, deps.cloudflare, credential, site, deps.now);
-    await recordTraffic(deps.pool, deps.cloudflare, credential, site, deps.now);
-  });
-  await recordCheck(deps.pool, deps.fetch ?? globalThis.fetch, site, deps.now);
-  await refreshPreview(deps, site.id);
+  let stage: SiteSyncStage = "deployments";
+  try {
+    await connection.withCloudflareCredential(async (credential) => {
+      await recordDeployments(deps.pool, deps.cloudflare, credential, site, deps.now);
+      stage = "traffic";
+      await recordTraffic(deps.pool, deps.cloudflare, credential, site, deps.now);
+    });
+    stage = "check";
+    await recordCheck(deps.pool, deps.fetch ?? globalThis.fetch, site, deps.now);
+    stage = "preview";
+    await refreshPreview(deps, site.id);
+    await deps.pool.query("update site set last_sync_at = $2, last_sync_stage = null, last_sync_error = null, updated_at = $2 where id = $1", [site.id, deps.now]);
+  } catch (error) {
+    await deps.pool.query("update site set last_sync_at = $2, last_sync_stage = $3, last_sync_error = $4, updated_at = $2 where id = $1", [site.id, deps.now, stage, failureReason(error)]);
+    throw error;
+  }
 }
 
 async function syncOrganization(deps: SiteSyncDeps, organizationId: string, result: SiteSyncResult): Promise<void> {
@@ -166,17 +191,21 @@ async function syncOrganization(deps: SiteSyncDeps, organizationId: string, resu
        from site s where s.organization_id = $1 and s.removed_at is null order by s.primary_hostname, s.id`,
     [organizationId],
   );
+  let synced = 0;
   for (const site of sites.rows) {
     result.sites += 1;
     try {
       await syncSite(deps, connection, site);
+      synced += 1;
       result.synced += 1;
     } catch (error) {
       result.failed += 1;
       console.error(`Site sync failed for ${site.primary_hostname}`, error);
     }
   }
-  await deps.pool.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
+  if (sites.rows.length === 0 || synced > 0) {
+    await deps.pool.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
+  }
 }
 
 export async function syncSites(deps: SiteSyncDeps): Promise<SiteSyncResult> {

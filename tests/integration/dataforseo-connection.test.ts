@@ -72,6 +72,7 @@ const fakeDataForSeo: DataForSeoClient = {
     return { login: credential.login };
   },
   async serp() { throw new Error("not implemented"); },
+  async listLocations() { throw new Error("not implemented"); },
 };
 
 const database = () => drizzle(pool!, { schema });
