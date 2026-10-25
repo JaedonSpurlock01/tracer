@@ -61,6 +61,9 @@ import { recordingAudioResponse } from "@/data/recording-audio";
 import { findAvailableRecordingMedia, recordingMp3Response, recordingPeaksResponse, type RecordingMediaBucket } from "@/data/recording-media";
 import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
 import { captureSitePreview, sitePreviewResponse, type SitePreviewBucket } from "@/data/site-preview";
+import { createDataForSeoConnection } from "@/data/dataforseo-connection";
+import type { DataForSeoClient } from "@/data/dataforseo-client";
+import { createSearchLocations } from "@/data/search-locations";
 import { createSiteKeywords, SiteKeywordsError } from "@/data/site-keywords";
 import { siteSearch } from "@/data/site-search";
 import { createSites, siteResponseForActor, SitesError, summaryResponseForActor } from "@/data/sites";
@@ -72,6 +75,9 @@ import type { TracerAuth } from "@/data/tracer-auth";
 import type { TransactionalEmail } from "@/data/transactional-email";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
 import { workspaceStates, type WorkspaceState } from "@/data/workspace-policy";
+
+/** Service Areas are United States locations until a Site outside it exists. */
+const serviceAreaCountryIso = "us";
 
 export interface WorkspacesHandlerOptions {
   auth: TracerAuth;
@@ -87,6 +93,8 @@ export interface WorkspacesHandlerOptions {
   recordingBucket?: RecordingMediaBucket;
   sitePreviews?: SitePreviewBucket;
   cloudflare?: CloudflareClient;
+  /** Serves the Service Area picker's location search; without it the search answers 503. */
+  dataforseo?: DataForSeoClient;
   masterKey?: string;
   twilioMedia?: TwilioRecordingMedia;
   recordingTranscription?: RecordingProcessing;
@@ -366,6 +374,18 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         await createSites(options.pool, actor).detach(id);
         return response({ detached: true });
       }
+      if (request.method === "GET" && subroute === "site/locations") {
+        if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
+        const linked = await createSites(options.pool, actor).findLinked(id);
+        if (!linked) throw new WorkspacesError("not_found");
+        if (!options.dataforseo) return response({ error: "provider_unavailable" }, 503);
+        const query = new URL(request.url).searchParams.get("q") ?? "";
+        const locations = createSearchLocations(options.pool);
+        const dataforseo = options.dataforseo;
+        await createDataForSeoConnection({ pool: options.pool, organizationId: actor.organizationId, dataforseo, masterKey: options.masterKey })
+          .withDataForSeoCredential((credential) => locations.ensure(serviceAreaCountryIso, dataforseo, credential, new Date()));
+        return response({ locations: await locations.search(serviceAreaCountryIso, query) });
+      }
       if (subroute === "site/keywords" || subroute === "site/service-area" || subroute.startsWith("site/keywords/")) {
         const linked = await createSites(options.pool, actor).findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
@@ -376,7 +396,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         }
         if (request.method === "PUT" && subroute === "site/service-area") {
           const body = await readBody(request);
-          return response({ serviceArea: await keywords.setServiceArea(linked.id, { city: body.city, region: body.region, country: body.country }) });
+          return response({ serviceArea: await keywords.setServiceArea(linked.id, { locationCode: body.locationCode, locationName: body.locationName }) });
         }
         const keywordMatch = subroute.match(/^site\/keywords\/([^/]+)$/);
         if (request.method === "PATCH" && keywordMatch) {

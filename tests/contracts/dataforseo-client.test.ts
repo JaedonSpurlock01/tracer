@@ -24,7 +24,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createDataForSeoClient, DataForSeoClientError } from "@/data/dataforseo-client";
 
 import authenticationError from "./fixtures/dataforseo/authentication-error.json";
-import serpOrganic from "./fixtures/dataforseo/serp-organic-live-regular.json";
+import locationsUs from "./fixtures/dataforseo/locations-us.json";
+import serpAdvanced from "./fixtures/dataforseo/serp-organic-live-advanced.json";
 import serpTaskError from "./fixtures/dataforseo/serp-task-error.json";
 import userData from "./fixtures/dataforseo/user-data.json";
 
@@ -53,29 +54,50 @@ describe("DataForSEO client", () => {
     await expect(bodyRejected.verify(credential)).rejects.toMatchObject({ code: "authentication_failed" });
   });
 
-  it("posts one live regular SERP task and maps organic items only, with their absolute position", async () => {
-    const fetch = vi.fn().mockResolvedValue(response(serpOrganic));
+  it("posts one live advanced SERP task by location code and maps organic, local pack, and map items with their type and absolute position", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(serpAdvanced));
     const client = createDataForSeoClient({ fetch, baseUrl });
 
-    const result = await client.serp(credential, { keyword: "asphalt paving pocatello", locationName: "Pocatello,Idaho,United States", languageCode: "en", depth: 100 });
+    const result = await client.serp(credential, { keyword: "asphalt paving pocatello", locationCode: 1016141, languageCode: "en", depth: 100 });
 
-    expect(fetch).toHaveBeenCalledWith(`${baseUrl}/serp/google/organic/live/regular`, {
+    expect(fetch).toHaveBeenCalledWith(`${baseUrl}/serp/google/organic/live/advanced`, {
       method: "POST",
       headers: { Authorization: basic, "content-type": "application/json" },
-      body: JSON.stringify([{ keyword: "asphalt paving pocatello", location_name: "Pocatello,Idaho,United States", language_code: "en", depth: 100 }]),
+      body: JSON.stringify([{ keyword: "asphalt paving pocatello", location_code: 1016141, language_code: "en", depth: 100 }]),
     });
     expect(result).toEqual({
       items: [
-        { position: 3, domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving Contractors" },
-        { position: 4, domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" },
-        { position: 6, domain: "www.yelp.com", url: "https://www.yelp.com/search?find_desc=Asphalt+Paving&find_loc=Pocatello%2C+ID", title: "Top 10 Best Asphalt Paving in Pocatello, ID" },
+        { position: 2, type: "map", domain: "www.google.com", url: "https://www.google.com/maps/search/asphalt+paving+pocatello", title: "Map" },
+        { position: 3, type: "local_pack", domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" },
+        { position: 5, type: "organic", domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving Contractors" },
+        { position: 6, type: "organic", domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/services", title: "Pocatello Asphalt Paving" },
+        { position: 8, type: "organic", domain: "www.yelp.com", url: "https://www.yelp.com/search?find_desc=Asphalt+Paving&find_loc=Pocatello%2C+ID", title: "Top 10 Best Asphalt Paving in Pocatello, ID" },
       ],
     });
   });
 
-  it("reports a failed task, a malformed body, and a server error without exposing the response", async () => {
+  it("sends a location name when no code is known", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(serpAdvanced));
+    await createDataForSeoClient({ fetch, baseUrl }).serp(credential, { keyword: "asphalt paving pocatello", locationName: "Pocatello,Idaho,United States", languageCode: "en", depth: 100 });
+    expect(JSON.parse(String(fetch.mock.calls[0][1].body))).toEqual([{ keyword: "asphalt paving pocatello", location_name: "Pocatello,Idaho,United States", language_code: "en", depth: 100 }]);
+  });
+
+  it("lists a country's locations with their code, name, and kind", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(locationsUs));
+    const client = createDataForSeoClient({ fetch, baseUrl });
+    const locations = await client.listLocations(credential, "us");
+    expect(fetch).toHaveBeenCalledWith(`${baseUrl}/serp/google/locations/us`, { headers: { Authorization: basic } });
+    expect(locations).toEqual([
+      { code: 2840, name: "United States", kind: "Country" },
+      { code: 21146, name: "Idaho,United States", kind: "State" },
+      { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
+      { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" },
+    ]);
+  });
+
+  it("reports a failed task with its status message, a malformed body, and a server error without exposing the response", async () => {
     const taskFailed = createDataForSeoClient({ fetch: vi.fn().mockResolvedValue(response(serpTaskError)), baseUrl });
-    await expect(taskFailed.serp(credential, { keyword: "x", locationName: "Nowhere", languageCode: "en", depth: 100 })).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(taskFailed.serp(credential, { keyword: "x", locationName: "Nowhere", languageCode: "en", depth: 100 })).rejects.toMatchObject({ code: "task_failed", message: "DataForSEO rejected the task (40501): Invalid Field: 'location_name'." });
     const malformed = createDataForSeoClient({ fetch: vi.fn().mockResolvedValue(new Response("<html>", { status: 200 })), baseUrl });
     await expect(malformed.verify(credential)).rejects.toMatchObject({ code: "invalid_response" });
     const down = createDataForSeoClient({ fetch: vi.fn().mockResolvedValue(response({ status_code: 50000 }, 503)), baseUrl });

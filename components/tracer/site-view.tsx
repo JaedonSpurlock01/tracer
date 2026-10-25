@@ -24,7 +24,8 @@
  *  the chart joins Visits into the Call trend's periods so daily, weekly,
  *  and monthly intervals follow Leads generated. The preview image is served
  *  by the Workspace-authorized preview route with the capture time as a
- *  cache buster; a missing image reads as Preview pending. States: No
+ *  cache buster; a missing image reads as Preview pending, or as Preview
+ *  failed with the stage and reason when the Site's last sync failed. States: No
  *  Site, Syncing before the first sync, Preview pending, Cloudflare
  *  disconnected, Down with the last check time, and No rankings yet with
  *  a Keywords link for Operators before the first rank check.
@@ -216,7 +217,9 @@ function HeroPreview({ workspace, site, operator, cloudflareConnected }: { works
             ) : (
               <Skeleton className="aspect-[16/10] w-full rounded-md" />
             )}
-            <p className="text-xs text-muted-foreground">{preview ? `Preview captured ${relativeTime(preview.capturedAt)}` : "Preview pending"}</p>
+            <p className={preview || !site.lastSync?.error ? "text-xs text-muted-foreground" : "text-xs text-warning"}>
+              {preview ? `Preview captured ${relativeTime(preview.capturedAt)}` : site.lastSync?.error ? `Preview failed at ${site.lastSync.stage ?? "sync"}: ${site.lastSync.error}` : "Preview pending"}
+            </p>
           </div>
           <dl className="grid gap-3 sm:grid-cols-2">
             <Fact label="Site Health">
@@ -367,6 +370,12 @@ function Performance({ vitals }: { vitals: SiteViewSummary["vitals"] }) {
   );
 }
 
+const matchedTypeLabels: Record<string, string> = { local_pack: "Local pack", map: "Map", featured_snippet: "Featured snippet" };
+
+function matchedTypeLabel(type: string): string {
+  return matchedTypeLabels[type] ?? type;
+}
+
 function changeLabel(change: number | null): string {
   if (change === null) return "-";
   return change > 0 ? `+${change}` : String(change);
@@ -379,7 +388,7 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
       <div className="flex flex-col gap-0.5">
         <h2 id="search-title" className="font-semibold">Search</h2>
         <p className="text-xs text-muted-foreground">
-          {search?.serviceArea.city ? `Search Visibility from ${[search.serviceArea.city, search.serviceArea.region, search.serviceArea.country].filter(Boolean).join(", ")}` : "Search Visibility"}
+          {search?.serviceArea.locationName || search?.serviceArea.city ? `Search Visibility from ${search.serviceArea.locationName?.split(",").join(", ") ?? [search.serviceArea.city, search.serviceArea.region, search.serviceArea.country].filter(Boolean).join(", ")}` : "Search Visibility"}
           {search?.checkedAt ? ` · Checked ${formatCallDate(search.checkedAt, zone)}` : ""}
         </p>
       </div>
@@ -394,7 +403,7 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
               <Link className="underline" href={`/workspaces/${workspace.id}/settings/site`} prefetch>
                 Keywords
               </Link>
-              {search.serviceArea.city ? "." : " and set the Service Area in Site settings."}
+              {search.serviceArea.locationCode || search.serviceArea.city ? "." : " and set the Service Area in Site settings."}
             </p>
           ) : null}
         </div>
@@ -445,10 +454,21 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
                 {search.keywords.map((keyword) => (
                   <tr key={keyword.id} className="border-b">
                     <td className="py-1.5 pr-2">
-                      {keyword.rankingUrl ? <a className="hover:underline" href={keyword.rankingUrl} target="_blank" rel="noreferrer">{keyword.phrase}</a> : keyword.phrase}
+                      <span className="flex flex-wrap items-center gap-2">
+                        {keyword.rankingUrl ? <a className="hover:underline" href={keyword.rankingUrl} target="_blank" rel="noreferrer">{keyword.phrase}</a> : keyword.phrase}
+                        {keyword.matchedType && keyword.matchedType !== "organic" ? <Badge variant="info-light">{matchedTypeLabel(keyword.matchedType)}</Badge> : null}
+                      </span>
                     </td>
                     <td className="px-2 py-1.5 font-mono tabular-nums">{keyword.weight}</td>
-                    <td className="px-2 py-1.5 font-mono tabular-nums">{keyword.position === null ? <span className="font-sans text-muted-foreground">{keyword.checkedAt ? "Not ranking" : "-"}</span> : keyword.position}</td>
+                    <td className="px-2 py-1.5 font-mono tabular-nums">
+                      {keyword.status === "check_failed" ? (
+                        <span className="font-sans text-warning" title={keyword.failureReason ?? undefined}>Check failed</span>
+                      ) : keyword.position === null ? (
+                        <span className="font-sans text-muted-foreground">{keyword.status === "not_ranking" ? "Not ranking" : "-"}</span>
+                      ) : (
+                        keyword.position
+                      )}
+                    </td>
                     <td className="py-1.5 pl-2 font-mono tabular-nums">
                       {keyword.change7d === null ? (
                         <span className="text-muted-foreground">-</span>

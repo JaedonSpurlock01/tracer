@@ -426,21 +426,27 @@ describe("WorkspaceSettingsView", () => {
     });
   });
 
-  it("saves the Service Area of the linked Site with PUT", async () => {
+  it("picks the Service Area from DataForSEO locations and saves the chosen location with PUT", async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-      if (String(request) === "/api/workspaces/workspace-1/site/service-area" && init?.method === "PUT") {
-        return new Response(JSON.stringify({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" } }), { status: 200 });
+      const url = String(request);
+      if (url.startsWith("/api/workspaces/workspace-1/site/locations?q=")) {
+        return new Response(JSON.stringify({ locations: [{ code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" }, { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" }] }), { status: 200 });
+      }
+      if (url === "/api/workspaces/workspace-1/site/service-area" && init?.method === "PUT") {
+        return new Response(JSON.stringify({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" } }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 404 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States" }, keywords: [] }} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] }} />);
     const area = screen.getByRole("region", { name: "Service Area" });
-    expect(within(area).getByLabelText("Country")).toHaveValue("United States");
-    fireEvent.change(within(area).getByLabelText("City"), { target: { value: "Pocatello" } });
-    fireEvent.change(within(area).getByLabelText("Region"), { target: { value: "Idaho" } });
+    expect(within(area).getByText("No Service Area yet")).toBeVisible();
+    fireEvent.change(within(area).getByRole("combobox", { name: "Search locations" }), { target: { value: "Poca" } });
+    const option = await within(area).findByRole("option", { name: /^Pocatello, Idaho, United States/ });
+    fireEvent.click(option);
+    expect(within(area).getByText("Pocatello, Idaho, United States")).toBeVisible();
     fireEvent.click(within(area).getByRole("button", { name: "Save Service Area" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/service-area", expect.objectContaining({ method: "PUT", body: JSON.stringify({ city: "Pocatello", region: "Idaho", country: "United States" }) })));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/service-area", expect.objectContaining({ method: "PUT", body: JSON.stringify({ locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }) })));
     expect(await screen.findByRole("status")).toHaveTextContent("Service Area saved.");
   });
 
@@ -464,7 +470,7 @@ describe("WorkspaceSettingsView", () => {
         initialWorkspace={workspace}
         section="site"
         initialSite={linkedSite}
-        initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" }, keywords: [{ id: "keyword-1", phrase: "asphalt paving pocatello", weight: 2, createdAt: "2026-10-19T00:00:00.000Z" }] }}
+        initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords: [{ id: "keyword-1", phrase: "asphalt paving pocatello", weight: 2, createdAt: "2026-10-19T00:00:00.000Z" }] }}
       />,
     );
     const keywords = screen.getByRole("region", { name: "Keywords" });
@@ -498,7 +504,7 @@ describe("WorkspaceSettingsView", () => {
 
   it("disables adding a Keyword at the 25 Keyword limit", () => {
     const keywords = Array.from({ length: 25 }, (_, index) => ({ id: `keyword-${index}`, phrase: `phrase ${index}`, weight: 1, createdAt: "2026-10-19T00:00:00.000Z" }));
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" }, keywords }} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }, keywords }} />);
     const region = screen.getByRole("region", { name: "Keywords" });
     expect(within(region).getByText("25 of 25 Keywords")).toBeVisible();
     expect(within(region).getByRole("button", { name: "Add Keyword" })).toBeDisabled();
@@ -543,7 +549,7 @@ describe("WorkspaceSettingsView Domain renewal, Business, and Deal", () => {
       return new Response(JSON.stringify({}), { status: 404 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={{ ...linkedSite, domain: { registrar: null, renewalCents: null, renewsOn: null } }} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States" }, keywords: [] }} initialDeal={null} />);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={{ ...linkedSite, domain: { registrar: null, renewalCents: null, renewsOn: null } }} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] }} initialDeal={null} />);
     const region = screen.getByRole("region", { name: "Domain renewal" });
     fireEvent.change(within(region).getByLabelText("Registrar"), { target: { value: "Porkbun" } });
     fireEvent.change(within(region).getByLabelText("Annual price"), { target: { value: "12.99" } });

@@ -1,0 +1,27 @@
+{
+  "version": "0.1.20260401",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2 sec.",
+  "cost": 0,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "10201630-1535-0066-0000-5b3c0d4e6f70",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.1 sec.",
+      "cost": 0,
+      "result_count": 4,
+      "path": ["v3", "serp", "google", "locations", "us"],
+      "data": { "api": "serp", "function": "locations", "se": "google", "country": "us" },
+      "result": [
+        { "location_code": 2840, "location_name": "United States", "location_code_parent": null, "country_iso_code": "US", "location_type": "Country" },
+        { "location_code": 21146, "location_name": "Idaho,United States", "location_code_parent": 2840, "country_iso_code": "US", "location_type": "State" },
+        { "location_code": 1016141, "location_name": "Pocatello,Idaho,United States", "location_code_parent": 21146, "country_iso_code": "US", "location_type": "City" },
+        { "location_code": 1016142, "location_name": "Pocatello Regional Airport,Idaho,United States", "location_code_parent": 21146, "country_iso_code": "US", "location_type": "Airport" }
+      ]
+    }
+  ]
+}

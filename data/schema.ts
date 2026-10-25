@@ -776,6 +776,11 @@ export const sites = pgTable(
     serviceAreaCity: text("service_area_city"),
     serviceAreaRegion: text("service_area_region"),
     serviceAreaCountry: text("service_area_country").default("United States"),
+    serviceAreaLocationCode: integer("service_area_location_code"),
+    serviceAreaLocationName: text("service_area_location_name"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastSyncStage: text("last_sync_stage"),
+    lastSyncError: text("last_sync_error"),
     domainRegistrar: text("domain_registrar"),
     domainRenewalCents: integer("domain_renewal_cents"),
     domainRenewsOn: date("domain_renews_on"),
@@ -956,11 +961,26 @@ export const keywordRankDays = pgTable(
     rankingUrl: text("ranking_url"),
     topResults: jsonb("top_results").notNull().default(sql`'[]'::jsonb`),
     checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    checkStatus: text("check_status").notNull().default("checked"),
+    failureReason: text("failure_reason"),
+    matchedType: text("matched_type"),
   },
   (table) => [
     uniqueIndex("keyword_rank_day_keyword_day_idx").on(table.siteKeywordId, table.day),
     check("keyword_rank_day_position_check", sql`${table.position} is null or ${table.position} >= 1`),
   ],
+);
+
+export const searchLocations = pgTable(
+  "search_location",
+  {
+    code: integer().primaryKey(),
+    countryIso: text("country_iso").notNull(),
+    name: text().notNull(),
+    kind: text().notNull(),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("search_location_country_name_idx").on(table.countryIso, table.name)],
 );
 
 export const deals = pgTable(

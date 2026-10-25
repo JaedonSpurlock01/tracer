@@ -287,6 +287,12 @@ describe.sequential("Site sync", () => {
     expect(solar).toEqual({ status_code: null, response_ms: null, ok: false, error: "fetch failed: getaddrinfo ENOTFOUND" });
     const connection = (await owner!.query("select last_failure_detail, last_synced_at from cloudflare_connection where organization_id = 'fleet'")).rows[0];
     expect(connection).toEqual({ last_failure_detail: "Cloudflare request failed (HTTP 503)", last_synced_at: run });
+    const outcomes = (await owner!.query("select script_name, last_sync_at, last_sync_stage, last_sync_error from site order by script_name")).rows;
+    expect(outcomes).toEqual([
+      { script_name: "paving", last_sync_at: run, last_sync_stage: "traffic", last_sync_error: "Cloudflare request failed (HTTP 503)" },
+      { script_name: "roofing", last_sync_at: run, last_sync_stage: null, last_sync_error: null },
+      { script_name: "solar", last_sync_at: run, last_sync_stage: null, last_sync_error: null },
+    ]);
     failingTraffic.clear();
     checkStatus.clear();
   });
@@ -296,7 +302,7 @@ describe.sequential("Site sync", () => {
     await owner!.query("insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('south-link', 'fleet', $1, 'south', now(), 'fleet-operator')", [siteIds.roofing]);
     const sites = createSites(runtime!, operator());
     const analytics = createAnalytics(runtime!, operator());
-    expect(await sites.findLinked("north")).toMatchObject({ id: siteIds.paving, health: "Healthy", healthReason: null });
+    expect(await sites.findLinked("north")).toMatchObject({ id: siteIds.paving, health: "Healthy", healthReason: null, lastSync: { at: expect.any(String), stage: "traffic", error: "Cloudflare request failed (HTTP 503)" } });
     expect(await sites.findLinked("south")).toMatchObject({ id: siteIds.roofing, health: "Healthy", healthReason: null });
 
     checkStatus.set("pocatelloroofing.com", 500);
@@ -324,5 +330,18 @@ describe.sequential("Site sync", () => {
 
     await owner!.query("update site_link set ended_at = now() where id = 'south-link'");
     expect((await analytics.workspaceListStats(["south"])).south.siteHealth).toBeNull();
+  });
+
+  it("leaves the connection's synced time alone when every Site fails and shows the failing stage on the Site when the credential is unreadable", async () => {
+    const before = (await owner!.query("select last_synced_at from cloudflare_connection where organization_id = 'fleet'")).rows[0].last_synced_at as Date;
+    await owner!.query("update cloudflare_connection set master_key_fingerprint = 'ffffffffffff', last_failure_at = null, last_failure_detail = null where organization_id = 'fleet'");
+    const run = new Date(before.getTime() + 5 * 60 * 60 * 1000);
+    expect(await sync(run, "fleet")).toEqual({ sites: 2, synced: 0, failed: 2 });
+    const connection = (await owner!.query("select last_synced_at, last_failure_detail from cloudflare_connection where organization_id = 'fleet'")).rows[0];
+    expect(connection.last_synced_at).toEqual(before);
+    expect(connection.last_failure_detail).toContain("different master key");
+    const north = await createSites(runtime!, operator()).findLinked("north");
+    expect(north?.lastSync).toEqual({ at: run.toISOString(), stage: "deployments", error: expect.stringContaining("different master key") });
+    await owner!.query("update cloudflare_connection set master_key_fingerprint = $1 where organization_id = 'fleet'", [await masterKeyFingerprint(masterKey)]);
   });
 });

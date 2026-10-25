@@ -17,6 +17,7 @@
  * -------------------------------------------------------------------------
  */
 import { createRuntimeCloudflareClient } from "@/data/cloudflare-runtime";
+import { createRuntimeDataForSeoClient } from "@/data/dataforseo-runtime";
 import { createPlacesClient } from "@/data/places-client";
 import { sitePreviewObjectsFromBinding } from "@/data/site-preview";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
@@ -34,6 +35,7 @@ async function handle(request: Request): Promise<Response> {
       twilio: createRuntimeTwilioClient(),
       twilioMedia: createTwilioRecordingMedia(),
       cloudflare: createRuntimeCloudflareClient(),
+      dataforseo: createRuntimeDataForSeoClient(),
       sitePreviews: runtime.recordingBucket ? sitePreviewObjectsFromBinding(runtime.recordingBucket) : undefined,
       integrations: (organizationId) => createWorkspaceRoutingRuntimeParts(runtime, organizationId).integrations,
       baseURL: runtime.baseURL,

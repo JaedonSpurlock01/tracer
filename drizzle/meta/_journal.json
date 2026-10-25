@@ -197,6 +197,13 @@
       "when": 1792891975500,
       "tag": "0027_provider-credential-fingerprint",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792893506519,
+      "tag": "0028_site-sync-outcomes-and-search-locations",
+      "breakpoints": true
     }
   ]
 }

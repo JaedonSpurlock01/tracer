@@ -84,6 +84,8 @@ export interface SiteRecord {
   health: SiteHealth;
   healthReason: string | null;
   lastSyncedAt: string | null;
+  /** The last hourly sync of this Site: when it ran and, when it failed, the stage and reason. */
+  lastSync: { at: string; stage: string | null; error: string | null } | null;
   linkedAt: string;
   domain: SiteDomainRenewal;
 }
@@ -152,6 +154,9 @@ type SiteRow = SiteHealthRow & {
   live_version_id: string | null;
   last_deployed_at: Date | null;
   linked_at: Date;
+  last_sync_at: Date | null;
+  last_sync_stage: string | null;
+  last_sync_error: string | null;
   deployment_version_id: string | null;
   deployment_source: string | null;
   deployment_author_email: string | null;
@@ -199,7 +204,7 @@ const linkedSiteQuery = `
             from site_check where site_id = s.id and checked_at >= now() - interval '30 days') as uptime,
          p.object_key as preview_object_key, p.version_id as preview_version_id, p.captured_at as preview_captured_at,
          k.checked_at as check_checked_at, k.ok as check_ok, k.status_code as check_status_code, k.response_ms as check_response_ms,
-         c.last_synced_at, ${siteHealthInputJsonSql("s")} as health_input
+         c.last_synced_at, s.last_sync_at, s.last_sync_stage, s.last_sync_error, ${siteHealthInputJsonSql("s")} as health_input
     from site_link l
     join site s on s.id = l.site_id
     left join lateral (select version_id, source, author_email, deployed_at from site_deployment where site_id = s.id order by deployed_at desc limit 1) d on true
@@ -232,6 +237,7 @@ function toSiteRecord(row: SiteRow): SiteRecord {
     health: health.health,
     healthReason: health.reason,
     lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
+    lastSync: row.last_sync_at ? { at: row.last_sync_at.toISOString(), stage: row.last_sync_stage, error: row.last_sync_error } : null,
     linkedAt: row.linked_at.toISOString(),
     domain: { registrar: row.domain_registrar, renewalCents: row.domain_renewal_cents, renewsOn: row.domain_renews_on },
   };
@@ -266,6 +272,7 @@ export function siteResponseForActor(actor: Actor, site: SiteRecord): ClientView
     latestPreview: latestPreview ? { versionId: null, capturedAt: latestPreview.capturedAt } : null,
     latestCheck: site.latestCheck,
     uptime30d: site.uptime30d,
+    lastSync: site.lastSync,
     health: site.health,
     healthReason: site.healthReason,
     lastSyncedAt: site.lastSyncedAt,

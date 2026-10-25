@@ -1,0 +1,57 @@
+{
+  "version": "0.1.20260401",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "3.1 sec.",
+  "cost": 0.02,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "10201630-1535-0066-0000-4a2b9c3d5e6f",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "3.0 sec.",
+      "cost": 0.02,
+      "result_count": 1,
+      "path": ["v3", "serp", "google", "organic", "live", "advanced"],
+      "data": {
+        "api": "serp",
+        "function": "live",
+        "se": "google",
+        "se_type": "organic",
+        "keyword": "asphalt paving pocatello",
+        "language_code": "en",
+        "location_code": 1016141,
+        "depth": 100,
+        "device": "desktop",
+        "os": "windows"
+      },
+      "result": [
+        {
+          "keyword": "asphalt paving pocatello",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 1016141,
+          "language_code": "en",
+          "check_url": "https://www.google.com/search?q=asphalt%20paving%20pocatello&num=100&hl=en&gl=US",
+          "datetime": "2026-10-24 06:41:12 +00:00",
+          "spell": null,
+          "item_types": ["paid", "local_pack", "organic", "people_also_ask", "map"],
+          "se_results_count": 184000,
+          "items_count": 8,
+          "items": [
+            { "type": "paid", "rank_group": 1, "rank_absolute": 1, "domain": "www.pavingads.example", "title": "Paving Ads", "url": "https://www.pavingads.example/pocatello" },
+            { "type": "map", "rank_group": 1, "rank_absolute": 2, "title": "Map", "url": "https://www.google.com/maps/search/asphalt+paving+pocatello" },
+            { "type": "local_pack", "rank_group": 1, "rank_absolute": 3, "domain": "pocatelloasphaltpaving.com", "title": "Pocatello Asphalt Paving", "url": "https://pocatelloasphaltpaving.com/", "rating": { "value": 4.9, "votes_count": 31 } },
+            { "type": "local_pack", "rank_group": 2, "rank_absolute": 4, "domain": null, "title": "Neighbor Paving", "url": null },
+            { "type": "organic", "rank_group": 1, "rank_absolute": 5, "domain": "www.idahopaving.example", "title": "Idaho Paving Contractors", "url": "https://www.idahopaving.example/" },
+            { "type": "organic", "rank_group": 2, "rank_absolute": 6, "domain": "pocatelloasphaltpaving.com", "title": "Pocatello Asphalt Paving", "url": "https://pocatelloasphaltpaving.com/services" },
+            { "type": "people_also_ask", "rank_group": 1, "rank_absolute": 7, "domain": null, "title": "People also ask", "url": null },
+            { "type": "organic", "rank_group": 3, "rank_absolute": 8, "domain": "www.yelp.com", "title": "Top 10 Best Asphalt Paving in Pocatello, ID", "url": "https://www.yelp.com/search?find_desc=Asphalt+Paving&find_loc=Pocatello%2C+ID" }
+          ]
+        }
+      ]
+    }
+  ]
+}

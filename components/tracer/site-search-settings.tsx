@@ -4,7 +4,9 @@
  * @brief  Edits a linked Site's Service Area and Keywords.
  *
  * @description
- *  Renders the Service Area editor (city, region, country with Save) and
+ *  Renders the Service Area picker (a location search over DataForSEO's
+ *  own location names, so a rank check is never sent somewhere Google
+ *  does not know, with Save) and
  *  the Keywords editor (each live Keyword with a weight Select and
  *  Remove, an add row with a phrase and weight, the count against the
  *  25 Keyword limit, and inline validation) inside the Workspace
@@ -25,7 +27,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
@@ -40,6 +42,12 @@ export interface SiteSearchSettingsData {
 }
 
 const weights = ["1", "2", "3", "4", "5"];
+
+/** A Service Area saved before the picker existed has no location name; its parts still read as one. */
+function legacyAreaName(area: ServiceArea): string | null {
+  const parts = [area.city, area.region, area.country].filter(Boolean);
+  return area.city ? parts.join(",") : null;
+}
 
 function WeightSelect({ id, label, value, disabled, onChange }: { id: string; label: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
   return (
@@ -59,7 +67,11 @@ function WeightSelect({ id, label, value, disabled, onChange }: { id: string; la
 }
 
 export default function SiteSearchSettings({ workspaceId, initial, onMessage }: { workspaceId: string; initial: SiteSearchSettingsData; onMessage: (message: string) => void }) {
-  const [area, setArea] = useState({ city: initial.serviceArea.city ?? "", region: initial.serviceArea.region ?? "", country: initial.serviceArea.country ?? "United States" });
+  const [area, setArea] = useState<{ locationCode: number | null; locationName: string | null }>({ locationCode: initial.serviceArea.locationCode, locationName: initial.serviceArea.locationName ?? legacyAreaName(initial.serviceArea) });
+  const [chosen, setChosen] = useState<{ code: number; name: string } | null>(null);
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationOptions, setLocationOptions] = useState<{ code: number; name: string; kind: string }[]>([]);
+  const [locationsError, setLocationsError] = useState("");
   const [areaError, setAreaError] = useState("");
   const [keywords, setKeywords] = useState(initial.keywords);
   const [phrase, setPhrase] = useState("");
@@ -70,19 +82,57 @@ export default function SiteSearchSettings({ workspaceId, initial, onMessage }: 
   const base = `/api/workspaces/${workspaceId}/site`;
   const atLimit = keywords.length >= siteKeywordLimit;
 
+  const visibleOptions = locationQuery.trim().length >= 2 ? locationOptions : [];
+
+  useEffect(() => {
+    const query = locationQuery.trim();
+    if (query.length < 2) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void fetch(`${base}/locations?q=${encodeURIComponent(query)}`)
+        .then(async (response) => {
+          if (!response.ok) throw new Error(response.status === 404 ? "Connect DataForSEO on Integrations to search locations." : "Locations could not be searched.");
+          const body = (await response.json()) as { locations: { code: number; name: string; kind: string }[] };
+          if (!cancelled) {
+            setLocationOptions(body.locations);
+            setLocationsError("");
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setLocationsError(error instanceof Error ? error.message : "Locations could not be searched.");
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [base, locationQuery]);
+
+  function chooseLocation(option: { code: number; name: string }) {
+    setChosen(option);
+    setLocationQuery("");
+    setLocationOptions([]);
+    setAreaError("");
+  }
+
   async function saveServiceArea() {
+    if (!chosen) {
+      setAreaError("Pick a location first.");
+      return;
+    }
     setBusy(true);
     setAreaError("");
     const response = await mutationFetch(`${base}/service-area`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ city: area.city, region: area.region, country: area.country }),
+      body: JSON.stringify({ locationCode: chosen.code, locationName: chosen.name }),
     }).catch(() => null);
     if (!response?.ok) {
-      setAreaError(response?.status === 400 ? "Enter a city, region, and country of at most 80 characters each." : "The Service Area could not be saved.");
+      setAreaError(response?.status === 400 ? "Pick a location from the list." : "The Service Area could not be saved.");
     } else {
       const body = (await response.json()) as { serviceArea: ServiceArea };
-      setArea({ city: body.serviceArea.city ?? "", region: body.serviceArea.region ?? "", country: body.serviceArea.country ?? "United States" });
+      setArea({ locationCode: body.serviceArea.locationCode, locationName: body.serviceArea.locationName });
+      setChosen(null);
       onMessage("Service Area saved.");
     }
     setBusy(false);
@@ -153,25 +203,39 @@ export default function SiteSearchSettings({ workspaceId, initial, onMessage }: 
       <section role="region" aria-labelledby="service-area-title" className="flex flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <h3 id="service-area-title" className="font-semibold">Service Area</h3>
-          <p className="text-sm text-muted-foreground">Where the business serves. Keyword positions are checked from here.</p>
+          <p className="text-sm text-muted-foreground">Where the business serves. Keyword positions are checked from this Google location.</p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field>
-            <FieldLabel htmlFor="service-area-city">City</FieldLabel>
-            <Input id="service-area-city" value={area.city} maxLength={80} onChange={(event) => setArea((current) => ({ ...current, city: event.target.value }))} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="service-area-region">Region</FieldLabel>
-            <Input id="service-area-region" value={area.region} maxLength={80} onChange={(event) => setArea((current) => ({ ...current, region: event.target.value }))} />
-          </Field>
-          <Field data-invalid={Boolean(areaError)}>
-            <FieldLabel htmlFor="service-area-country">Country</FieldLabel>
-            <Input id="service-area-country" value={area.country} maxLength={80} onChange={(event) => setArea((current) => ({ ...current, country: event.target.value }))} />
-            {areaError ? <FieldError>{areaError}</FieldError> : null}
-          </Field>
-        </div>
+        <p className="text-sm">
+          <span className="font-medium">Current: </span>
+          {chosen ? <span>{chosen.name.split(",").join(", ")} <span className="text-muted-foreground">(unsaved)</span></span> : area.locationName ? area.locationName.split(",").join(", ") : <span className="text-muted-foreground">No Service Area yet</span>}
+        </p>
+        <Field data-invalid={Boolean(areaError)} className="max-w-md">
+          <FieldLabel htmlFor="service-area-search">Search locations</FieldLabel>
+          <Input
+            id="service-area-search"
+            role="combobox"
+            aria-label="Search locations"
+            aria-expanded={visibleOptions.length > 0}
+            aria-controls="service-area-options"
+            aria-autocomplete="list"
+            placeholder="City, region, or county"
+            value={locationQuery}
+            onChange={(event) => setLocationQuery(event.target.value)}
+          />
+          {visibleOptions.length > 0 ? (
+            <ul id="service-area-options" role="listbox" aria-label="Matching locations" className="divide-y divide-border rounded-md border text-sm">
+              {visibleOptions.map((option) => (
+                <li key={option.code} role="option" aria-selected={chosen?.code === option.code} className="cursor-pointer px-3 py-1.5 hover:bg-muted" onClick={() => chooseLocation(option)}>
+                  {option.name.split(",").join(", ")} <span className="text-xs text-muted-foreground">{option.kind}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {locationsError ? <FieldError>{locationsError}</FieldError> : null}
+          {areaError ? <FieldError>{areaError}</FieldError> : null}
+        </Field>
         <div>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void saveServiceArea()}>
+          <Button type="button" variant="outline" disabled={busy || !chosen} onClick={() => void saveServiceArea()}>
             Save Service Area
           </Button>
         </div>

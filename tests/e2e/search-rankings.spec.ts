@@ -56,8 +56,8 @@ test.describe.serial("Search rankings", () => {
 
     await page.goto(`/workspaces/${workspaceId}/settings/site`);
     const area = page.getByRole("region", { name: "Service Area" });
-    await area.getByLabel("City").fill("Pocatello");
-    await area.getByLabel("Region").fill("Idaho");
+    await area.getByRole("combobox", { name: "Search locations" }).fill("Pocatello");
+    await area.getByRole("option", { name: /^Pocatello, Idaho, United States/ }).click();
     await area.getByRole("button", { name: "Save Service Area" }).click();
     await expect(page.getByRole("status")).toHaveText("Service Area saved.");
     const keywords = page.getByRole("region", { name: "Keywords" });

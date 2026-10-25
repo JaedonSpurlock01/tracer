@@ -32,8 +32,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
+import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
+import { sealSecret } from "@/data/provider-credential";
 import { schema } from "@/data/schema";
 import { siteSearch } from "@/data/site-search";
 import { createTracerAuth } from "@/data/tracer-auth";
@@ -58,6 +60,21 @@ const fakeTwilio: TwilioClient = {
   async updateIncomingPhoneNumberVoice() { throw new Error("not implemented"); },
 };
 
+const locationLookups: string[] = [];
+const fakeDataForSeo: DataForSeoClient = {
+  async verify(credential) { return { login: credential.login }; },
+  async serp() { throw new Error("not implemented"); },
+  async listLocations(_credential, countryIso) {
+    locationLookups.push(countryIso);
+    return [
+      { code: 2840, name: "United States", kind: "Country" },
+      { code: 21146, name: "Idaho,United States", kind: "State" },
+      { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
+      { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" },
+      { code: 1026339, name: "St. George,Utah,United States", kind: "City" },
+    ];
+  },
+};
 const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
   database: database(),
@@ -75,6 +92,8 @@ function handler() {
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
+    dataforseo: fakeDataForSeo,
+    masterKey,
     integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
@@ -139,6 +158,12 @@ beforeAll(async () => {
        ('link-b', $1, 'site-st-george', 'workspace-b', now(), $2)`,
     [organizationId, operatorId],
   );
+  const sealed = await sealSecret(masterKey, "synthetic-dataforseo-password");
+  await pool.query(
+    `insert into dataforseo_connection (id, organization_id, login, password_ciphertext, master_key_fingerprint, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
+     values ('keywords-connection', $1, 'operator@example.com', $2, $3, $4, now(), now(), now(), now())`,
+    [organizationId, sealed.ciphertext, sealed.fingerprint, operatorId],
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -152,18 +177,34 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect((await json(send(cookie, "GET", "workspace-c/site/keywords"))).response.status).toBe(404);
     const empty = await json(send(cookie, "GET", "workspace-a/site/keywords"));
     expect(empty.response.status).toBe(200);
-    expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States" }, keywords: [] });
+    expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [] });
   });
 
-  it("saves the Service Area with PUT, trimming values and defaulting the country", async () => {
+  it("searches DataForSEO locations for the Service Area picker, importing the country list once", async () => {
     const cookie = await signIn("operator@example.com");
-    const saved = await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "  Pocatello ", region: "Idaho", country: "" }));
+    const first = await json(send(cookie, "GET", "workspace-a/site/locations?q=poca"));
+    expect(first.response.status).toBe(200);
+    expect(first.body.locations).toEqual([
+      { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
+      { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" },
+    ]);
+    const second = await json(send(cookie, "GET", "workspace-a/site/locations?q=george"));
+    expect(second.body.locations).toEqual([{ code: 1026339, name: "St. George,Utah,United States", kind: "City" }]);
+    expect(locationLookups).toEqual(["us"]);
+    expect((await json(send(cookie, "GET", "workspace-a/site/locations?q=p"))).body.locations).toEqual([]);
+    const viewer = await signIn("viewer@example.com");
+    expect((await json(send(viewer, "GET", "workspace-a/site/locations?q=poca"))).response.status).toBe(403);
+  });
+
+  it("saves the Service Area as a picked location and derives the city, region, and country from its name", async () => {
+    const cookie = await signIn("operator@example.com");
+    const saved = await json(send(cookie, "PUT", "workspace-a/site/service-area", { locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }));
     expect(saved.response.status).toBe(200);
-    expect(saved.body).toEqual({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" } });
-    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: 12, region: "Idaho", country: "United States" }))).response.status).toBe(400);
-    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "x".repeat(81), region: "Idaho", country: "United States" }))).response.status).toBe(400);
-    const stored = await pool!.query("select service_area_city, service_area_region, service_area_country from site where id = 'site-pocatello'");
-    expect(stored.rows[0]).toEqual({ service_area_city: "Pocatello", service_area_region: "Idaho", service_area_country: "United States" });
+    expect(saved.body).toEqual({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" } });
+    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { locationCode: "1016141", locationName: "Pocatello,Idaho,United States" }))).response.status).toBe(400);
+    expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { locationCode: 1016141, locationName: "" }))).response.status).toBe(400);
+    const stored = await pool!.query("select service_area_city, service_area_region, service_area_country, service_area_location_code, service_area_location_name from site where id = 'site-pocatello'");
+    expect(stored.rows[0]).toEqual({ service_area_city: "Pocatello", service_area_region: "Idaho", service_area_country: "United States", service_area_location_code: 1016141, service_area_location_name: "Pocatello,Idaho,United States" });
   });
 
   it("adds Keywords with a trimmed phrase, a default weight, unique phrases per Site, and weights within 1 to 5", async () => {
@@ -241,21 +282,21 @@ describe.sequential("Site Keywords and Service Area", () => {
     const cookie = await signIn("operator@example.com");
     const before = await json(send(cookie, "GET", "workspace-a/site/search"));
     expect(before.response.status).toBe(200);
-    expect(before.body).toMatchObject({ score: null, checkedAt: null, serviceArea: { city: "Pocatello", region: "Idaho", country: "United States" } });
+    expect(before.body).toMatchObject({ score: null, checkedAt: null, serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" } });
     expect((before.body.trend as unknown[])).toHaveLength(30);
     expect((before.body.trend as Array<{ score: number | null }>).every((point) => point.score === null)).toBe(true);
     expect(before.body.keywords).toEqual([
-      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: null },
-      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: null },
+      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, status: "unchecked", position: null, change7d: null, rankingUrl: null, matchedType: null, failureReason: null, topResults: [], checkedAt: null },
+      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, status: "unchecked", position: null, change7d: null, rankingUrl: null, matchedType: null, failureReason: null, topResults: [], checkedAt: null },
     ]);
 
     const top = JSON.stringify([{ position: 1, domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving" }, { position: 2, domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" }]);
     await pool!.query(
-      `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at) values
-         ('rank-paving-7', $1, $3::date, 5, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '7 days'),
-         ('rank-paving-1', $1, $4::date, 3, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '1 day'),
-         ('rank-paving-0', $1, $5::date, 2, 'https://pocatelloasphaltpaving.com/', $6::jsonb, now()),
-         ('rank-driveway-0', $2, $5::date, null, null, '[]'::jsonb, now())`,
+      `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, matched_type) values
+         ('rank-paving-7', $1, $3::date, 5, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '7 days', 'organic'),
+         ('rank-paving-1', $1, $4::date, 3, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '1 day', 'organic'),
+         ('rank-paving-0', $1, $5::date, 2, 'https://pocatelloasphaltpaving.com/', $6::jsonb, now(), 'local_pack'),
+         ('rank-driveway-0', $2, $5::date, null, null, '[]'::jsonb, now(), null)`,
       [keywordIds.paving, keywordIds.driveway, utcDay(7), utcDay(1), utcDay(0), top],
     );
     const after = await json(send(cookie, "GET", "workspace-a/site/search"));
@@ -263,9 +304,15 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect(after.body.score).toBe(20);
     expect(after.body.checkedAt).toEqual(expect.any(String));
     expect(after.body.keywords).toEqual([
-      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, position: 2, change7d: 3, rankingUrl: "https://pocatelloasphaltpaving.com/", topResults: JSON.parse(top), checkedAt: expect.any(String) },
-      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, position: null, change7d: null, rankingUrl: null, topResults: [], checkedAt: expect.any(String) },
+      { id: keywordIds.paving, phrase: "Asphalt Paving Pocatello", weight: 1, status: "ranking", position: 2, change7d: 3, rankingUrl: "https://pocatelloasphaltpaving.com/", matchedType: "local_pack", failureReason: null, topResults: JSON.parse(top), checkedAt: expect.any(String) },
+      { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, status: "not_ranking", position: null, change7d: null, rankingUrl: null, matchedType: null, failureReason: null, topResults: [], checkedAt: expect.any(String) },
     ]);
+
+    await pool!.query("update keyword_rank_day set check_status = 'failed', failure_reason = 'DataForSEO rejected the task (40501): Invalid Field: ''location_name''.' where id = 'rank-driveway-0'");
+    const failed = await json(send(cookie, "GET", "workspace-a/site/search"));
+    expect((failed.body.keywords as Array<Record<string, unknown>>)[1]).toMatchObject({ status: "check_failed", position: null, failureReason: expect.stringContaining("Invalid Field"), checkedAt: expect.any(String) });
+    expect((failed.body.keywords as Array<Record<string, unknown>>)[0]).toMatchObject({ status: "ranking", position: 2 });
+    await pool!.query("update keyword_rank_day set check_status = 'checked', failure_reason = null where id = 'rank-driveway-0'");
     const trend = after.body.trend as Array<{ day: string; score: number | null }>;
     expect(trend).toHaveLength(30);
     expect(trend.at(-1)).toEqual({ day: utcDay(0), score: 20 });
