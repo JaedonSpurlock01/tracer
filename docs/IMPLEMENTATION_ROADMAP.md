@@ -1291,9 +1291,9 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 #### Vertical slices
 
-1. Keyword Discovery module: prompt, structured candidate schema, volume lookup, dedupe, ranking, and the cached suggestion set.
-2. Operator route and Site settings panel: Suggest Keywords, Finding keywords, tick to add with weight 3, and the no-niche message.
-3. Lookup counting on the DataForSEO connection and the cost line in the Pricing guide.
+1. Keyword Discovery module: prompt, structured candidate schema, volume lookup, dedupe, ranking, and the cached suggestion set. Landed 2026-10-25 with migration 0029 (`site.keyword_suggestions`) and the Labs `keyword_overview` call on the DataForSEO client.
+2. Operator route and Site settings panel: Suggest Keywords, Finding keywords, tick to add with weight 3, and the no-niche message. Landed 2026-10-25 as `POST site/keywords/suggest`, the suggestion set on the Keywords read, the Suggested Keywords panel, and an `E2E_OPENAI_FAKE` responder for local and browser runs.
+3. Lookup counting on the DataForSEO connection and the cost line in the Pricing guide. Landed 2026-10-25: one lookup per measured run through the counter Rank Check uses, and the Labs prices ($0.012 per request, $0.00012 per measured phrase) in the rate table.
 
 #### Test-first behaviors
 
