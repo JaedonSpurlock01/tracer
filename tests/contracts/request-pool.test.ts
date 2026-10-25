@@ -103,6 +103,22 @@ it("reports a pool that closes in time, including one whose close rejects", asyn
   await expect(closeRequestPool({ end: () => Promise.reject(new Error("Connection terminated")) }, 2_000)).resolves.toBe("closed");
 });
 
+it("ignores an idle client's socket error once the pool is closing and logs one that arrives mid-request", async () => {
+  const pool = createRequestPool("postgresql://tracer_app:unused@127.0.0.1:1/tracer");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    expect(() => pool.emit("error", new Error("read ECONNRESET"))).not.toThrow();
+    expect(logged).toHaveBeenCalledWith("request pool connection failed", expect.objectContaining({ message: "read ECONNRESET" }));
+    logged.mockClear();
+    const closing = pool.end();
+    expect(() => pool.emit("error", new Error("The ReadableStream was cancelled"))).not.toThrow();
+    expect(logged).not.toHaveBeenCalled();
+    await closing;
+  } finally {
+    logged.mockRestore();
+  }
+});
+
 it("opens up to six connections per request so parallel queries stop waiting on one socket", async () => {
   const pool = createRequestPool("postgresql://tracer_app:unused@127.0.0.1:1/tracer");
   expect(pool.options.max).toBe(6);
