@@ -25,7 +25,6 @@ async function handle(request: Request): Promise<Response> {
   return withTracerRuntime((runtime) =>
     createReportsHandler({
       auth: runtime.auth,
-      database: runtime.database,
       pool: runtime.pool,
       reportBucket: runtime.recordingBucket,
       reportGeneration: runtime.reportGeneration,

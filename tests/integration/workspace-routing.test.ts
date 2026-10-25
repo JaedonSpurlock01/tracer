@@ -122,7 +122,6 @@ function integrationsFor(organization: string) {
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    database: database(),
     pool: routingPool!,
     twilio: fakeTwilio,
     integrations: integrationsFor,

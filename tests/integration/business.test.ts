@@ -75,7 +75,6 @@ const auth = () => createTracerAuth({
 function handler(places: PlacesClient | null) {
   return createWorkspacesHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     places: places ?? undefined,

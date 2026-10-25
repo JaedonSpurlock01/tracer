@@ -16,8 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { eq } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Pool } from "pg";
 
 import {
   toCanonicalRole,
@@ -25,7 +24,6 @@ import {
   type MembershipRole,
   type UserState,
 } from "@/data/auth-policy";
-import { members, schema, users } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface Actor {
@@ -47,7 +45,7 @@ export class AuthorizationError extends Error {
 
 export async function resolveActor(
   auth: TracerAuth,
-  database: NodePgDatabase<typeof schema>,
+  connection: Pick<Pool, "query">,
   headers: Headers,
 ): Promise<Actor | null> {
   const session = await auth.api.getSession({ headers });
@@ -55,11 +53,7 @@ export async function resolveActor(
     return null;
   }
 
-  const [membership] = await database
-    .select({ organizationId: members.organizationId, role: members.role })
-    .from(members)
-    .where(eq(members.userId, session.user.id))
-    .limit(1);
+  const membership = (await connection.query<{ organization_id: string; role: string }>(`select organization_id, role from member where user_id = $1 limit 1`, [session.user.id])).rows[0];
   if (!membership) {
     return null;
   }
@@ -68,11 +62,7 @@ export async function resolveActor(
   let state = sessionUser.state;
   let timezone = sessionUser.timezone;
   if (!state || !timezone) {
-    const user = (await database
-      .select({ state: users.state, timezone: users.timezone })
-      .from(users)
-      .where(eq(users.id, session.user.id))
-      .limit(1))[0];
+    const user = (await connection.query<{ state: string; timezone: string }>(`select state, timezone from "user" where id = $1 limit 1`, [session.user.id])).rows[0];
     state ??= user?.state as UserState | undefined;
     timezone ??= user?.timezone;
   }
@@ -82,7 +72,7 @@ export async function resolveActor(
 
   return {
     userId: session.user.id,
-    organizationId: membership.organizationId,
+    organizationId: membership.organization_id,
     name: session.user.name,
     email: session.user.email,
     timezone,
@@ -97,10 +87,10 @@ export function isActiveOperatorActor(actor: Actor | null): actor is Actor {
 
 export async function requireActiveActor(
   auth: TracerAuth,
-  database: NodePgDatabase<typeof schema>,
+  connection: Pick<Pool, "query">,
   headers: Headers,
 ): Promise<Actor> {
-  const actor = await resolveActor(auth, database, headers);
+  const actor = await resolveActor(auth, connection, headers);
   if (!actor) {
     throw new AuthorizationError(401);
   }
@@ -112,10 +102,10 @@ export async function requireActiveActor(
 
 export async function requireActiveOperator(
   auth: TracerAuth,
-  database: NodePgDatabase<typeof schema>,
+  connection: Pick<Pool, "query">,
   headers: Headers,
 ): Promise<Actor> {
-  const actor = await resolveActor(auth, database, headers);
+  const actor = await resolveActor(auth, connection, headers);
   if (!actor) {
     throw new AuthorizationError(401);
   }

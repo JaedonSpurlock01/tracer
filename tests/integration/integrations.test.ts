@@ -106,7 +106,6 @@ function handler(overrides: { masterKey?: string; allowedRecipients?: ReadonlySe
   const configuredMasterKey = "masterKey" in overrides ? overrides.masterKey : masterKey;
   return createIntegrationsHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     cloudflare: { async verifyToken() { throw new Error("not implemented"); }, async listSites() { throw new Error("not implemented"); }, async listDeployments() { throw new Error("not implemented"); }, async fetchDailyTraffic() { throw new Error("not implemented"); }, async captureScreenshot() { throw new Error("not implemented"); } },

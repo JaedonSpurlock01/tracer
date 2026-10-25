@@ -69,7 +69,6 @@ const auth = () => createTracerAuth({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   email,
   emailFrom: "auth@example.com",
@@ -122,7 +121,7 @@ interface ListedActivity {
 }
 
 async function listActivity(cookie: string, query = "") {
-  const response = await createActivityHandler({ auth: auth(), database: database(), pool: pool! })(new Request(`http://localhost:3000/api/activity${query}`, { headers: { cookie } }));
+  const response = await createActivityHandler({ auth: auth(), pool: pool! })(new Request(`http://localhost:3000/api/activity${query}`, { headers: { cookie } }));
   return { response, body: (await response.json()) as ListedActivity & { error?: string } };
 }
 

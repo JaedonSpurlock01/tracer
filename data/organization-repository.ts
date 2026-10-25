@@ -1,28 +1,20 @@
 /**
  * -------------------------------------------------------------------------
  * @file   organization-repository.ts
- * @brief  Persists and reads Organizations.
+ * @brief  Creates and reads Organizations.
  *
  * @description
- *  Exposes the minimal Organization persistence interface shared by direct
- *  PostgreSQL tests and Cloudflare Hyperdrive runtime connections.
- *
- * @remarks
- *  The repository owns opaque Organization identifier generation.
+ *  Writes a new Organization row and reads one by id for the app shell.
  *
  * @see
- *  CONTEXT.md
+ *  data/schema.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool, PoolClient } from "pg";
-
-import { organizations } from "@/data/schema";
 
 export interface Organization {
   id: string;
@@ -41,9 +33,7 @@ export interface OrganizationRepository {
   findById(id: string): Promise<Organization | null>;
 }
 
-export function createOrganizationRepository(connection: Pool | PoolClient): OrganizationRepository {
-  const database = drizzle(connection);
-
+export function createOrganizationRepository(connection: Pick<Pool | PoolClient, "query">): OrganizationRepository {
   return {
     async create(input) {
       const organization = {
@@ -52,24 +42,15 @@ export function createOrganizationRepository(connection: Pool | PoolClient): Org
         ...input,
       };
 
-      await database.insert(organizations).values(organization);
+      await connection.query(`insert into organization (id, name, slug, created_at) values ($1, $2, $3, $4)`, [organization.id, organization.name, organization.slug, organization.createdAt]);
 
       return organization;
     },
 
     async findById(id) {
-      const [organization] = await database
-        .select({
-          id: organizations.id,
-          name: organizations.name,
-          slug: organizations.slug,
-          createdAt: organizations.createdAt,
-        })
-        .from(organizations)
-        .where(eq(organizations.id, id))
-        .limit(1);
-
-      return organization ?? null;
+      const { rows } = await connection.query<{ id: string; name: string; slug: string; created_at: Date }>(`select id, name, slug, created_at from organization where id = $1 limit 1`, [id]);
+      const row = rows[0];
+      return row ? { id: row.id, name: row.name, slug: row.slug, createdAt: row.created_at } : null;
     },
   };
 }

@@ -53,10 +53,9 @@ import {
   type PageRuntime,
 } from "@/data/page-loaders";
 import type { ProviderConfiguration } from "@/data/provider-health";
-import { observePool, type RequestPoolStats } from "@/data/request-log";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
-import { createRequestPool } from "@/data/tracer-runtime";
+import { openDatabase, type DatabaseStats } from "@/data/database";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 import type { TwilioClient } from "@/data/twilio-client";
 import { findUserAvatarSeed } from "@/data/user-avatar";
@@ -132,13 +131,13 @@ function layoutReads(connection: Pool): Promise<unknown> {
   return Promise.all([createOrganizationRepository(connection).findById(actor.organizationId), findUserAvatarSeed(connection, actor.userId)]);
 }
 
-async function navigation(name: keyof typeof budgets, run: (connection: Pool) => Promise<unknown>): Promise<RequestPoolStats> {
-  const requestPool = createRequestPool(connectionUri);
-  const stats = observePool(requestPool);
+async function navigation(name: keyof typeof budgets, run: (connection: Pool) => Promise<unknown>): Promise<DatabaseStats> {
+  const database = openDatabase(connectionUri, { max: 6 });
+  const stats = database.stats;
   try {
-    await run(requestPool);
+    await run(database.pool);
   } finally {
-    await requestPool.end();
+    await database.close();
   }
   console.info(`page budget ${name}: waves=${stats.waves} queries=${stats.queries} budget=${budgets[name].waves}/${budgets[name].queries}`);
   expect(stats.waves).toBeLessThanOrEqual(budgets[name].waves);
@@ -192,7 +191,7 @@ describe.sequential("page budgets", () => {
   it("resolves the actor from a session cookie within budget", async () => {
     const cookie = await signIn();
     await navigation("actor", async (connection) => {
-      const resolved = await resolveActor(auth(connection), drizzle(connection, { schema }), new Headers({ cookie }));
+      const resolved = await resolveActor(auth(connection), connection, new Headers({ cookie }));
       expect(resolved?.role).toBe("Operator");
     });
   });

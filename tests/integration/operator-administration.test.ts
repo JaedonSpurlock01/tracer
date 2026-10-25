@@ -66,7 +66,6 @@ const auth = () => createTracerAuth({
 
 const handler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   email: {
     async send(message) {

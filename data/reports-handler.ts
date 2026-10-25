@@ -48,7 +48,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { AuthorizationError, requireActiveActor, type Actor } from "@/data/authorization";
@@ -70,13 +69,11 @@ import {
 } from "@/data/report-jobs";
 import type { ReportPeriod } from "@/data/report-period";
 import { ReportRequestError, type ReportScopeRequest } from "@/data/report-request";
-import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 import { createReadableWorkspaces, readableWorkspaceSql } from "@/data/workspace-authorization";
 
 export interface ReportsHandlerOptions {
   auth: TracerAuth;
-  database: NodePgDatabase<typeof schema>;
   pool: Pool;
   reportBucket?: ReportArtifactBucket;
   reportGeneration?: ReportGeneration;
@@ -224,7 +221,7 @@ function errorResponse(error: unknown): Response {
 export function createReportsHandler(options: ReportsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.database, request.headers);
+      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/reports\/?/, "");
       const readable = createReadableWorkspaces(options.pool, actor);
       const now = new Date();

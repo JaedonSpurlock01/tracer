@@ -24,7 +24,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
@@ -35,7 +34,6 @@ import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
 import { createIntegrations, IntegrationsError, type Integrations, type TwilioConnectionRecord, type TwilioNumberRecord } from "@/data/integrations";
 import { createFormsKey, type FormsKey } from "@/data/form-submissions";
 import { describeProviderHealth, type ProviderConfiguration, type ProviderHealth } from "@/data/provider-health";
-import { schema } from "@/data/schema";
 import type { RankCheckResult } from "@/data/rank-check";
 import type { SiteSyncResult } from "@/data/site-sync";
 import { isAllowedRecipient, type TransactionalEmail } from "@/data/transactional-email";
@@ -44,7 +42,6 @@ import type { TwilioClient } from "@/data/twilio-client";
 
 export interface IntegrationsHandlerOptions {
   auth: TracerAuth;
-  database: NodePgDatabase<typeof schema>;
   pool: Pool;
   twilio: TwilioClient;
   cloudflare: CloudflareClient;
@@ -144,7 +141,7 @@ export async function loadIntegrationsOverview(integrations: Integrations, confi
 export function createIntegrationsHandler(options: IntegrationsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveOperator(options.auth, options.database, request.headers);
+      const actor = await requireActiveOperator(options.auth, options.pool, request.headers);
       const integrations: Integrations = createIntegrations({
         pool: options.pool,
         organizationId: actor.organizationId,
