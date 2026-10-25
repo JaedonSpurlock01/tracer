@@ -104,6 +104,22 @@ export interface WorkspaceSetupWizardProps {
   onActivated: (workspace: WorkspaceRecord) => void;
 }
 
+const activationRefusals: Record<string, string> = {
+  twilio_auth_token_missing: "Add the Twilio Auth Token on Integrations before activating; Tracer needs it to verify Twilio's webhooks.",
+  twilio_not_connected: "Connect Twilio on Integrations before activating.",
+  credential_unreadable: "The Twilio credential needs re-entry on Integrations before activating.",
+  number_unavailable: "This number is no longer available.",
+  draft_required: "Save a Call Flow before activating.",
+  state_unchanged: "This Workspace is no longer waiting for activation. Reload to see its current state.",
+};
+
+/** The sentence the Review step shows for an activation the route refused; 422 issues are listed separately. */
+export function activationFailureMessage(status: number, body: { error?: unknown }): string {
+  if (status === 502) return "Twilio could not be updated. The Workspace remains Setup Required.";
+  if (status === 409 && typeof body.error === "string" && body.error in activationRefusals) return activationRefusals[body.error];
+  return "Workspace could not be activated.";
+}
+
 export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: initialWorkspace, initialTimezone, cloudflareConnected, onCreated, onActivated }: WorkspaceSetupWizardProps) {
   const [workspace, setWorkspace] = useState<WorkspaceRecord | null>(initialWorkspace);
   const [step, setStep] = useState(initialWorkspace ? 2 : 1);
@@ -240,11 +256,8 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
     }
     const body = await responseBody(response);
     if (!response.ok) {
-      if (response.status === 502) setReviewError("Twilio could not be updated. The Workspace remains Setup Required.");
-      else if (response.status === 409 && body.error === "number_unavailable") setReviewError("This number is no longer available.");
-      else if (response.status === 422)
-        setReviewIssues(Array.isArray(body.issues) ? (body.issues as Array<{ code: string; message: string }>) : []);
-      else setReviewError("Workspace could not be activated.");
+      if (response.status === 422) setReviewIssues(Array.isArray(body.issues) ? (body.issues as Array<{ code: string; message: string }>) : []);
+      else setReviewError(activationFailureMessage(response.status, body));
       setBusy(false);
       return;
     }
