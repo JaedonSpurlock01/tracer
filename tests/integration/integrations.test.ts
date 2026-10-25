@@ -23,19 +23,18 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
 import { masterKeyFingerprint } from "@/data/provider-credential";
 import { createIntegrations, IntegrationsError } from "@/data/integrations";
 import { createIntegrationsHandler } from "@/data/integrations-handler";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { TwilioClientError, type TwilioAccountSummary, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
@@ -51,6 +50,7 @@ const account: TwilioAccountSummary = { sid: accountSid, friendlyName: "Tracer A
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 let viewerId = "";
@@ -85,10 +85,9 @@ const fakeTwilio: TwilioClient = {
   },
 };
 
-const database = () => drizzle(pool!, { schema });
 
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: {
     async send(message) {
       messages.push(message);
@@ -106,7 +105,7 @@ function handler(overrides: { masterKey?: string; allowedRecipients?: ReadonlySe
   const configuredMasterKey = "masterKey" in overrides ? overrides.masterKey : masterKey;
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     twilio: fakeTwilio,
     cloudflare: { async verifyToken() { throw new Error("not implemented"); }, async listSites() { throw new Error("not implemented"); }, async listDeployments() { throw new Error("not implemented"); }, async fetchDailyTraffic() { throw new Error("not implemented"); }, async captureScreenshot() { throw new Error("not implemented"); } },
     masterKey: configuredMasterKey,
@@ -161,7 +160,8 @@ async function json(request: Request, routeHandler = handler()): Promise<{ respo
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, {
     email: "operator@example.com",
@@ -283,7 +283,7 @@ describe.sequential("Organization integrations", () => {
 
   it("runs provider operations with decrypted credentials and records seam failures", async () => {
     const integrations = createIntegrations({
-      pool: pool!,
+      database: database!,
       organizationId,
       twilio: fakeTwilio,
       masterKey,
@@ -298,7 +298,7 @@ describe.sequential("Organization integrations", () => {
     await expect(integrations.getTwilioConnection()).resolves.toMatchObject({ lastFailureDetail: expect.any(String) });
 
     const disconnected = createIntegrations({
-      pool: pool!,
+      database: database!,
       organizationId: "organization-without-connection",
       twilio: fakeTwilio,
       masterKey,
@@ -683,10 +683,10 @@ describe.sequential("Organization integrations", () => {
     expect(serialized).not.toContain("organizations/");
     expect(serialized).not.toContain("lifecycle-other");
 
-    const remaining = await createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
+    const remaining = await createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
     expect(remaining.oldestStuck).toHaveLength(5);
     await pool!.query("update recording set media_deleted_at = now() where id like 'lifecycle-backlog-%'");
-    await expect(createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth()).resolves.toEqual({
+    await expect(createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth()).resolves.toEqual({
       stuckCount: 3,
       oldestStuck: [
         await entry("lifecycle-expired-stuck", "Expired"),
@@ -694,7 +694,7 @@ describe.sequential("Organization integrations", () => {
         await entry("lifecycle-purged-no-twilio", "Purged", true),
       ],
     });
-    const other = await createIntegrations({ pool: pool!, organizationId: "other-organization-id", twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
+    const other = await createIntegrations({ database: database!, organizationId: "other-organization-id", twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
     expect(other).toMatchObject({ stuckCount: 1, oldestStuck: [{ callId: "lifecycle-other-stuck-call", twilioNotConnected: false }] });
   });
 });

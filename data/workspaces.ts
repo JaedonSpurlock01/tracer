@@ -20,7 +20,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import { isValidIanaTimezone } from "@/data/auth-policy";
 import {
@@ -185,21 +185,6 @@ function toRecord(row: WorkspaceRow): WorkspaceRecord {
   };
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 function normalizeQuery(query: WorkspaceListQuery): { search: string; state: WorkspaceState | "All"; page: number; pageSize: number } {
   const page = Number.isInteger(query.page) && (query.page ?? 0) > 0 ? query.page! : 1;
   const pageSize = Number.isInteger(query.pageSize) && (query.pageSize ?? 0) > 0 ? Math.min(query.pageSize!, 50) : 10;
@@ -230,9 +215,8 @@ export interface WorkspaceGrantScope {
   readableStates: readonly WorkspaceState[];
 }
 
-export function createWorkspaces(pool: Pool, organizationId: string, grantScope?: WorkspaceGrantScope): Workspaces {
-  const lock = `tracer:workspaces:${organizationId}`;
-
+/** The reads every actor may use: an Operator over the Organization, a Client Viewer over granted Workspaces. */
+export function createWorkspaceReads(connection: Queryable, organizationId: string, grantScope?: WorkspaceGrantScope): Pick<Workspaces, "list" | "find"> {
   function scopeConditions(values: unknown[]): string[] {
     if (!grantScope) return [];
     values.push(grantScope.grantedToUserId, grantScope.readableStates);
@@ -247,15 +231,11 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
     return grantScope ? { ...record, createdBy: null } : record;
   }
 
-  async function selectRecord(connection: Pool | PoolClient, id: string): Promise<WorkspaceRecord | null> {
+  async function selectRecord(connection: Queryable, id: string): Promise<WorkspaceRecord | null> {
     const values: unknown[] = [organizationId, id];
     const conditions = ["w.id = $2", ...scopeConditions(values)];
     const result = await connection.query<WorkspaceRow>(`${recordQuery} and ${conditions.join(" and ")} limit 1`, values);
     return result.rows[0] ? toScopedRecord(result.rows[0]) : null;
-  }
-
-  async function lockOrganization(client: PoolClient): Promise<void> {
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
   }
 
   return {
@@ -277,9 +257,9 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
       const countValues = [...values];
       values.push((normalized.page - 1) * normalized.pageSize, normalized.pageSize);
       const [count, rows, totals] = await Promise.all([
-        pool.query<{ count: string }>(`select count(*) from workspace w where ${where}`, countValues),
-        pool.query<WorkspaceRow>(`${recordQuery} and ${conditions.slice(1).join(" and ") || "true"} order by w.name, w.id offset $${values.length - 1} limit $${values.length}`, values),
-        pool.query<{ state: WorkspaceState; count: string }>(
+        connection.query<{ count: string }>(`select count(*) from workspace w where ${where}`, countValues),
+        connection.query<WorkspaceRow>(`${recordQuery} and ${conditions.slice(1).join(" and ") || "true"} order by w.name, w.id offset $${values.length - 1} limit $${values.length}`, values),
+        connection.query<{ state: WorkspaceState; count: string }>(
           `select w.state, count(*) from workspace w where ${scopeWhere} group by w.state`,
           scopeValues,
         ),
@@ -293,12 +273,24 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
       return { workspaces: rows.rows.map(toScopedRecord), total: Number(count.rows[0]?.count ?? 0), page: normalized.page, pageSize: normalized.pageSize, counts };
     },
 
+    async find(id) {
+      return selectRecord(connection, id);
+    },
+  };
+}
+
+export function createWorkspaces(database: Database, organizationId: string, grantScope?: WorkspaceGrantScope): Workspaces {
+  const lock = `tracer:workspaces:${organizationId}`;
+  const transaction = <T>(operation: (client: Transaction) => Promise<T>) => database.transaction(operation, { lock });
+
+  return {
+    ...createWorkspaceReads(database, organizationId, grantScope),
+
     async create(input) {
       const validated = validateNameAndTimezone(input.name, input.reportingTimezone);
       const now = new Date();
       try {
-        return await withTransaction(pool, async (client) => {
-          await lockOrganization(client);
+        return await transaction(async (client) => {
           const workspaceId = randomUUID();
           await client.query(
             `insert into workspace (id, organization_id, name, reporting_timezone, state, created_by_user_id, created_at, updated_at)
@@ -315,10 +307,6 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
       }
     },
 
-    async find(id) {
-      return selectRecord(pool, id);
-    },
-
     async update(id, input) {
       if (input.name === undefined && input.reportingTimezone === undefined) throw new WorkspacesError("invalid_input");
       const name = input.name === undefined ? undefined : normalizeWorkspaceName(input.name);
@@ -327,8 +315,7 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
         throw new WorkspacesError("invalid_input");
       }
       try {
-        return await withTransaction(pool, async (client) => {
-          await lockOrganization(client);
+        return await transaction(async (client) => {
           const current = await client.query<{ id: string }>("select id from workspace where organization_id = $1 and id = $2 for update", [organizationId, id]);
           if (!current.rows[0]) throw new WorkspacesError("not_found");
           const now = new Date();
@@ -348,8 +335,7 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
     },
 
     async archive(id) {
-      return withTransaction(pool, async (client) => {
-        await lockOrganization(client);
+      return transaction(async (client) => {
         const target = await client.query<{ state: WorkspaceState }>("select state from workspace where organization_id = $1 and id = $2 for update", [organizationId, id]);
         const current = target.rows[0];
         if (!current) throw new WorkspacesError("not_found");
@@ -358,15 +344,14 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
         const now = new Date();
         await client.query("update workspace set state = $3, archived_at = $4, updated_at = $4 where organization_id = $1 and id = $2", [organizationId, id, decision.nextState, now]);
         await client.query(endOpenSiteLinkSql, [organizationId, id, now]);
-        const updated = await selectRecord(client, id);
+        const updated = await createWorkspaceReads(client, organizationId, grantScope).find(id);
         if (!updated) throw new WorkspacesError("not_found");
         return updated;
       });
     },
 
     async restore(id) {
-      return withTransaction(pool, async (client) => {
-        await lockOrganization(client);
+      return transaction(async (client) => {
         const target = await client.query<{ state: WorkspaceState }>("select state from workspace where organization_id = $1 and id = $2 for update", [organizationId, id]);
         const current = target.rows[0];
         if (!current) throw new WorkspacesError("not_found");
@@ -374,14 +359,14 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
         if (!decision.allowed) throw new WorkspacesError(decision.reason);
         const now = new Date();
         await client.query("update workspace set state = $3, archived_at = null, updated_at = $4 where organization_id = $1 and id = $2", [organizationId, id, decision.nextState, now]);
-        const updated = await selectRecord(client, id);
+        const updated = await createWorkspaceReads(client, organizationId, grantScope).find(id);
         if (!updated) throw new WorkspacesError("not_found");
         return updated;
       });
     },
 
     async countActive() {
-      const result = await pool.query<{ count: string }>("select count(*) from workspace where organization_id = $1 and state = 'Active'", [organizationId]);
+      const result = await database.query<{ count: string }>("select count(*) from workspace where organization_id = $1 and state = 'Active'", [organizationId]);
       return Number(result.rows[0]?.count ?? 0);
     },
   };

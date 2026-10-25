@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import {
   generateInitialCallFlow,
@@ -163,20 +163,6 @@ interface AssignmentRow {
   prior_status_callback_method: string | null;
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 function mapIntegrationsError(error: IntegrationsError): RoutingError {
   if (error.code === "not_connected") return new RoutingError("twilio_not_connected", error.detail);
@@ -231,7 +217,7 @@ function voiceConfiguration(row: AssignmentRow): TwilioVoiceConfiguration {
 }
 
 export function createWorkspaceRouting(options: {
-  pool: Pool;
+  database: Database;
   organizationId: string;
   twilio: TwilioClient;
   integrations: Integrations;
@@ -239,6 +225,7 @@ export function createWorkspaceRouting(options: {
   baseURL: string;
 }): WorkspaceRouting {
   const lock = `tracer:workspaces:${options.organizationId}`;
+  const transaction = <T>(operation: (client: Transaction) => Promise<T>) => options.database.transaction(operation, { lock });
   const baseURL = options.baseURL.replace(/\/$/, "");
 
   function tracerVoiceConfiguration(assignmentId: string): TwilioVoiceConfiguration {
@@ -252,7 +239,7 @@ export function createWorkspaceRouting(options: {
     };
   }
 
-  async function findActiveAssignment(client: PoolClient, workspaceId: string): Promise<AssignmentRow | undefined> {
+  async function findActiveAssignment(client: Transaction, workspaceId: string): Promise<AssignmentRow | undefined> {
     const result = await client.query<AssignmentRow>(
       `select a.id, n.twilio_sid, a.phone_number, a.prior_voice_url, a.prior_voice_method,
               a.prior_voice_fallback_url, a.prior_voice_fallback_method,
@@ -266,7 +253,7 @@ export function createWorkspaceRouting(options: {
     return result.rows[0];
   }
 
-  async function lockAvailableNumber(client: PoolClient, twilioNumberId: string): Promise<NumberRow> {
+  async function lockAvailableNumber(client: Transaction, twilioNumberId: string): Promise<NumberRow> {
     const numberResult = await client.query<NumberRow>(
       "select id, twilio_sid, phone_number, friendly_name, voice_url, voice_method, released_at, voice_capable from twilio_number where organization_id = $1 and id = $2 for update",
       [options.organizationId, twilioNumberId],
@@ -282,11 +269,8 @@ export function createWorkspaceRouting(options: {
     return number;
   }
 
-  async function lockOrganization(client: PoolClient): Promise<void> {
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
-  }
 
-  async function findWorkspace(client: Pool | PoolClient, workspaceId: string, forUpdate = false): Promise<WorkspaceRow> {
+  async function findWorkspace(client: Queryable, workspaceId: string, forUpdate = false): Promise<WorkspaceRow> {
     const result = await client.query<WorkspaceRow>(
       `select id, state, recording_enabled from workspace where organization_id = $1 and id = $2${forUpdate ? " for update" : ""}`,
       [options.organizationId, workspaceId],
@@ -296,7 +280,7 @@ export function createWorkspaceRouting(options: {
     return row;
   }
 
-  async function latestVersion(client: Pool | PoolClient, workspaceId: string): Promise<VersionRow | null> {
+  async function latestVersion(client: Queryable, workspaceId: string): Promise<VersionRow | null> {
     const result = await client.query<VersionRow>(
       `select fv.id, fv.version, fv.graph, fv.published_at, fv.published_by_user_id as published_by_id, u.name as published_by_name
          from flow_version fv
@@ -309,7 +293,7 @@ export function createWorkspaceRouting(options: {
     return result.rows[0] ?? null;
   }
 
-  async function draft(client: Pool | PoolClient, workspaceId: string): Promise<DraftRow | null> {
+  async function draft(client: Queryable, workspaceId: string): Promise<DraftRow | null> {
     const result = await client.query<DraftRow>(
       "select graph, based_on_version, updated_at from call_flow_draft where organization_id = $1 and workspace_id = $2",
       [options.organizationId, workspaceId],
@@ -318,7 +302,7 @@ export function createWorkspaceRouting(options: {
   }
 
   async function saveDraftRow(
-    client: PoolClient,
+    client: Transaction,
     workspaceId: string,
     graph: CallFlowGraph,
     basedOnVersion: number | null,
@@ -334,7 +318,7 @@ export function createWorkspaceRouting(options: {
   }
 
   async function insertVersion(
-    client: PoolClient,
+    client: Transaction,
     workspaceId: string,
     graph: CallFlowGraph,
     actorUserId: string,
@@ -354,7 +338,7 @@ export function createWorkspaceRouting(options: {
   }
 
   async function updateWorkspaceFromGraph(
-    client: PoolClient,
+    client: Transaction,
     workspaceId: string,
     graph: CallFlowGraph,
     state?: "Active" | "Archived",
@@ -407,7 +391,7 @@ export function createWorkspaceRouting(options: {
 
   return {
     async listAvailableNumbers() {
-      const result = await options.pool.query<AvailableNumberRow>(
+      const result = await options.database.query<AvailableNumberRow>(
         `select n.id, n.twilio_sid, n.phone_number, n.friendly_name, n.voice_url, n.voice_method,
                 n.released_at, n.voice_capable, w.id as assigned_workspace_id, w.name as assigned_workspace_name
            from twilio_number n
@@ -432,8 +416,7 @@ export function createWorkspaceRouting(options: {
 
     async updateRoutingSettings(workspaceId, input, actorUserId) {
       const settings = await currentSettingsInput(input);
-      await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+      await transaction(async (client) => {
         const workspace = await findWorkspace(client, workspaceId, true);
         if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
         const published = await latestVersion(client, workspaceId);
@@ -486,9 +469,9 @@ export function createWorkspaceRouting(options: {
 
     async getFlow(workspaceId) {
       const [workspace, draftRow, versionsResult] = await Promise.all([
-        findWorkspace(options.pool, workspaceId),
-        draft(options.pool, workspaceId),
-        options.pool.query<VersionRow>(
+        findWorkspace(options.database, workspaceId),
+        draft(options.database, workspaceId),
+        options.database.query<VersionRow>(
           `select fv.id, fv.version, fv.graph, fv.published_at, fv.published_by_user_id as published_by_id, u.name as published_by_name
              from flow_version fv
              left join "user" u on u.id = fv.published_by_user_id
@@ -514,8 +497,8 @@ export function createWorkspaceRouting(options: {
     },
 
     async getVersion(workspaceId, version) {
-      await findWorkspace(options.pool, workspaceId);
-      const result = await options.pool.query<VersionRow>(
+      await findWorkspace(options.database, workspaceId);
+      const result = await options.database.query<VersionRow>(
         `select fv.id, fv.version, fv.graph, fv.published_at, fv.published_by_user_id as published_by_id, u.name as published_by_name
            from flow_version fv
            left join "user" u on u.id = fv.published_by_user_id
@@ -532,8 +515,7 @@ export function createWorkspaceRouting(options: {
       if (!graph) throw new RoutingError("invalid_input");
       let updatedAt = new Date();
       let validation: ValidationResult;
-      await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+      await transaction(async (client) => {
         const workspace = await findWorkspace(client, workspaceId, true);
         if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
         const latest = await latestVersion(client, workspaceId);
@@ -545,8 +527,7 @@ export function createWorkspaceRouting(options: {
     },
 
     async discardDraft(workspaceId) {
-      await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+      await transaction(async (client) => {
         const workspace = await findWorkspace(client, workspaceId, true);
         if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
         await client.query("delete from call_flow_draft where organization_id = $1 and workspace_id = $2", [
@@ -561,8 +542,7 @@ export function createWorkspaceRouting(options: {
       let updated = false;
       let sid = "";
       try {
-        await withTransaction(options.pool, async (client) => {
-          await lockOrganization(client);
+        await transaction(async (client) => {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state !== "Setup Required") throw new RoutingError("state_unchanged");
           const number = await lockAvailableNumber(client, input.twilioNumberId);
@@ -641,8 +621,7 @@ export function createWorkspaceRouting(options: {
     async replaceNumber(workspaceId, input) {
       let attached: { sid: string; snapshot: TwilioVoiceConfiguration } | null = null;
       try {
-        await withTransaction(options.pool, async (client) => {
-          await lockOrganization(client);
+        await transaction(async (client) => {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
@@ -717,8 +696,7 @@ export function createWorkspaceRouting(options: {
     async detachNumber(workspaceId) {
       let restoreSkipped = false;
       try {
-        await withTransaction(options.pool, async (client) => {
-          await lockOrganization(client);
+        await transaction(async (client) => {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
@@ -761,8 +739,7 @@ export function createWorkspaceRouting(options: {
     },
 
     async publish(workspaceId, actorUserId) {
-      await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+      await transaction(async (client) => {
         const workspace = await findWorkspace(client, workspaceId, true);
         if (workspace.state === "Setup Required") throw new RoutingError("activation_required");
         if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
@@ -786,8 +763,7 @@ export function createWorkspaceRouting(options: {
 
     async archive(workspaceId) {
       try {
-        await withTransaction(options.pool, async (client) => {
-          await lockOrganization(client);
+        await transaction(async (client) => {
           const workspace = await findWorkspace(client, workspaceId, true);
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
           if (workspace.state === "Setup Required") {

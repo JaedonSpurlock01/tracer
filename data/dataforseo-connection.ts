@@ -27,11 +27,11 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import { DataForSeoClientError, type DataForSeoClient, type DataForSeoCredential } from "@/data/dataforseo-client";
 import { IntegrationsError } from "@/data/integrations-error";
-import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, withTransaction, type CredentialState } from "@/data/provider-credential";
+import { credentialReadability, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, type CredentialState } from "@/data/provider-credential";
 
 export interface DataForSeoConnectionRecord {
   /** Whether the deployment's master key can open the stored secret; Unreadable needs Re-enter credential or Disconnect. */
@@ -48,7 +48,7 @@ export interface DataForSeoConnectionRecord {
 }
 
 export interface DataForSeoConnection {
-  getDataForSeoConnection(client?: Pool | PoolClient): Promise<DataForSeoConnectionRecord | null>;
+  getDataForSeoConnection(client?: Queryable): Promise<DataForSeoConnectionRecord | null>;
   withDataForSeoCredential<T>(operation: (credential: DataForSeoCredential) => Promise<T>): Promise<T>;
   connectDataForSeo(input: { login: string; password: string; actorUserId: string }): Promise<DataForSeoConnectionRecord>;
   testDataForSeo(): Promise<DataForSeoConnectionRecord>;
@@ -57,7 +57,7 @@ export interface DataForSeoConnection {
 }
 
 export interface DataForSeoConnectionOptions {
-  pool: Pool;
+  database: Database;
   organizationId: string;
   dataforseo: DataForSeoClient;
   masterKey: string | undefined;
@@ -105,7 +105,7 @@ function toConnectionRecord(row: ConnectionRow, credentialState: CredentialState
 }
 
 /** Counts one billed DataForSEO request on the Organization's connection for the current UTC month; the counter resets when the month changes. */
-export async function recordDataForSeoLookup(client: Pool | PoolClient, organizationId: string, now: Date): Promise<void> {
+export async function recordDataForSeoLookup(client: Queryable, organizationId: string, now: Date): Promise<void> {
   const month = `${now.toISOString().slice(0, 7)}-01`;
   await client.query(
     `update dataforseo_connection
@@ -125,18 +125,16 @@ function providerFailure(error: unknown): IntegrationsError {
 
 export function createDataForSeoConnection(options: DataForSeoConnectionOptions): DataForSeoConnection {
   const lock = "tracer:dataforseo:" + options.organizationId;
+  const transaction = <T>(operation: (client: Transaction) => Promise<T>) => options.database.transaction(operation, { lock });
 
-  async function selectConnection(client: Pool | PoolClient): Promise<ConnectionRow | null> {
+  async function selectConnection(client: Queryable): Promise<ConnectionRow | null> {
     const result = await client.query<ConnectionRow>(connectionQuery, [options.organizationId]);
     return result.rows[0] ?? null;
   }
 
-  async function lockConnection(client: PoolClient): Promise<void> {
-    await lockOrganization(client, lock);
-  }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    await recordConnectionFailure(options.pool, "dataforseo_connection", lock, options.organizationId, error);
+    await recordConnectionFailure(options.database, "dataforseo_connection", lock, options.organizationId, error);
   }
 
   async function recordOf(row: ConnectionRow): Promise<DataForSeoConnectionRecord> {
@@ -162,25 +160,25 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
     }
   }
 
-  async function requireConnection(client: Pool | PoolClient): Promise<ConnectionRow> {
+  async function requireConnection(client: Queryable): Promise<ConnectionRow> {
     const row = await selectConnection(client);
     if (!row) throw new IntegrationsError("not_connected");
     return row;
   }
 
-  async function recordVerified(client: PoolClient, now: Date): Promise<DataForSeoConnectionRecord> {
+  async function recordVerified(client: Queryable, now: Date): Promise<DataForSeoConnectionRecord> {
     await recordConnectionVerified(client, "dataforseo_connection", options.organizationId, now);
     return recordOf(await requireConnection(client));
   }
 
   return {
     async getDataForSeoConnection(client) {
-      const row = await selectConnection(client ?? options.pool);
+      const row = await selectConnection(client ?? options.database);
       return row ? recordOf(row) : null;
     },
 
     async withDataForSeoCredential(operation) {
-      const credential = await decryptConnection(await requireConnection(options.pool));
+      const credential = await decryptConnection(await requireConnection(options.database));
       try {
         return await operation(credential);
       } catch (error) {
@@ -197,8 +195,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
       if (!login || !password) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         if (await selectConnection(client)) throw new IntegrationsError("already_connected");
         await verifyCredential({ login, password });
         const now = new Date();
@@ -214,7 +211,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
     },
 
     async testDataForSeo() {
-      const credential = await decryptConnection(await requireConnection(options.pool));
+      const credential = await decryptConnection(await requireConnection(options.database));
       try {
         await verifyCredential(credential);
       } catch (error) {
@@ -222,8 +219,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
         await recordFailure(failure);
         throw failure;
       }
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         return recordVerified(client, new Date());
       });
     },
@@ -233,8 +229,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
       if (!password) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         const current = await requireConnection(client);
         await verifyCredential({ login: current.login, password });
         const now = new Date();
@@ -248,8 +243,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
     },
 
     async disconnectDataForSeo() {
-      await withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      await transaction(async (client) => {
         await requireConnection(client);
         await client.query("delete from dataforseo_connection where organization_id = $1", [options.organizationId]);
       });

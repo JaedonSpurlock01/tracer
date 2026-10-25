@@ -39,7 +39,7 @@ async function handle(request: Request): Promise<Response> {
       dataforseo,
       syncSitesLocally: isE2eCloudflareFake() && masterKey
         ? (organizationId) => syncSites({
-            pool: runtime.pool,
+            database: runtime.database,
             cloudflare,
             objects: runtime.recordingBucket ? sitePreviewObjectsFromBinding(runtime.recordingBucket) : undefined,
             masterKey,
@@ -49,7 +49,7 @@ async function handle(request: Request): Promise<Response> {
           })
         : undefined,
       checkRankingsLocally: isE2eDataForSeoFake() && masterKey
-        ? (organizationId) => checkRankings({ pool: runtime.pool, dataforseo, masterKey, now: new Date(), organizationId })
+        ? (organizationId) => checkRankings({ database: runtime.database, dataforseo, masterKey, now: new Date(), organizationId })
         : undefined,
     })(request);
   });

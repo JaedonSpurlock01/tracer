@@ -17,18 +17,17 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
 import { masterKeyFingerprint } from "@/data/provider-credential";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { TwilioClientError, type TwilioClient, type TwilioVoiceConfiguration } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
@@ -51,7 +50,9 @@ const priorConfiguration: TwilioVoiceConfiguration = {
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let routingPool: Pool | undefined;
+let routingDatabase: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 const secondOrganizationId = "second-routing-organization";
@@ -93,10 +94,9 @@ const fakeTwilio: TwilioClient = {
   },
 };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () =>
   createTracerAuth({
-    database: database(),
+    database: database!.drizzle,
     email: {
       async send(message) {
         messages.push(message);
@@ -112,7 +112,7 @@ const auth = () =>
 
 function integrationsFor(organization: string) {
   return createIntegrations({
-    pool: routingPool!,
+    database: routingDatabase!,
     organizationId: organization,
     twilio: fakeTwilio,
     masterKey,
@@ -122,7 +122,7 @@ function integrationsFor(organization: string) {
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: routingPool!,
+    pool: routingPool!, database: routingDatabase!,
     twilio: fakeTwilio,
     integrations: integrationsFor,
     baseURL,
@@ -184,8 +184,10 @@ function generatedGraph(destinationNumber = "+14155550101", recordingEnabled = f
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
-  routingPool = createTestPool(container.getConnectionUri(), { max: 1 });
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
+  routingDatabase = createTestDatabase(container.getConnectionUri(), { max: 1 });
+  routingPool = routingDatabase.pool;
   await migrateDatabase(container.getConnectionUri());
   const first = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Routing Operator", timezone: "UTC" });
   organizationId = first.organizationId;

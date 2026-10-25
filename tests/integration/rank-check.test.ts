@@ -25,8 +25,9 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase, createTestPool } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { encryptSecret } from "@/data/credential-encryption";
 import { DataForSeoClientError, type DataForSeoClient, type DataForSeoSerpItem, type DataForSeoSerpQuery } from "@/data/dataforseo-client";
 import { migrateDatabase } from "@/data/migrate";
@@ -40,6 +41,7 @@ const password = "fleet-synthetic-dataforseo-password";
 let container: StartedPostgreSqlContainer | undefined;
 let owner: Pool | undefined;
 let runtime: Pool | undefined;
+let runtimeDatabase: Database | undefined;
 
 const queries: { login: string; query: DataForSeoSerpQuery }[] = [];
 const failing = new Set<string>();
@@ -76,7 +78,7 @@ function utcDay(at: Date): string {
 }
 
 async function check(now: Date, organizationId?: string) {
-  return checkRankings({ pool: runtime!, dataforseo, masterKey, now, organizationId });
+  return checkRankings({ database: runtimeDatabase!, dataforseo, masterKey, now, organizationId });
 }
 
 async function rankStatus(keywordId: string) {
@@ -105,7 +107,8 @@ beforeAll(async () => {
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = runtimePassword;
-  runtime = createTestPool(runtimeUrl.toString());
+  runtimeDatabase = createTestDatabase(runtimeUrl.toString());
+  runtime = runtimeDatabase.pool;
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now()), ('solo', 'solo', 'solo', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await owner.query(

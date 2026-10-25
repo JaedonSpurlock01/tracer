@@ -40,7 +40,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { addCalendarDays } from "@/data/analytics-range";
 import type { CloudflareClient, CloudflareCredential, CloudflareDailyTraffic } from "@/data/cloudflare-client";
@@ -49,7 +49,7 @@ import { IntegrationsError } from "@/data/integrations-error";
 import { captureSitePreview, previewNeedsRefresh, type SitePreviewObjects } from "@/data/site-preview";
 
 export interface SiteSyncDeps {
-  pool: Pool;
+  database: Database;
   cloudflare: CloudflareClient;
   objects?: SitePreviewObjects;
   masterKey: string;
@@ -80,10 +80,10 @@ function utcDay(at: Date): string {
   return at.toISOString().slice(0, 10);
 }
 
-async function recordDeployments(pool: Pool, cloudflare: CloudflareClient, credential: CloudflareCredential, site: SyncSiteRow, now: Date): Promise<void> {
+async function recordDeployments(database: Database, cloudflare: CloudflareClient, credential: CloudflareCredential, site: SyncSiteRow, now: Date): Promise<void> {
   const deployments = await cloudflare.listDeployments(credential, site.script_name, siteSyncDeploymentLimit);
   for (const deployment of deployments) {
-    await pool.query(
+    await database.query(
       `insert into site_deployment (id, site_id, version_id, source, author_email, deployed_at) values ($1, $2, $3, $4, $5, $6)
        on conflict (site_id, version_id) do update set source = excluded.source, author_email = excluded.author_email, deployed_at = excluded.deployed_at`,
       [randomUUID(), site.id, deployment.versionId, deployment.source, deployment.authorEmail, deployment.deployedAt],
@@ -91,12 +91,12 @@ async function recordDeployments(pool: Pool, cloudflare: CloudflareClient, crede
   }
   const newest = deployments[0];
   if (newest) {
-    await pool.query("update site set live_version_id = $2, last_deployed_at = $3, updated_at = $4 where id = $1", [site.id, newest.versionId, newest.deployedAt, now]);
+    await database.query("update site set live_version_id = $2, last_deployed_at = $3, updated_at = $4 where id = $1", [site.id, newest.versionId, newest.deployedAt, now]);
   }
 }
 
-async function upsertMetricDay(pool: Pool, siteId: string, day: CloudflareDailyTraffic, now: Date): Promise<void> {
-  await pool.query(
+async function upsertMetricDay(database: Database, siteId: string, day: CloudflareDailyTraffic, now: Date): Promise<void> {
+  await database.query(
     `insert into site_metric_day (id, site_id, day, visits, page_views, requests, errors, top_paths, referrers, devices, lcp_ms, inp_ms, cls, synced_at)
      values ($1, $2, $3::date, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14)
      on conflict (site_id, day) do update set
@@ -111,14 +111,14 @@ async function upsertMetricDay(pool: Pool, siteId: string, day: CloudflareDailyT
   );
 }
 
-async function recordTraffic(pool: Pool, cloudflare: CloudflareClient, credential: CloudflareCredential, site: SyncSiteRow, now: Date): Promise<void> {
+async function recordTraffic(database: Database, cloudflare: CloudflareClient, credential: CloudflareCredential, site: SyncSiteRow, now: Date): Promise<void> {
   const today = utcDay(now);
   const fromDate = addCalendarDays(today, site.has_metrics ? -1 : -(siteSyncBackfillDays - 1));
   const days = await cloudflare.fetchDailyTraffic(credential, { siteTag: site.rum_site_tag ?? "", scriptName: site.script_name, fromDate, toDate: today });
-  for (const day of days) await upsertMetricDay(pool, site.id, day, now);
+  for (const day of days) await upsertMetricDay(database, site.id, day, now);
 }
 
-async function recordCheck(pool: Pool, request: typeof fetch, site: SyncSiteRow, now: Date): Promise<void> {
+async function recordCheck(database: Database, request: typeof fetch, site: SyncSiteRow, now: Date): Promise<void> {
   const started = Date.now();
   let statusCode: number | null = null;
   let responseMs: number | null = null;
@@ -131,7 +131,7 @@ async function recordCheck(pool: Pool, request: typeof fetch, site: SyncSiteRow,
   } catch (caught) {
     error = caught instanceof Error ? caught.message : "Request failed";
   }
-  await pool.query(
+  await database.query(
     "insert into site_check (id, site_id, checked_at, status_code, response_ms, ok, error) values ($1, $2, $3, $4, $5, $6, $7)",
     [randomUUID(), site.id, now, statusCode, responseMs, statusCode !== null && statusCode < 400, error],
   );
@@ -139,7 +139,7 @@ async function recordCheck(pool: Pool, request: typeof fetch, site: SyncSiteRow,
 
 async function refreshPreview(deps: SiteSyncDeps, siteId: string): Promise<void> {
   if (!deps.objects) return;
-  const row = (await deps.pool.query<{ live_version_id: string | null; preview_version_id: string | null; preview_captured_at: Date | null }>(
+  const row = (await deps.database.query<{ live_version_id: string | null; preview_version_id: string | null; preview_captured_at: Date | null }>(
     `select s.live_version_id, p.version_id as preview_version_id, p.captured_at as preview_captured_at
        from site s
        left join lateral (select version_id, captured_at from site_preview where site_id = s.id order by captured_at desc limit 1) p on true
@@ -149,7 +149,7 @@ async function refreshPreview(deps: SiteSyncDeps, siteId: string): Promise<void>
   if (!row) return;
   const latestPreview = row.preview_captured_at ? { versionId: row.preview_version_id, capturedAt: row.preview_captured_at.toISOString() } : null;
   if (!previewNeedsRefresh({ latestPreview, liveVersionId: row.live_version_id, now: deps.now })) return;
-  await captureSitePreview({ pool: deps.pool, cloudflare: deps.cloudflare, objects: deps.objects, masterKey: deps.masterKey, siteId, now: deps.now });
+  await captureSitePreview({ database: deps.database, cloudflare: deps.cloudflare, objects: deps.objects, masterKey: deps.masterKey, siteId, now: deps.now });
 }
 
 export type SiteSyncStage = "deployments" | "traffic" | "check" | "preview";
@@ -164,29 +164,29 @@ async function syncSite(deps: SiteSyncDeps, connection: CloudflareConnection, si
   let stage: SiteSyncStage = "deployments";
   try {
     await connection.withCloudflareCredential(async (credential) => {
-      await recordDeployments(deps.pool, deps.cloudflare, credential, site, deps.now);
+      await recordDeployments(deps.database, deps.cloudflare, credential, site, deps.now);
       stage = "traffic";
-      await recordTraffic(deps.pool, deps.cloudflare, credential, site, deps.now);
+      await recordTraffic(deps.database, deps.cloudflare, credential, site, deps.now);
     });
     stage = "check";
-    await recordCheck(deps.pool, deps.fetch ?? globalThis.fetch, site, deps.now);
+    await recordCheck(deps.database, deps.fetch ?? globalThis.fetch, site, deps.now);
     stage = "preview";
     await refreshPreview(deps, site.id);
-    await deps.pool.query("update site set last_sync_at = $2, last_sync_stage = null, last_sync_error = null, updated_at = $2 where id = $1", [site.id, deps.now]);
+    await deps.database.query("update site set last_sync_at = $2, last_sync_stage = null, last_sync_error = null, updated_at = $2 where id = $1", [site.id, deps.now]);
   } catch (error) {
-    await deps.pool.query("update site set last_sync_at = $2, last_sync_stage = $3, last_sync_error = $4, updated_at = $2 where id = $1", [site.id, deps.now, stage, failureReason(error)]);
+    await deps.database.query("update site set last_sync_at = $2, last_sync_stage = $3, last_sync_error = $4, updated_at = $2 where id = $1", [site.id, deps.now, stage, failureReason(error)]);
     throw error;
   }
 }
 
 async function syncOrganization(deps: SiteSyncDeps, organizationId: string, result: SiteSyncResult): Promise<void> {
-  const connection = createCloudflareConnection({ pool: deps.pool, organizationId, cloudflare: deps.cloudflare, masterKey: deps.masterKey });
+  const connection = createCloudflareConnection({ database: deps.database, organizationId, cloudflare: deps.cloudflare, masterKey: deps.masterKey });
   try {
     await connection.syncSites();
   } catch (error) {
     console.error(`Site discovery failed for Organization ${organizationId}`, error);
   }
-  const sites = await deps.pool.query<SyncSiteRow>(
+  const sites = await deps.database.query<SyncSiteRow>(
     `select s.id, s.script_name, s.primary_hostname, s.rum_site_tag, exists (select 1 from site_metric_day m where m.site_id = s.id) as has_metrics
        from site s where s.organization_id = $1 and s.removed_at is null order by s.primary_hostname, s.id`,
     [organizationId],
@@ -204,12 +204,12 @@ async function syncOrganization(deps: SiteSyncDeps, organizationId: string, resu
     }
   }
   if (sites.rows.length === 0 || synced > 0) {
-    await deps.pool.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
+    await deps.database.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
   }
 }
 
 export async function syncSites(deps: SiteSyncDeps): Promise<SiteSyncResult> {
-  const connections = await deps.pool.query<{ organization_id: string }>(
+  const connections = await deps.database.query<{ organization_id: string }>(
     `select organization_id from cloudflare_connection where $1::text is null or organization_id = $1 order by organization_id`,
     [deps.organizationId ?? null],
   );

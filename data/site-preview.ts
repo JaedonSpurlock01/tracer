@@ -37,7 +37,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import { createCloudflareConnection } from "@/data/cloudflare-connection";
@@ -59,7 +59,7 @@ export interface SitePreviewBinding {
 }
 
 export interface CaptureSitePreviewInput {
-  pool: Pool;
+  database: Database;
   cloudflare: CloudflareClient;
   objects: SitePreviewObjects;
   masterKey: string | undefined;
@@ -127,7 +127,7 @@ type PreviewSiteRow = {
 };
 
 export async function captureSitePreview(input: CaptureSitePreviewInput): Promise<SitePreviewCapture> {
-  const site = (await input.pool.query<PreviewSiteRow>(
+  const site = (await input.database.query<PreviewSiteRow>(
     `select s.organization_id, s.primary_hostname, s.live_version_id,
             (select max(p.captured_at) from site_preview p where p.site_id = s.id) as latest_captured_at
        from site s where s.id = $1 and s.removed_at is null`,
@@ -137,15 +137,15 @@ export async function captureSitePreview(input: CaptureSitePreviewInput): Promis
   if (!decidePreviewCapture({ latestCapturedAt: site.latest_captured_at?.toISOString() ?? null, now: input.now, force: input.force ?? false })) {
     return { captured: false, objectKey: null };
   }
-  const connection = createCloudflareConnection({ pool: input.pool, organizationId: site.organization_id, cloudflare: input.cloudflare, masterKey: input.masterKey });
+  const connection = createCloudflareConnection({ database: input.database, organizationId: site.organization_id, cloudflare: input.cloudflare, masterKey: input.masterKey });
   const image = await connection.withCloudflareCredential((credential) => input.cloudflare.captureScreenshot(credential, `https://${site.primary_hostname}/`));
   const objectKey = sitePreviewObjectKey(input.siteId, site.live_version_id, input.now);
   await input.objects.put(objectKey, image, sitePreviewContentType);
-  await input.pool.query(
+  await input.database.query(
     "insert into site_preview (id, site_id, version_id, object_key, captured_at, byte_size) values ($1, $2, $3, $4, $5, $6)",
     [randomUUID(), input.siteId, site.live_version_id, objectKey, input.now, image.byteLength],
   );
-  const stale = await input.pool.query<{ object_key: string }>(
+  const stale = await input.database.query<{ object_key: string }>(
     "select object_key from site_preview where site_id = $1 order by captured_at desc, id desc offset $2 limit $3",
     [input.siteId, sitePreviewKeepCount, sitePreviewRetryDeleteLimit],
   );

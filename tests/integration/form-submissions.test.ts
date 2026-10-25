@@ -26,12 +26,12 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -40,7 +40,6 @@ import { createFormsKey } from "@/data/form-submissions";
 import { createFormsHandler } from "@/data/forms-handler";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import type { TransactionalEmail, TransactionalEmailMessage } from "@/data/transactional-email";
 import type { TwilioClient } from "@/data/twilio-client";
@@ -48,6 +47,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -74,9 +74,8 @@ const forwardingEmail: TransactionalEmail = {
   },
 };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: { async send(message) { authMessages.push(message as typeof authMessages[number]); return { messageId: `email-${authMessages.length}` }; } },
   emailFrom: "auth@example.com",
   allowedRecipients: new Set(["operator@example.com", "viewer@example.com"]),
@@ -88,10 +87,10 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!,
+    pool: pool!, database: database!,
     email: forwardingEmail,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
+    integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }
@@ -143,7 +142,8 @@ function viewerActor(): Actor {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;

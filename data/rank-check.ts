@@ -37,14 +37,14 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { DataForSeoClient, DataForSeoSerpItem } from "@/data/dataforseo-client";
 import { createDataForSeoConnection, recordDataForSeoLookup, type DataForSeoConnection } from "@/data/dataforseo-connection";
 import { IntegrationsError } from "@/data/integrations-error";
 
 export interface RankCheckDeps {
-  pool: Pool;
+  database: Database;
   dataforseo: DataForSeoClient;
   masterKey: string;
   now: Date;
@@ -92,7 +92,7 @@ async function checkKeyword(deps: RankCheckDeps, connection: DataForSeoConnectio
     deps.dataforseo.serp(credential, { keyword: keyword.phrase, ...location, languageCode: "en", depth: 100 }),
   );
   const rank = siteRank(items, keyword.primary_hostname);
-  await deps.pool.query(
+  await deps.database.query(
     `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, check_status, failure_reason, matched_type)
      values ($1, $2, $3::date, $4, $5, $6::jsonb, $7, 'checked', null, $8)
      on conflict (site_keyword_id, day) do update set
@@ -106,7 +106,7 @@ async function checkKeyword(deps: RankCheckDeps, connection: DataForSeoConnectio
 /** Keeps the failed check on the day's row so the Site page can say why; a later run the same day replaces it. */
 async function recordFailedCheck(deps: RankCheckDeps, keyword: KeywordRow, error: unknown): Promise<void> {
   const reason = error instanceof IntegrationsError ? (error.detail ?? error.code) : error instanceof Error ? error.message : "Rank check failed";
-  await deps.pool.query(
+  await deps.database.query(
     `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, check_status, failure_reason, matched_type)
      values ($1, $2, $3::date, null, null, '[]'::jsonb, $4, 'failed', $5, null)
      on conflict (site_keyword_id, day) do update set checked_at = excluded.checked_at, failure_reason = excluded.failure_reason
@@ -116,12 +116,12 @@ async function recordFailedCheck(deps: RankCheckDeps, keyword: KeywordRow, error
 }
 
 async function countLookup(deps: RankCheckDeps, organizationId: string): Promise<void> {
-  await recordDataForSeoLookup(deps.pool, organizationId, deps.now);
+  await recordDataForSeoLookup(deps.database, organizationId, deps.now);
 }
 
 async function checkOrganization(deps: RankCheckDeps, organizationId: string, result: RankCheckResult): Promise<void> {
-  const connection = createDataForSeoConnection({ pool: deps.pool, organizationId, dataforseo: deps.dataforseo, masterKey: deps.masterKey });
-  const keywords = await deps.pool.query<KeywordRow>(
+  const connection = createDataForSeoConnection({ database: deps.database, organizationId, dataforseo: deps.dataforseo, masterKey: deps.masterKey });
+  const keywords = await deps.database.query<KeywordRow>(
     `select k.id, k.phrase, s.id as site_id, s.primary_hostname,
             coalesce(s.service_area_location_name, concat_ws(',', s.service_area_city, s.service_area_region, s.service_area_country)) as location_name,
             s.service_area_location_code as location_code,
@@ -148,11 +148,11 @@ async function checkOrganization(deps: RankCheckDeps, organizationId: string, re
       console.error(`Rank check failed for ${keyword.primary_hostname}: ${keyword.phrase}`, error);
     }
   }
-  await deps.pool.query("update dataforseo_connection set last_checked_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
+  await deps.database.query("update dataforseo_connection set last_checked_at = $2, updated_at = $2 where organization_id = $1", [organizationId, deps.now]);
 }
 
 export async function checkRankings(deps: RankCheckDeps): Promise<RankCheckResult> {
-  const connections = await deps.pool.query<{ organization_id: string }>(
+  const connections = await deps.database.query<{ organization_id: string }>(
     "select organization_id from dataforseo_connection where $1::text is null or organization_id = $1 order by organization_id",
     [deps.organizationId ?? null],
   );

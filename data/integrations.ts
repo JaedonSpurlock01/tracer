@@ -42,7 +42,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
 import { createCloudflareConnection, type CloudflareConnection } from "@/data/cloudflare-connection";
@@ -51,7 +51,7 @@ import { createDataForSeoConnection, type DataForSeoConnection } from "@/data/da
 import { IntegrationsError } from "@/data/integrations-error";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
-import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, unreadableCredentialDetail, withTransaction, type CredentialState } from "@/data/provider-credential";
+import { credentialReadability, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, unreadableCredentialDetail, type CredentialState } from "@/data/provider-credential";
 import type { AnalysisProcessingHealth, MediaLifecycleHealth, RecordingTransferHealth } from "@/data/provider-health";
 import { recordingMediaExpiredSql, recordingMediaExpiresAtSql } from "@/data/recording-media";
 import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
@@ -88,7 +88,7 @@ export interface TwilioNumberRecord {
 export { IntegrationsError, type IntegrationsErrorCode } from "@/data/integrations-error";
 
 export interface IntegrationsOptions {
-  pool: Pool;
+  database: Database;
   organizationId: string;
   twilio: TwilioClient;
   cloudflare?: CloudflareClient;
@@ -97,10 +97,10 @@ export interface IntegrationsOptions {
 }
 
 export interface Integrations extends CloudflareConnection, DataForSeoConnection {
-  getTwilioConnection(client?: Pool | PoolClient): Promise<TwilioConnectionRecord | null>;
+  getTwilioConnection(client?: Queryable): Promise<TwilioConnectionRecord | null>;
   withTwilioCredential<T>(
     operation: (credential: TwilioCredential) => Promise<T>,
-    context?: { client?: Pool | PoolClient; deferFailureRecording?: boolean },
+    context?: { client?: Queryable; deferFailureRecording?: boolean },
   ): Promise<T>;
   recordTwilioFailure(error: unknown): Promise<IntegrationsError>;
   connectTwilio(input: {
@@ -227,31 +227,29 @@ const unavailableDataForSeo: DataForSeoClient = {
 
 export function createIntegrations(options: IntegrationsOptions): Integrations {
   const lock = "tracer:integrations:" + options.organizationId;
+  const transaction = <T>(operation: (client: Transaction) => Promise<T>) => options.database.transaction(operation, { lock });
   const table = "twilio_connection";
   const cloudflare = createCloudflareConnection({
-    pool: options.pool,
+    database: options.database,
     organizationId: options.organizationId,
     cloudflare: options.cloudflare ?? unavailableCloudflare,
     masterKey: options.masterKey,
   });
   const dataforseo = createDataForSeoConnection({
-    pool: options.pool,
+    database: options.database,
     organizationId: options.organizationId,
     dataforseo: options.dataforseo ?? unavailableDataForSeo,
     masterKey: options.masterKey,
   });
 
-  async function selectConnection(client: Pool | PoolClient): Promise<ConnectionRow | null> {
+  async function selectConnection(client: Queryable): Promise<ConnectionRow | null> {
     const result = await client.query<ConnectionRow>(connectionQuery, [options.organizationId]);
     return result.rows[0] ?? null;
   }
 
-  async function lockConnection(client: PoolClient): Promise<void> {
-    await lockOrganization(client, lock);
-  }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    await recordConnectionFailure(options.pool, table, lock, options.organizationId, error);
+    await recordConnectionFailure(options.database, table, lock, options.organizationId, error);
   }
 
   async function recordOf(row: ConnectionRow): Promise<TwilioConnectionRecord> {
@@ -287,15 +285,15 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     ...dataforseo,
 
     async getTwilioConnection(client) {
-      const row = await selectConnection(client ?? options.pool);
+      const row = await selectConnection(client ?? options.database);
       return row ? recordOf(row) : null;
     },
 
     async withTwilioCredential<T>(
       operation: (credential: TwilioCredential) => Promise<T>,
-      context?: { client?: Pool | PoolClient; deferFailureRecording?: boolean },
+      context?: { client?: Queryable; deferFailureRecording?: boolean },
     ) {
-      const row = await selectConnection(context?.client ?? options.pool);
+      const row = await selectConnection(context?.client ?? options.database);
       if (!row) throw new IntegrationsError("not_connected");
       const credential = await decryptConnection(row);
       try {
@@ -326,8 +324,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       if (!masterKey) {
         throw new IntegrationsError("master_key_missing");
       }
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         if (await selectConnection(client)) {
           throw new IntegrationsError("already_connected");
         }
@@ -349,7 +346,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async testTwilio() {
-      const row = await selectConnection(options.pool);
+      const row = await selectConnection(options.database);
       if (!row) throw new IntegrationsError("not_connected");
       const credential = await decryptConnection(row);
       try {
@@ -360,8 +357,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
         throw failure;
       }
       const now = new Date();
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         await recordConnectionVerified(client, table, options.organizationId, now);
         const updated = await selectConnection(client);
         if (!updated) throw new IntegrationsError("not_connected");
@@ -370,15 +366,14 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async rotateTwilioKey(input) {
-      const row = await selectConnection(options.pool);
+      const row = await selectConnection(options.database);
       if (!row) throw new IntegrationsError("not_connected");
       const apiKeySid = input.apiKeySid.trim();
       const apiKeySecret = input.apiKeySecret.trim();
       if (!isTwilioApiKeySid(apiKeySid) || !apiKeySecret) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         const current = await selectConnection(client);
         if (!current) throw new IntegrationsError("not_connected");
         const account = await verifyCredential({ accountSid: current.account_sid, apiKeySid, apiKeySecret });
@@ -405,8 +400,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       if (!authToken) throw new IntegrationsError("invalid_input");
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         const current = await selectConnection(client);
         if (!current) throw new IntegrationsError("not_connected");
         if ((await credentialReadability({ fingerprint: current.master_key_fingerprint, masterKey })) !== "readable") {
@@ -428,8 +422,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async disconnectTwilio(input) {
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         const existing = await selectConnection(client);
         if (!existing) throw new IntegrationsError("not_connected");
         const active = await client.query<{ count: number }>("select count(*)::int as count from workspace where organization_id = $1 and state = 'Active'", [options.organizationId]);
@@ -456,7 +449,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async syncTwilioNumbers() {
-      const row = await selectConnection(options.pool);
+      const row = await selectConnection(options.database);
       if (!row) throw new IntegrationsError("not_connected");
       const credential = await decryptConnection(row);
       let incoming: TwilioIncomingPhoneNumber[];
@@ -473,8 +466,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       });
       const skipped = incoming.length - normalized.length;
       const syncedAt = new Date();
-      return withTransaction(options.pool, async (client) => {
-        await lockConnection(client);
+      return transaction(async (client) => {
         for (const number of normalized) {
           await client.query(
             `insert into twilio_number
@@ -521,7 +513,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async listTwilioNumbers() {
-      const result = await options.pool.query<NumberRow>(
+      const result = await options.database.query<NumberRow>(
         `select id, twilio_sid, phone_number, friendly_name, voice_capable, voice_url,
                 voice_method, first_seen_at, last_seen_at, released_at
            from twilio_number where organization_id = $1
@@ -532,11 +524,11 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async getRecordingTransferHealth() {
-      const stored = await options.pool.query<{ last_stored_at: Date | null }>(
+      const stored = await options.database.query<{ last_stored_at: Date | null }>(
         "select max(stored_at) as last_stored_at from recording where organization_id = $1",
         [options.organizationId],
       );
-      const failures = await options.pool.query<{ failure_stage: string; failure_reason: string; updated_at: Date }>(
+      const failures = await options.database.query<{ failure_stage: string; failure_reason: string; updated_at: Date }>(
         `select failure_stage, failure_reason, updated_at from recording
           where organization_id = $1 and failure_stage is not null
           order by updated_at desc, id
@@ -550,7 +542,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async getAnalysisProcessingHealth() {
-      const result = await options.pool.query<{ last_transcript_at: Date | null; last_lead_assessment_at: Date | null; failed_count: number; last_failure_at: Date | null }>(
+      const result = await options.database.query<{ last_transcript_at: Date | null; last_lead_assessment_at: Date | null; failed_count: number; last_failure_at: Date | null }>(
         `select (select max(transcript_completed_at) from recording where organization_id = $1) as last_transcript_at,
                 (select max(processed_at) from lead_assessment where organization_id = $1) as last_lead_assessment_at,
                 failed.failed_count, failed.last_failure_at
@@ -568,7 +560,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     },
 
     async getMediaLifecycleHealth() {
-      const result = await options.pool.query<{ call_id: string; workspace_id: string; workspace_name: string; media: "Purged" | "Expired"; since: Date; twilio_not_connected: boolean; stuck_count: number }>(
+      const result = await options.database.query<{ call_id: string; workspace_id: string; workspace_name: string; media: "Purged" | "Expired"; since: Date; twilio_not_connected: boolean; stuck_count: number }>(
         `select call_id, workspace_id, workspace_name, media, since, twilio_not_connected, count(*) over ()::int as stuck_count
            from (select r.id, r.call_id, r.workspace_id, w.name as workspace_name,
                         case when r.media_purged_at is not null then 'Purged' else 'Expired' end as media,

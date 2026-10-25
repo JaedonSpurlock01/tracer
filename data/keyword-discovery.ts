@@ -36,7 +36,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import type { DataForSeoClient, DataForSeoSearchIntent } from "@/data/dataforseo-client";
@@ -72,7 +72,7 @@ export interface KeywordDiscovery {
 }
 
 export interface KeywordDiscoveryOptions {
-  pool: Pool;
+  database: Database;
   actor: Actor;
   responder: StructuredResponder;
   dataforseo: DataForSeoClient;
@@ -151,12 +151,12 @@ function rank(suggestions: KeywordSuggestion[]): KeywordSuggestion[] {
 }
 
 export function createKeywordDiscovery(options: KeywordDiscoveryOptions): KeywordDiscovery {
-  const { pool, actor } = options;
+  const { database, actor } = options;
   const now = options.now ?? (() => new Date());
 
   async function requireSite(siteId: string): Promise<SiteRow> {
     if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
-    const result = await pool.query<SiteRow>(
+    const result = await database.query<SiteRow>(
       `select b.name as business_name, b.niche, s.service_area_location_code, s.service_area_location_name, s.keyword_suggestions
          from site s
          left join site_link l on l.site_id = s.id and l.ended_at is null
@@ -169,7 +169,7 @@ export function createKeywordDiscovery(options: KeywordDiscoveryOptions): Keywor
   }
 
   async function livePhrases(siteId: string): Promise<Set<string>> {
-    const result = await pool.query<{ phrase: string }>("select phrase from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
+    const result = await database.query<{ phrase: string }>("select phrase from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
     return new Set(result.rows.map((row) => row.phrase.toLowerCase()));
   }
 
@@ -188,12 +188,12 @@ export function createKeywordDiscovery(options: KeywordDiscoveryOptions): Keywor
       }));
       const phrases = [...new Set(parseProposals(response.text).flatMap((phrase) => normalizePhrase(phrase) ?? []))].filter((phrase) => !tracked.has(phrase));
 
-      const connection = createDataForSeoConnection({ pool, organizationId: actor.organizationId, dataforseo: options.dataforseo, masterKey: options.masterKey });
+      const connection = createDataForSeoConnection({ database, organizationId: actor.organizationId, dataforseo: options.dataforseo, masterKey: options.masterKey });
       const measured = phrases.length
         ? await connection.withDataForSeoCredential((credential) =>
           options.dataforseo.keywordOverview(credential, { keywords: phrases, locationCode: site.service_area_location_code ?? unitedStatesLocationCode, languageCode: "en" }))
         : [];
-      if (phrases.length) await recordDataForSeoLookup(pool, actor.organizationId, now());
+      if (phrases.length) await recordDataForSeoLookup(database, actor.organizationId, now());
       const byPhrase = new Map(measured.map((row) => [row.phrase, row]));
       const set: KeywordSuggestionSet = {
         suggestedAt: now().toISOString(),
@@ -202,7 +202,7 @@ export function createKeywordDiscovery(options: KeywordDiscoveryOptions): Keywor
           return { phrase, monthlyVolume: row?.monthlyVolume ?? 0, difficulty: row?.difficulty ?? null, intent: row?.intent ?? null };
         })),
       };
-      await pool.query("update site set keyword_suggestions = $2, updated_at = $3 where id = $1", [siteId, JSON.stringify(set), now()]);
+      await database.query("update site set keyword_suggestions = $2, updated_at = $3 where id = $1", [siteId, JSON.stringify(set), now()]);
       return set;
     },
   };

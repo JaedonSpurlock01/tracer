@@ -36,8 +36,9 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -57,7 +58,9 @@ import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let owner: Pool | undefined;
+let ownerDatabase: Database | undefined;
 let runtime: Pool | undefined;
+let runtimeDatabase: Database | undefined;
 let organizationId = "";
 let operatorId = "";
 let operatorCookie = "";
@@ -116,9 +119,9 @@ const twilioMedia = createTwilioRecordingMedia({ fetch: (input, init) => twilio.
 
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
-  pool: runtime!,
+  pool: runtime!, database: runtimeDatabase!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
+  integrations: (id) => createIntegrations({ database: ownerDatabase!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
   recordingBucket: r2,
   masterKey,
@@ -234,13 +237,15 @@ async function mediaState(callId: string) {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = createTestPool(container.getConnectionUri());
+  ownerDatabase = createTestDatabase(container.getConnectionUri());
+  owner = ownerDatabase.pool;
   const password = "D".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = createTestPool(runtimeUrl.toString());
+  runtimeDatabase = createTestDatabase(runtimeUrl.toString());
+  runtime = runtimeDatabase.pool;
   ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(owner, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
   await owner.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)

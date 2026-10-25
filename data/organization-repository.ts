@@ -14,7 +14,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Queryable } from "@/data/database";
 
 export interface Organization {
   id: string;
@@ -33,7 +33,7 @@ export interface OrganizationRepository {
   findById(id: string): Promise<Organization | null>;
 }
 
-export function createOrganizationRepository(connection: Pick<Pool | PoolClient, "query">): OrganizationRepository {
+export function createOrganizationRepository(connection: Queryable): OrganizationRepository {
   return {
     async create(input) {
       const organization = {

@@ -42,8 +42,8 @@ export default async function WorkspaceSettingsSectionPage({ params }: { params:
   const { id, section } = await params;
   const match = workspaceSettingsSections.find((item) => item.slug === section);
   if (!match) notFound();
-  const data = await withRequestRuntime(async ({ pool, email }) => {
-    const workspace = await createWorkspaces(pool, actor.organizationId).find(id);
+  const data = await withRequestRuntime(async ({ database, pool, email }) => {
+    const workspace = await createWorkspaces(database, actor.organizationId).find(id);
     const accessUsers = workspace && match.slug === "access" ? await createOperatorAdministration(pool, actor.organizationId).list() : undefined;
     const site = workspace && match.slug === "site" ? await createSites(pool, actor).findLinked(workspace.id) : null;
     const keywords = site ? await createSiteKeywords(pool, actor).list(site.id).catch(() => null) : null;

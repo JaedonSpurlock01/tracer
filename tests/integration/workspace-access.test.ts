@@ -23,17 +23,16 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-pool";
 
+import type { Database } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
-import { schema } from "@/data/schema";
 import type { RecordingMediaBucket } from "@/data/recording-media";
 import { mp3ObjectKey } from "@/data/recording-mp3";
 import { recordingObjectKey } from "@/data/recording-transfer";
@@ -45,6 +44,7 @@ import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
 let pool: Pool | undefined;
+let database: Database | undefined;
 let organizationId = "";
 const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
@@ -57,9 +57,8 @@ const fakeTwilio: TwilioClient = {
 };
 const email = { async send(message: (typeof messages)[number]) { messages.push(message); return { messageId: `email-${messages.length}` }; } };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -84,9 +83,9 @@ const recordingBucket: RecordingMediaBucket = {
 
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
-  pool: pool!,
+  pool: pool!, database: database!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ pool: pool!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
+  integrations: (id) => createIntegrations({ database: database!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
   recordingBucket,
 });
@@ -120,7 +119,8 @@ async function workspaces(path: string, cookie: string, init: RequestInit = {}) 
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
+  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
   organizationId = (await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
   await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);

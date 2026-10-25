@@ -31,16 +31,16 @@ import { createCloudflareClient } from "@/data/cloudflare-client";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { sitePreviewObjectsFromArtifacts } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const siteSync = schedules.task({
   id: "site-sync",
   cron: "17 * * * *",
   run: async (payload) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       return await syncSites({
-        pool,
+        database,
         cloudflare: createCloudflareClient(),
         objects: sitePreviewObjectsFromArtifacts(createR2RecordingObjects({
           accountId: requiredEnvironment("R2_ACCOUNT_ID"),
@@ -52,7 +52,7 @@ export const siteSync = schedules.task({
         now: payload.timestamp,
       });
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

@@ -21,7 +21,7 @@
  */
 import type { Pool } from "pg";
 
-import { openDatabase } from "@/data/database";
+import { openDatabase, type Database } from "@/data/database";
 
 export function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -29,6 +29,11 @@ export function requiredEnvironment(name: string): string {
   return value;
 }
 
+export function taskDatabase(): Database {
+  return openDatabase(requiredEnvironment("DATABASE_URL"), { max: 1 });
+}
+
+/** The Database's pool, for tasks whose modules have not yet taken a Database. */
 export function taskPool(): Pool {
-  return openDatabase(requiredEnvironment("DATABASE_URL"), { max: 1 }).pool;
+  return taskDatabase().pool;
 }

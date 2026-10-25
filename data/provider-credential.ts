@@ -37,7 +37,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable } from "@/data/database";
 
 import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { IntegrationsError } from "@/data/integrations-error";
@@ -89,34 +89,19 @@ export async function openSecret(masterKey: string | undefined, sealed: StoredSe
   }
 }
 
-export async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
-export async function lockOrganization(client: PoolClient, lock: string): Promise<void> {
-  await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
-}
 
 /** Stamps the connection's last failure in its own short transaction so the record shows it even when the caller's work rolls back. */
-export async function recordConnectionFailure(pool: Pool, table: ConnectionTable, lock: string, organizationId: string, error: IntegrationsError): Promise<void> {
+export async function recordConnectionFailure(database: Database, table: ConnectionTable, lock: string, organizationId: string, error: IntegrationsError): Promise<void> {
   const now = new Date();
-  await withTransaction(pool, async (client) => {
-    await lockOrganization(client, lock);
-    await client.query(`update ${table} set last_failure_at = $2, last_failure_detail = $3, updated_at = $2 where organization_id = $1`, [organizationId, now, error.detail ?? error.code]);
-  });
+  await database.transaction(
+    async (client) => {
+      await client.query(`update ${table} set last_failure_at = $2, last_failure_detail = $3, updated_at = $2 where organization_id = $1`, [organizationId, now, error.detail ?? error.code]);
+    },
+    { lock },
+  );
 }
 
-export async function recordConnectionVerified(client: PoolClient, table: ConnectionTable, organizationId: string, now: Date): Promise<void> {
+export async function recordConnectionVerified(client: Queryable, table: ConnectionTable, organizationId: string, now: Date): Promise<void> {
   await client.query(`update ${table} set last_verified_at = $2, last_failure_at = null, last_failure_detail = null, updated_at = $2 where organization_id = $1`, [organizationId, now]);
 }
