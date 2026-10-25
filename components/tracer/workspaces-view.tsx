@@ -12,7 +12,8 @@
  *  reporting timezone, and the attention roll-up with its reason. Setup
  *  Required rows name the next setup step and make Resume Setup the row's
  *  primary action. Search, the Workspace State chips, and the page live in
- *  the URL, and the list revalidates quietly after it renders.
+ *  the URL. The server renders the first page and the view fetches again
+ *  only when the search, state, or page changes or the wizard reports.
  *
  * @remarks
  *  The wizard is a separate module mounted with a fresh key per opening;
@@ -198,7 +199,7 @@ export default function WorkspacesView({
   const [search, setSearch] = useState(initialQuery.search);
   const [stateFilter, setStateFilter] = useState<"All" | WorkspaceState>(initialQuery.state);
   const [page, setPage] = useState(initialQuery.page);
-  const revalidated = useRef(false);
+  const mounted = useRef(false);
   const requestId = useRef(0);
   const [status, setStatus] = useState("");
   const [resumeHandled, setResumeHandled] = useState(false);
@@ -234,19 +235,19 @@ export default function WorkspacesView({
   }, []);
 
   useEffect(() => {
-    const quiet = !revalidated.current;
-    revalidated.current = true;
-    if (!quiet) {
-      const url = new URL(window.location.href);
-      if (search) url.searchParams.set("search", search);
-      else url.searchParams.delete("search");
-      if (stateFilter !== "All") url.searchParams.set("state", stateFilter);
-      else url.searchParams.delete("state");
-      if (page > 1) url.searchParams.set("page", String(page));
-      else url.searchParams.delete("page");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
     }
-    const timer = window.setTimeout(() => void loadWorkspaces(quiet), 0);
+    const url = new URL(window.location.href);
+    if (search) url.searchParams.set("search", search);
+    else url.searchParams.delete("search");
+    if (stateFilter !== "All") url.searchParams.set("state", stateFilter);
+    else url.searchParams.delete("state");
+    if (page > 1) url.searchParams.set("page", String(page));
+    else url.searchParams.delete("page");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    const timer = window.setTimeout(() => void loadWorkspaces(), 0);
     return () => window.clearTimeout(timer);
   }, [loadWorkspaces, page, search, stateFilter]);
   useEffect(() => {

@@ -237,6 +237,8 @@ describe.sequential("Organization integrations", () => {
     const result = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
     expect(result.response.status).toBe(200);
     expect(result.body.twilio).toBeNull();
+    expect(result.body.numbers).toEqual([]);
+    expect(result.body.sites).toEqual([]);
     const providers = result.body.providers as Array<{ id: string; state: string }>;
     expect(providers.map((provider) => provider.id)).toEqual(["twilio", "cloudflare", "dataforseo", "hyperdrive", "email", "r2", "openai", "triggerdev"]);
     expect(providers[0]).toMatchObject({ state: "not_configured" });
@@ -384,6 +386,8 @@ describe.sequential("Organization integrations", () => {
     expect(restored.body.numbers).toEqual(expect.arrayContaining([expect.objectContaining({ phoneNumber: "+14155552672", releasedAt: null })]));
     const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
     expect((health.body.twilio as { numberCount: number }).numberCount).toBe(2);
+    expect(health.body.numbers).toEqual(expect.arrayContaining([expect.objectContaining({ phoneNumber: "+14155552671" }), expect.objectContaining({ phoneNumber: "+14155552672" })]));
+    expect(health.body.sites).toEqual([]);
   });
 
   it("keeps the other Organization connection and numbers invisible", async () => {

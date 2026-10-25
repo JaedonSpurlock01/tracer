@@ -296,21 +296,24 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
       const scoped = await scopedQuery(query);
       if (!scoped) return null;
       const { workspace, timeZone, values, scopeWhere, scopeValues, filters, where, orderBy } = scoped;
-      const count = await pool.query<{ count: number }>(`select count(*)::int as count from ${callSource} where ${where}`, values);
+      const countValues = [...values];
+      values.push((query.page - 1) * callPageSize, callPageSize);
+      const [count, rows] = await Promise.all([
+        pool.query<{ count: number }>(`select count(*)::int as count from ${callSource} where ${where}`, countValues),
+        pool.query<CallListRow>(
+          `select ${callListColumns}
+             from ${callSource}
+            where ${where}
+            order by ${orderBy}
+           offset $${values.length - 1} limit $${values.length}`,
+          values,
+        ),
+      ]);
       const total = count.rows[0]?.count ?? 0;
       const hasCalls = total > 0 || (filters.length > 0 && (await pool.query<{ exists: boolean }>(
         `select exists (select 1 from call c join workspace w on w.id = c.workspace_id and w.organization_id = c.organization_id where ${scopeWhere}) as exists`,
         scopeValues,
       )).rows[0].exists);
-      values.push((query.page - 1) * callPageSize, callPageSize);
-      const rows = await pool.query<CallListRow>(
-        `select ${callListColumns}
-           from ${callSource}
-          where ${where}
-          order by ${orderBy}
-         offset $${values.length - 1} limit $${values.length}`,
-        values,
-      );
       return {
         calls: rows.rows.map(callListItem),
         total,

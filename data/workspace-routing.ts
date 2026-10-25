@@ -483,17 +483,19 @@ export function createWorkspaceRouting(options: {
     },
 
     async getFlow(workspaceId) {
-      const workspace = await findWorkspace(options.pool, workspaceId);
-      const draftRow = await draft(options.pool, workspaceId);
-      const latest = await latestVersion(options.pool, workspaceId);
-      const versionsResult = await options.pool.query<VersionRow>(
-        `select fv.id, fv.version, fv.graph, fv.published_at, fv.published_by_user_id as published_by_id, u.name as published_by_name
-           from flow_version fv
-           left join "user" u on u.id = fv.published_by_user_id
-          where fv.organization_id = $1 and fv.workspace_id = $2
-          order by fv.version desc`,
-        [options.organizationId, workspaceId],
-      );
+      const [workspace, draftRow, versionsResult] = await Promise.all([
+        findWorkspace(options.pool, workspaceId),
+        draft(options.pool, workspaceId),
+        options.pool.query<VersionRow>(
+          `select fv.id, fv.version, fv.graph, fv.published_at, fv.published_by_user_id as published_by_id, u.name as published_by_name
+             from flow_version fv
+             left join "user" u on u.id = fv.published_by_user_id
+            where fv.organization_id = $1 and fv.workspace_id = $2
+            order by fv.version desc`,
+          [options.organizationId, workspaceId],
+        ),
+      ]);
+      const latest = versionsResult.rows[0] ?? null;
       const draftGraph = draftRow ? requireGraph(draftRow.graph) : null;
       const publishedGraph = latest ? requireGraph(latest.graph) : null;
       return {

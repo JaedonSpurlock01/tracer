@@ -6,7 +6,11 @@
  * @description
  *  observePool wraps a request pool so the runtime knows how long the
  *  first connection took, how many queries ran, the slowest one, how many
- *  failed, and whether any hit the pool's connect or query timeout.
+ *  failed, whether any hit the pool's connect or query timeout, and how
+ *  many waves the request paid: a wave starts each time the pool goes from
+ *  idle to busy, so queries issued together count once and queries awaited
+ *  one after another count each time. The page budget tests hold every
+ *  page loader to a wave and query ceiling.
  *  logRequest writes those numbers with the request's Cloudflare ray,
  *  its duration, and its outcome as one JSON line, which Workers Logs
  *  stores beside the invocation it belongs to.
@@ -34,6 +38,8 @@ export interface RequestPoolStats {
   failedQueries: number;
   /** True once any connection or query hit the pool's timeout. */
   timedOut: boolean;
+  /** Times the pool went from idle to busy: the sequential depth the request paid. */
+  waves: number;
 }
 
 export function isPoolTimeout(error: unknown): boolean {
@@ -43,13 +49,28 @@ export function isPoolTimeout(error: unknown): boolean {
 
 type Queryable = { query: (...args: unknown[]) => unknown };
 
-/** Wraps the pool and every client it hands out so each query is timed. */
+/**
+ * Wraps the pool and every client it hands out so each query is timed once.
+ * pool.query runs on a client it acquires with a callback, so the client
+ * handed to that callback is marked while the callback runs and its query is
+ * not counted a second time; a client the application acquires itself, as a
+ * transaction does, counts every query it runs.
+ */
 export function observePool(pool: Pool): RequestPoolStats {
   const created = Date.now();
-  const stats: RequestPoolStats = { connectMs: null, queries: 0, slowestQueryMs: 0, failedQueries: 0, timedOut: false };
+  const stats: RequestPoolStats = { connectMs: null, queries: 0, slowestQueryMs: 0, failedQueries: 0, timedOut: false, waves: 0 };
   const wrapped = new WeakSet<object>();
+  const servingPoolQuery = new WeakSet<object>();
+  let inFlight = 0;
+
+  function begin(): number {
+    if (inFlight === 0) stats.waves += 1;
+    inFlight += 1;
+    return Date.now();
+  }
 
   function record(started: number, error?: unknown) {
+    inFlight -= 1;
     stats.queries += 1;
     stats.slowestQueryMs = Math.max(stats.slowestQueryMs, Date.now() - started);
     if (error !== undefined) {
@@ -63,7 +84,8 @@ export function observePool(pool: Pool): RequestPoolStats {
     wrapped.add(target);
     const original = target.query.bind(target);
     target.query = (...args: unknown[]) => {
-      const started = Date.now();
+      if (servingPoolQuery.has(target)) return original(...args);
+      const started = begin();
       let result: unknown;
       try {
         result = original(...args);
@@ -93,9 +115,22 @@ export function observePool(pool: Pool): RequestPoolStats {
   });
   pool.on("acquire", (client: PoolClient) => instrument(client as unknown as Queryable));
   instrument(pool as unknown as Queryable);
-  const originalConnect = pool.connect.bind(pool) as () => Promise<PoolClient>;
+  const originalConnect = pool.connect.bind(pool) as (...inner: unknown[]) => unknown;
   (pool as { connect: unknown }).connect = ((...args: unknown[]) => {
-    const result = (originalConnect as (...inner: unknown[]) => unknown)(...args);
+    const callback = typeof args[0] === "function" ? (args[0] as (error: unknown, ...rest: unknown[]) => void) : undefined;
+    if (callback) {
+      return originalConnect((error: unknown, client: unknown, ...rest: unknown[]) => {
+        if (isPoolTimeout(error)) stats.timedOut = true;
+        const served = client !== null && typeof client === "object";
+        if (served) servingPoolQuery.add(client);
+        try {
+          callback(error, client, ...rest);
+        } finally {
+          if (served) servingPoolQuery.delete(client);
+        }
+      });
+    }
+    const result = originalConnect(...args);
     if (result && typeof (result as Promise<unknown>).then === "function") {
       return (result as Promise<PoolClient>).catch((error: unknown) => {
         if (isPoolTimeout(error)) stats.timedOut = true;
@@ -126,6 +161,7 @@ export function logRequest(entry: RequestLogEntry): void {
     dbSlowestMs: entry.db.slowestQueryMs,
     dbFailed: entry.db.failedQueries,
     dbTimedOut: entry.db.timedOut,
+    dbWaves: entry.db.waves,
     ...(failed
       ? {
           errorName: entry.error instanceof Error ? entry.error.name : typeof entry.error,

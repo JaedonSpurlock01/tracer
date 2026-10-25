@@ -193,9 +193,13 @@ The exact steps and checklists are in the [roadmap](./docs/IMPLEMENTATION_ROADMA
 
 The `tracer` Worker keeps **Workers Logs** for 7 days: every request with its URL, status, duration, and Cloudflare ray, every `console` line, and every uncaught exception. Open the Cloudflare dashboard, **Workers & Pages**, the `tracer` Worker, then **Logs**. Staging logs the same way under `tracer-staging`.
 
-Each request also writes one `tracer.request` line with its database timing: `dbConnectMs` (how long the first connection took), `dbQueries`, `dbSlowestMs`, `dbFailed`, and `dbTimedOut`, which is true when a connection took more than 10 seconds or a query more than 30. Filter the logs on `event = tracer.request` and sort by `durationMs` to find the slow page; `dbTimedOut = true` means the database path stalled, not the page code. The `ray` matches the `cf-ray` response header, so a slow reload in the browser can be found by its ray.
+Each page navigation writes one `tracer.request` line with its database timing: `dbConnectMs` (how long the first connection took), `dbQueries`, `dbWaves` (how many times the page waited on the database one step after another), `dbSlowestMs`, `dbFailed`, and `dbTimedOut`, which is true when a connection took more than 10 seconds or a query more than 30. Workers Logs stores the line as structured fields, so filter on `event = tracer.request` and sort by `durationMs` to find the slow page; `dbTimedOut = true` means the database path stalled, not the page code. The `ray` matches the `cf-ray` response header, so a slow reload in the browser can be found by its ray. API routes write the same line per request.
 
-Both Neon computes pause after five idle minutes and take a couple of seconds to resume on the next request. If the logs show `dbTimedOut` lines right after an idle gap, the connection path through Hyperdrive to the paused compute is the place to look.
+The Production Neon compute never pauses (set on 2026-10-24 on the Launch plan); the Staging compute still pauses after five idle minutes and takes a couple of seconds to resume. If Staging logs show `dbTimedOut` lines right after an idle gap, the connection path through Hyperdrive to the paused compute is the place to look.
+
+### Page speed budget
+
+One navigation opens one database runtime shared by the actor, the layouts, and the page, with six connections so queries issued together run together, and every route group paints its loading boundary at once while the page streams in, below the layout that decides authorization so a denied URL still answers with a real 404. `tests/integration/page-budgets.test.ts` replays each page's server work against a database and fails when a page exceeds its ceiling of sequential waves and total queries; lower a ceiling when a change earns it, never raise one. `tests/e2e/navigation-timing.spec.ts` reports warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and only warns until its baseline is steady.
 
 ## Project status
 

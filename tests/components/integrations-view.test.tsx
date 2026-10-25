@@ -130,9 +130,7 @@ function responseRoutes(overrides: { connected?: boolean; providers?: ProviderHe
   const connectedState = overrides.connected ?? false;
   const cloudflare = overrides.cloudflare ?? null;
   return {
-    "GET /api/integrations": { body: { providers: overrides.providers ?? providers, twilio: connectedState ? connected : null, cloudflare, dataforseo: overrides.dataforseo ?? null } },
-    ...(connectedState ? { "GET /api/integrations/twilio/numbers": { body: { numbers } } } : {}),
-    ...(cloudflare ? { "GET /api/integrations/cloudflare/sites": { body: { sites } } } : {}),
+    "GET /api/integrations": { body: { providers: overrides.providers ?? providers, twilio: connectedState ? connected : null, numbers: connectedState ? numbers : [], cloudflare, sites: cloudflare ? sites : [], dataforseo: overrides.dataforseo ?? null } },
   };
 }
 
@@ -214,7 +212,7 @@ describe("IntegrationsView", () => {
     const degradedProviders = twilioConnectedProviders.map((provider) => provider.id === "r2"
       ? { ...provider, state: "degraded" as const, lastFailureAt: "2026-10-14T05:30:00.000Z", lastFailureDetail: "R2 request failed (HTTP 503)" }
       : provider);
-    vi.stubGlobal("fetch", fetchStub({ ...responseRoutes({ connected: true, providers: degradedProviders }), "GET /api/integrations": { body: { providers: degradedProviders, twilio: missingToken, cloudflare: null, dataforseo: null } } }));
+    vi.stubGlobal("fetch", fetchStub({ ...responseRoutes({ connected: true, providers: degradedProviders }), "GET /api/integrations": { body: { providers: degradedProviders, twilio: missingToken, numbers, cloudflare: null, dataforseo: null } } }));
     render(<IntegrationsView initial={initialData({ providers: degradedProviders, twilio: missingToken })} provider="twilio" />);
     const lane = screen.getByRole("list", { name: "Needs attention" });
     const items = within(lane).getAllByRole("listitem").map((item) => item.textContent);
@@ -238,7 +236,7 @@ describe("IntegrationsView", () => {
     const fetch = fetchStub({
       ...responseRoutes(),
       "POST /api/integrations/twilio/connect": { body: { connection: connected }, status: 201 },
-      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
+      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null } }],
       "GET /api/integrations/twilio/numbers": { body: { numbers } },
     });
     vi.stubGlobal("fetch", fetch);
@@ -273,7 +271,7 @@ describe("IntegrationsView", () => {
     const fetch = fetchStub({
       ...responseRoutes({ connected: true, providers: twilioConnectedProviders }),
       "POST /api/integrations/twilio/test": [{ body: { connection: connected } }, { body: { error: "provider_unavailable", detail: "Twilio is unavailable" }, status: 502 }],
-      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
+      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null } }, { body: { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null } }],
       "GET /api/integrations/twilio/numbers": [{ body: { numbers } }, { body: { numbers } }, { body: { numbers } }],
     });
     vi.stubGlobal("fetch", fetch);
@@ -301,7 +299,7 @@ describe("IntegrationsView", () => {
     const missingToken = { ...connected, authTokenConfigured: false };
     const fetch = fetchStub({
       ...responseRoutes({ connected: true, providers: twilioConnectedProviders }),
-      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, cloudflare: null } }],
+      "GET /api/integrations": [{ body: { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null } }],
       "GET /api/integrations/twilio/numbers": [{ body: { numbers } }, { body: { numbers } }],
       "POST /api/integrations/twilio/auth-token": { body: { connection: connected } },
     });
@@ -355,7 +353,7 @@ describe("IntegrationsView", () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") return new Response(JSON.stringify({ verified: true }));
       if (fetch.mock.calls.filter((call) => String(call[0]) === "/api/integrations").length === 1) throw new Error("network");
-      return new Response(JSON.stringify({ providers: twilioConnectedProviders, twilio: connected, cloudflare: null }));
+      return new Response(JSON.stringify({ providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null }));
     });
     vi.stubGlobal("fetch", fetch);
     render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
@@ -476,7 +474,7 @@ describe("IntegrationsView", () => {
     const fetch = fetchStub({
       ...responseRoutes(),
       "POST /api/integrations/cloudflare/connect": { body: { connection: cloudflareConnected }, status: 201 },
-      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }],
+      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }],
       "GET /api/integrations/cloudflare/sites": { body: { sites } },
     });
     vi.stubGlobal("fetch", fetch);
@@ -500,13 +498,13 @@ describe("IntegrationsView", () => {
   it("shows the connected Cloudflare account, its Sites with link state, and test and sync feedback", async () => {
     const fetch = fetchStub({
       ...responseRoutes({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected }),
-      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }],
+      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }],
       "GET /api/integrations/cloudflare/sites": [{ body: { sites } }, { body: { sites } }, { body: { sites } }],
       "POST /api/integrations/cloudflare/test": { body: { connection: cloudflareConnected } },
       "POST /api/integrations/cloudflare/sync": { body: { siteCount: 2, syncedAt: cloudflareConnected.lastSyncedAt } },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<IntegrationsView initial={initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected })} provider="cloudflare" />);
+    render(<IntegrationsView initial={initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected, sites })} provider="cloudflare" />);
     const region = detail("Cloudflare");
     expect(factValue(region, "Account ID")).toHaveTextContent(cloudflareAccountId);
     expect(factValue(region, "Connected by")).toHaveTextContent("Example Operator");
@@ -531,13 +529,13 @@ describe("IntegrationsView", () => {
   it("rotates the Cloudflare token and reports blocked disconnects with the open Site Link count", async () => {
     const fetch = fetchStub({
       ...responseRoutes({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected }),
-      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected } }],
+      "GET /api/integrations": [{ body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }, { body: { providers: cloudflareConnectedProviders, twilio: null, cloudflare: cloudflareConnected, sites } }],
       "GET /api/integrations/cloudflare/sites": [{ body: { sites } }, { body: { sites } }],
       "POST /api/integrations/cloudflare/rotate": { body: { connection: cloudflareConnected } },
       "POST /api/integrations/cloudflare/disconnect": { body: { error: "active_site_links", activeSiteLinkCount: 2 }, status: 409 },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<IntegrationsView initial={initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected })} provider="cloudflare" />);
+    render(<IntegrationsView initial={initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected, sites })} provider="cloudflare" />);
     const region = detail("Cloudflare");
     fireEvent.click(within(region).getByRole("button", { name: "Rotate Token" }));
     const rotateDialog = screen.getByRole("dialog", { name: "Rotate Cloudflare Token" });
@@ -630,7 +628,7 @@ describe("IntegrationsView", () => {
       "DELETE /api/integrations/forms-key": { body: null, status: 204 },
     });
     vi.stubGlobal("fetch", fetch);
-    render(<IntegrationsView initial={{ ...initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected }), formsKey: null }} provider="cloudflare" />);
+    render(<IntegrationsView initial={{ ...initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected, sites }), formsKey: null }} provider="cloudflare" />);
     const panel = within(detail("Cloudflare")).getByRole("region", { name: "Forms key" });
     expect(within(panel).getByText("No key yet")).toBeVisible();
     expect(within(panel).queryByRole("button", { name: "Revoke Forms key" })).not.toBeInTheDocument();

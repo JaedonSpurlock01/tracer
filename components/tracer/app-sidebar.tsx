@@ -10,7 +10,7 @@
  *  swaps to an All Workspaces back link, the Workspace name as a heading,
  *  Overview, a Website group with Site and Forms, a Phone group with Calls and the
  *  Operator-only Flow, Reports, and the Operator-only Settings. The menu
- *  trigger carries the Tracer orb. The menu lists the current Organization
+ *  trigger carries the Tracer mark. The menu lists the current Organization
  *  with a disabled New organization action, the signed-in user with a
  *  DiceBear avatar, Account Settings, and Sign out. The Sidebar is flat on
  *  the root color with one hairline on its edge.
@@ -192,7 +192,7 @@ function NavigationMenu({ items, operator }: { items: NavigationItem[]; operator
           const active = isCurrent(item, pathname);
           return (
             <SidebarMenuItem key={item.href}>
-              <SidebarMenuButton render={<Link href={item.href} prefetch aria-current={active ? "page" : undefined} />} isActive={active}>
+              <SidebarMenuButton render={<Link href={item.href} aria-current={active ? "page" : undefined} />} isActive={active}>
                 <Icon aria-hidden="true" />
                 <span>{item.label}</span>
               </SidebarMenuButton>
@@ -229,7 +229,7 @@ function WorkspaceNavigation({ workspace }: { workspace: WorkspaceNavRegistratio
       <SidebarGroup>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton render={<Link href="/workspaces" prefetch />} className="text-muted-foreground">
+            <SidebarMenuButton render={<Link href="/workspaces" />} className="text-muted-foreground">
               <ArrowLeft aria-hidden="true" />
               <span>All Workspaces</span>
             </SidebarMenuButton>

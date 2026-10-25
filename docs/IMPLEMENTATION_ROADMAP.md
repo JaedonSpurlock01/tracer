@@ -17,9 +17,9 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 - **Current milestone:** M18 - Production Hardening and Acceptance, started by the Product Owner on 2026-10-21
 - **Next milestone:** M19 - Production Deployment and Stabilization
-- **Current environment:** Local, Preview, and Staging application and data paths verified; Staging data reset to empty on 2026-10-21 for acceptance; Production data resources provisioned but not deployed
-- **Production status:** Not deployed
-- **Last roadmap review:** 2026-10-21
+- **Current environment:** Local, Preview, and Staging application and data paths verified; Staging data reset to empty on 2026-10-21 for acceptance; Production deployed from `main` on 2026-10-22 and its data reset to empty on 2026-10-24 (the Operator user, Organization, and membership kept) after the master key finding below
+- **Production status:** Deployed ahead of M19 for Product Owner acceptance; Production data empty since 2026-10-24; the Neon Production compute never suspends since 2026-10-24
+- **Last roadmap review:** 2026-10-24
 
 M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. M16 is Complete. It delivered scoped PDF and CSV reports generated in Trigger.dev, Calls Export CSV and Recording ZIP exports with a CSV manifest and a 500-Recording limit, a precomputed stereo MP3 per Stored Recording with Download MP3 and single-Call Export Call, requester-only Report history and the notification popover with downloads that recheck access to the whole Workspace scope, and seven-day artifact expiry through the `report-artifacts` R2 lifecycle rule with a 6-hour sweep that fails stuck jobs and deletes metadata after 90 days.
 
@@ -190,9 +190,10 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
 | M23 | Form Submissions | Complete | Preview and Staging | M22 |
 | M18 | Production Hardening and Acceptance | In Progress | Staging | M23 |
-| M19 | Production Deployment and Stabilization | Not Started | Production | M18 |
+| M24 | Keyword Discovery | Not Started | Preview and Staging | M18 |
+| M19 | Production Deployment and Stabilization | Not Started | Production | M24 |
 
-M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M19. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
+M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M24, M19. M24 was added on 2026-10-24 at the Product Owner's request and sits before M19 because it depends on the validated Service Area that M18's Search adapter work introduces. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
 
 ## Phase 0 - Ideation and governance
 
@@ -1234,6 +1235,11 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 - **Entry criteria carried from M17:** the Product Owner's Staging retention demonstration with `pnpm fixtures:retention`, and confirmation that the M16 Staging report artifacts expired through the `report-artifacts` rule.
 - **Execution note:** The Product Owner started M18 on 2026-10-21 and had Staging reset to an empty state so acceptance starts from a fresh install, the same path Production takes: every object in `tracer-recordings-staging` was deleted, and the Staging database is dropped and rebuilt from migration 0000 by the `Bootstrap Authentication` workflow. The reset deleted the M16 Staging report artifacts, so the second M17 entry criterion is met instead by confirming the `report-artifacts` rule on `tracer-recordings-staging` (confirmed with `wrangler r2 bucket lifecycle list` on 2026-10-21) and by a report generated on the reset Staging whose files are gone 7 days later. The retention demonstration needs a new Workspace with a Number Assignment and a published Call Flow first. The README now carries setup, environment variables, and deployment, and the former README specification moved to `docs/SPECIFICATION.md`.
 - **Scope added by the Product Owner on 2026-10-22:** the Recording Disclosure text is editable per Call Flow like other prompts, with no required wording, and the voice list grows from 4 to 16 English Amazon Polly voices, 8 female and 8 male, each rendered with its language. Disclosures published earlier keep the default sentence.
+- **Scope added by the Product Owner on 2026-10-24** after an architecture review of the Production failures (Detach Number answering 502, Twilio Disconnect waiting out the connection timeout, Site previews never captured, Search positions with no explanation, and pages that felt frozen). The review found that `TWILIO_CREDENTIAL_MASTER_KEY` had changed in Production between 2026-10-22 and 2026-10-23, so the Twilio and Cloudflare credentials stored under the earlier key could not be decrypted by the Worker or the Trigger.dev tasks while the Integrations page still showed them as Connected, and that the request pool's single connection serialized every query, so a Workspace Overview paid 54 round trips. Four slices were added, worked in this order:
+  1. **Request Runtime and page speed:** one request-scoped runtime shared by the actor, layouts, and page with a pool of six connections; pages grouped into `(everyone)`, `(operator)`, `(viewer)` route groups whose layouts decide authorization before streaming, with a `loading.tsx` boundary per group so a denied URL keeps its real 404; Sidebar prefetch limited to the shell; the Workspaces and Calls views stop re-fetching on mount and the report jobs provider fetches on demand; Better Auth's session cookie cache enabled for 60 seconds; one Workspace lookup per request; the Integrations page loaded in one parallel pass and refreshed with one call; and a performance budget enforced by tests: `observePool` counts sequential waves, every page's loader is tested against a wave and query ceiling (Home 4 waves and 20 queries, Workspaces 3 and 10, Overview 4 and 20, Site 4 and 18, Integrations 2 and 12, Calls and Activity 3 and 8), and a Playwright timing journey reports second-visit server time for the main pages against a 1500 ms dev-mode ceiling, informational until its baseline is steady. The Neon Production compute was set to never suspend the same day (Launch plan).
+  2. **Provider Credential module:** one module owns encryption, decryption, the master key fingerprint stored on each connection row (replacing the unused `master_key_version`), the `Unreadable` connection state, and failure recording; Twilio, Cloudflare, and DataForSEO become adapters that only verify credentials and call their provider. The Integrations page shows Needs re-entry with Re-enter credential and Disconnect; Disconnect anyway with an acknowledgement ends open Number Assignments, moves Workspaces to Setup Required, and records that the Twilio voice URL was not restored; Detach Number on an Unreadable credential succeeds with the same record. Twilio Disconnect counts Active Workspaces on the transaction's own connection. ADR-0005 is amended for the readability input to the disconnect decision.
+  3. **Site sync outcomes:** the sync returns a per-Site report stored on the Site (last sync time, stage, and error); the connection's synced time is stamped only when a Site synced; an unreadable credential is recorded on the connection; the Site page shows the failing stage and reason instead of Preview pending.
+  4. **Search adapters that say why:** the DataForSEO adapter surfaces the task status and message; Rank Check uses the `advanced` SERP endpoint so local pack and map results count, and stores the matched item type and a check status per rank day; the Service Area becomes a picked DataForSEO location stored by `location_code`; the Search panel distinguishes Not ranking, Check failed, and Local pack.
 - **Open findings:**
   - `AUTH_EMAIL_ALLOWED_RECIPIENTS` is enforced in every environment. On 2026-10-21 the Product Owner decided Production keeps it: provisioning an Operator or Client Viewer includes adding their email to the `tracer` Worker secret, or they receive no sign-in code.
   - `.github/workflows/deploy-production.yml` (added 2026-10-21, guarded by `tests/harness/deploy-production-workflow.test.ts`) is the Production path: a manual run in the `Production` GitHub Environment that runs `pnpm test`, typecheck, and lint, applies migrations and runtime grants, deploys the `tracer` Worker, deploys the matching Trigger.dev task version with `TRIGGER_ACCESS_TOKEN`, and checks `/health`. Before its first run, `TRIGGER_ACCESS_TOKEN` must be added to the `Production` environment, and the environment needs a required reviewer and a `main`-only deployment branch rule, which it does not have yet. Slice 8 rehearses it.
@@ -1274,11 +1280,48 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 - A production go or no-go decision can be made from evidence rather than assumption.
 - Rollback criteria and responsible actions are explicit.
 
+### M24 - Keyword Discovery
+
+- **Status:** Not Started
+- **Outcome:** An Operator editing a Site's Keywords can ask Tracer to suggest city-qualified search phrases for the Business's niche and Service Area, see each suggestion's monthly search volume, and add the ones worth tracking, instead of guessing the Keyword list by hand.
+- **Depends on:** M18 (the validated Service Area and the DataForSEO adapter that reports task status)
+- **Target environment:** Preview and Staging
+- **Execution note:** Added by the Product Owner on 2026-10-24. One Keyword Discovery module with one interface, `suggest(siteId)`, returning ranked suggestions with phrase, monthly volume, and intent. Inside it, the OpenAI adapter (`gpt-5-mini` through the existing structured-output client) proposes about 30 phrases from the Business niche, the Service Area, and the existing Keywords, and the DataForSEO Labs `keyword_overview` endpoint (about $0.018 per 50 phrases) adds search volume, difficulty, and intent for the Service Area's location; the module dedupes against existing Keywords and ranks by volume. Nothing is saved until the Operator ticks suggestions, which are added as Keywords at weight 3. The last suggestion set is cached per Site in one jsonb column so reopening the panel does not bill again. The run happens inside the request with a visible Finding keywords state. A Site whose Business has no niche gets a message pointing at Business settings rather than a run. OpenAI proposes, DataForSEO measures: OpenAI alone would invent popularity and DataForSEO alone needs seed phrases, and both adapters already exist in the codebase.
+
+#### Vertical slices
+
+1. Keyword Discovery module: prompt, structured candidate schema, volume lookup, dedupe, ranking, and the cached suggestion set.
+2. Operator route and Site settings panel: Suggest Keywords, Finding keywords, tick to add with weight 3, and the no-niche message.
+3. Lookup counting on the DataForSEO connection and the cost line in the Pricing guide.
+
+#### Test-first behaviors
+
+- Suggestions never repeat an existing live Keyword and are ranked by monthly volume with ties broken by phrase.
+- A Site without a Business niche returns no suggestions and the panel explains why.
+- A cached suggestion set is served without calling either provider until the Operator asks again.
+- Adding ticked suggestions creates Keywords at weight 3 and refuses beyond the 25-Keyword limit with the existing error.
+- A Client Viewer cannot reach the suggest route.
+
+#### Deliverables
+
+- `data/keyword-discovery.ts`, the structured-output prompt and schema, and the Labs volume call on the DataForSEO adapter
+- `site.keyword_suggestions` jsonb column with its migration and runtime grant
+- Suggest Keywords on Site settings with contract fixtures for the OpenAI and DataForSEO responses
+
+#### Verification gate
+
+- Domain, contract, integration, component, typecheck, lint, and build gates pass.
+- Staging shows suggestions for the Pocatello Site with real credentials and the lookup appears in the DataForSEO count.
+
+#### Exit criteria
+
+- An Operator can go from an empty Keyword list to a tracked, volume-ranked list in one sitting without leaving Site settings.
+
 ### M19 - Production Deployment and Stabilization
 
 - **Status:** Not Started
 - **Outcome:** Tracer is deployed to Production through a controlled promotion and remains stable through the initial observation period.
-- **Depends on:** M18
+- **Depends on:** M24
 - **Target environment:** Production
 
 #### Deployment sequence

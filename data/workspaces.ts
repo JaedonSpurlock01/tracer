@@ -260,13 +260,16 @@ export function createWorkspaces(pool: Pool, organizationId: string, grantScope?
         conditions.push(`w.state = $${values.length}`);
       }
       const where = conditions.join(" and ");
-      const count = await pool.query<{ count: string }>(`select count(*) from workspace w where ${where}`, values);
+      const countValues = [...values];
       values.push((normalized.page - 1) * normalized.pageSize, normalized.pageSize);
-      const rows = await pool.query<WorkspaceRow>(`${recordQuery} and ${conditions.slice(1).join(" and ") || "true"} order by w.name, w.id offset $${values.length - 1} limit $${values.length}`, values);
-      const totals = await pool.query<{ state: WorkspaceState; count: string }>(
-        `select w.state, count(*) from workspace w where ${scopeWhere} group by w.state`,
-        scopeValues,
-      );
+      const [count, rows, totals] = await Promise.all([
+        pool.query<{ count: string }>(`select count(*) from workspace w where ${where}`, countValues),
+        pool.query<WorkspaceRow>(`${recordQuery} and ${conditions.slice(1).join(" and ") || "true"} order by w.name, w.id offset $${values.length - 1} limit $${values.length}`, values),
+        pool.query<{ state: WorkspaceState; count: string }>(
+          `select w.state, count(*) from workspace w where ${scopeWhere} group by w.state`,
+          scopeValues,
+        ),
+      ]);
       const counts = { setupRequired: 0, active: 0, archived: 0 };
       for (const row of totals.rows) {
         if (row.state === "Setup Required") counts.setupRequired = Number(row.count);

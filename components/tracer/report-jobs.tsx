@@ -4,10 +4,11 @@
  * @brief  Shares the requester's report and export jobs across the app shell.
  *
  * @description
- *  The provider loads Report history from `GET /api/reports` once when the
- *  shell mounts, so the notification popover can show an in-progress
- *  indicator, and Reports pages, the Generate Report dialog, and the Calls
- *  export confirmations all read and add to the same list. While any job
+ *  The provider holds the requester's Report history for the shell: the
+ *  notification popover loads it from `GET /api/reports` when it opens,
+ *  and Reports pages, the Generate Report dialog, and the Calls export
+ *  confirmations all read and add to the same list. Nothing is fetched on
+ *  mount, so a page load costs no history request. While any job
  *  is Queued or Generating it refetches every 30 seconds, only while the
  *  document is visible; returning to a visible tab refetches at once. With
  *  no job in progress it does not poll, and a view refreshes on demand,
@@ -171,11 +172,6 @@ export function ReportJobsProvider({ children }: { children: ReactNode }) {
   const addJob = useCallback((job: ReportJobItem) => {
     setJobs((current) => [job, ...(current ?? []).filter((existing) => existing.id !== job.id)]);
   }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refresh]);
 
   const active = jobs?.some(jobInProgress) ?? false;
 

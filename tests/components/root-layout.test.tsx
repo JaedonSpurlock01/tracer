@@ -25,7 +25,7 @@ vi.mock("next/headers", () => ({
 }));
 
 vi.mock("next/font/google", () => ({
-  Geist: () => ({ variable: "font-geist" }),
+  Instrument_Sans: () => ({ variable: "font-instrument-sans" }),
   Geist_Mono: () => ({ variable: "font-geist-mono" }),
 }));
 

@@ -278,10 +278,11 @@ Staging and Production use separate Neon projects. Preview intentionally shares 
 ### Request path
 
 1. A browser request reaches the Next.js application on Cloudflare Workers.
-2. Better Auth verifies the session.
+2. Better Auth verifies the session, from the signed cookie copy for up to 60 seconds and from the database after that.
 3. Server authorization verifies Organization membership, role, and Workspace Access Grant.
-4. Drizzle queries Neon PostgreSQL through Hyperdrive.
-5. Private R2 media is streamed only after current authorization succeeds.
+4. One request runtime, opened by the first of the actor, the layouts, and the page to ask for it, holds a six-connection pool to Neon PostgreSQL through Hyperdrive and closes after the response; each page's loader in `data/page-loaders.ts` issues independent reads together.
+5. Routes sit in groups by who may open them: `(everyone)`, `(operator)`, and under a Workspace `(viewer)` and `(operator)`. Each group's layout decides authorization before anything streams, so a denied URL answers with a real 404, and each group's loading boundary below it paints at once while the page streams in.
+6. Private R2 media is streamed only after current authorization succeeds.
 
 ### Inbound Call path
 
@@ -384,6 +385,8 @@ Fast Vitest suites cover domain invariants without a database, network, browser,
 
 Vitest integration suites exercise public application services with real PostgreSQL through Testcontainers. They verify Drizzle queries, constraints, transactions, migrations, authorization boundaries, and idempotency. Reuse one PostgreSQL container per run and isolate tests with schemas or transaction rollback.
 
+The page budget suite (`tests/integration/page-budgets.test.ts`) replays each page's server work, the actor resolution, the layout reads, the Workspace lookup, and the page loader, on the real request pool and holds it to a ceiling of sequential waves and total queries. The ceilings only ratchet down.
+
 #### Provider contracts
 
 Fixture-driven contract suites verify:
@@ -415,6 +418,8 @@ The initial Playwright suite contains six critical journeys:
 5. A Client Viewer opens a granted Workspace and is denied every ungranted Workspace.
 6. An authorized user generates and downloads a report through a completed fake Trigger.dev job, in `tests/e2e/report-generation.spec.ts`.
 
+`tests/e2e/navigation-timing.spec.ts` is informational rather than a journey: it records warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and warns rather than fails until its baseline is steady.
+
 Add another browser test only when behavior truly crosses browser, route, and backend boundaries or when a browser-specific regression requires it.
 
 ### Domain behavior matrix
@@ -423,6 +428,7 @@ This matrix is the initial executable coverage contract. As tests are implemente
 
 | Domain | Required behavior coverage | Primary layer |
 | --- | --- | --- |
+| Page speed | One shared request runtime per navigation closed once after the response in `tests/harness/request-runtime.test.ts`; six-connection pool, timeouts, wave counting, and the `tracer.request` line in `tests/contracts/request-pool.test.ts`; the 60-second session cookie cache in `tests/domain/tracer-auth-session.test.ts`; per-page wave and query ceilings in `tests/integration/page-budgets.test.ts`; loading boundaries in `tests/components/app-loading.test.tsx`; no re-fetch on mount in `tests/components/workspaces-view.test.tsx`, `tests/components/calls-view.test.tsx`, and `tests/components/report-notifications.test.tsx` | Integration |
 | Organization and identity | Organization migration and repository persistence in `tests/integration/migrations.test.ts`; identity normalization and admission in `tests/domain/auth-policy.test.ts`; transactional email mapping in `tests/contracts/transactional-email.test.ts`; bootstrap uniqueness, generic provisioned-only sign-in, disabled sessions, first-sign-in activation, Organization deletion protection, and session revocation are covered in `tests/integration/authentication.test.ts`, with UI behavior in `tests/components/auth-pages.test.tsx` and the browser journey in `tests/e2e/provisioned-email-code-sign-in.spec.ts`; Operator role policy and last Active Operator protection in `tests/domain/auth-policy.test.ts`; Organization-scoped Operator administration, direct API authorization, provisioning, disablement with session revocation, and re-enablement in `tests/integration/operator-administration.test.ts` | Domain, contract, integration, component, and browser |
 | Organization integrations | Credential encryption round trip and tamper rejection in `tests/domain/credential-encryption.test.ts`; E.164 normalization in `tests/domain/phone-number.test.ts`; disconnect dependency policy and Twilio SID validation in `tests/domain/integrations-policy.test.ts`; provider health states, including R2 by bucket name and R2 and Trigger.dev configured, healthy, and degraded from Recording transfer history, in `tests/domain/provider-health.test.ts`; Twilio REST authorization, payload mapping, pagination, and secret-free errors in `tests/contracts/twilio-client.test.ts`; Organization-scoped connect, verified rotation, verified and encrypted webhook Auth Token storage, failure recording, inventory sync and release, blocked disconnect, Hyperdrive and Email Service tests, and Organization-scoped Recording transfer health with no transfers yet, the last stored transfer, and the 5 most recent failures without object keys or Recording SIDs in `tests/integration/integrations.test.ts`; Organization-scoped media lifecycle health counting purged and expired Recordings whose cleanup is unfinished 26 hours later or whose Twilio copy waits on a missing Twilio connection, oldest 5 first with their Call and Workspace, on the Trigger.dev card only, in `tests/integration/integrations.test.ts`; Trigger.dev configured with no unfinished media cleanup and degraded while any remains in `tests/domain/provider-health.test.ts`; and the unfinished media cleanup count, its empty state, and its table with Call Detail links in `tests/components/integrations-view.test.tsx`; Integrations page states, secret-free rendering, the R2 bucket, and the R2 and Trigger.dev Recording transfer history and failure table in `tests/components/integrations-view.test.tsx` | Domain, contract, integration, and component |
 | Workspace access | Grantable and readable Workspace States in `tests/domain/workspace-policy.test.ts`; role provisioning and safe role change decisions in `tests/domain/auth-policy.test.ts`; granted Workspace summaries in access instructions in `tests/contracts/transactional-email.test.ts`; atomic Client Viewer provisioning with its initial Access Grant, idempotent grants, Active-only new grants, last-grant protection, and safe role changes in `tests/integration/operator-administration.test.ts`; the `access_grant` table and runtime privileges in `tests/integration/migrations.test.ts`; Organization scope, granted Active and Archived reads, ungranted and dormant denials, Operator-only mutations, and revocation from an existing session, including for Recording audio streams, in `tests/integration/workspace-access.test.ts`; Users, Workspace Settings Access, and read-only Workspace views in `tests/components/app-shell.test.tsx`, `tests/components/workspace-settings-view.test.tsx`, `tests/components/workspaces-view.test.tsx`, and `tests/components/workspace-overview.test.tsx`; granted access, direct-route and API denial, and revocation in `tests/e2e/workspace-access-grants.spec.ts`; Call Detail and Recent Calls for an Operator and a Client Viewer with a current Access Grant, the Twilio call SID sent only to Operators and absent from the Client Viewer payload, no Recording SIDs or object keys in either payload, the same Not Found for an ungranted Workspace, another Workspace's path, another Organization, and a missing Call, a 401 for unauthenticated requests, and a revoked grant on an existing session in `tests/integration/call-detail.test.ts` | Domain, contract, integration, component, and browser |

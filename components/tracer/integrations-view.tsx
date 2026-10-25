@@ -57,7 +57,9 @@ import type { MediaLifecycleHealth, OpenAIAnalysisHealth, ProviderHealth, Provid
 type IntegrationResponse = {
   providers: ProviderHealth[];
   twilio: TwilioConnectionRecord | null;
+  numbers?: TwilioNumberRecord[];
   cloudflare: CloudflareConnectionRecord | null;
+  sites?: CloudflareSiteListEntry[];
   dataforseo?: DataForSeoConnectionRecord | null;
 };
 
@@ -492,23 +494,9 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
       const body = await responseBody(response) as unknown as IntegrationResponse;
       setProviders(Array.isArray(body.providers) ? body.providers : []);
       setTwilio(body.twilio ?? null);
-      if (body.twilio) {
-        const numbersResponse = await fetch("/api/integrations/twilio/numbers");
-        if (!numbersResponse.ok) throw new Error("Integrations unavailable");
-        const numbersBody = await responseBody(numbersResponse);
-        setNumbers(Array.isArray(numbersBody.numbers) ? numbersBody.numbers as TwilioNumberRecord[] : []);
-      } else {
-        setNumbers([]);
-      }
+      setNumbers(body.twilio && Array.isArray(body.numbers) ? body.numbers : []);
       setCloudflare(body.cloudflare ?? null);
-      if (body.cloudflare) {
-        const sitesResponse = await fetch("/api/integrations/cloudflare/sites");
-        if (!sitesResponse.ok) throw new Error("Integrations unavailable");
-        const sitesBody = await responseBody(sitesResponse);
-        setSites(Array.isArray(sitesBody.sites) ? sitesBody.sites as CloudflareSiteListEntry[] : []);
-      } else {
-        setSites([]);
-      }
+      setSites(body.cloudflare && Array.isArray(body.sites) ? body.sites : []);
       setDataforseo(body.dataforseo ?? null);
     } catch {
       setRefreshError(true);

@@ -68,18 +68,20 @@ type RankRow = { site_keyword_id: string; day: string; position: number | null; 
 type ServiceAreaRow = { service_area_city: string | null; service_area_region: string | null; service_area_country: string | null };
 
 export async function siteSearch(pool: Pool, siteId: string, _timeZone: string, now: Date = new Date()): Promise<SiteSearch | null> {
-  const site = await pool.query<ServiceAreaRow>("select service_area_city, service_area_region, service_area_country from site where id = $1", [siteId]);
-  if (!site.rows[0]) return null;
   const today = calendarDateInTimeZone(now, rankDayTimeZone);
   const firstDay = addCalendarDays(today, -(searchTrendDays - 1));
-  const keywords = await pool.query<KeywordRow>("select id, phrase, weight from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
-  const ranks = await pool.query<RankRow>(
-    `select r.site_keyword_id, r.day::text as day, r.position, r.ranking_url, r.top_results, r.checked_at
-       from keyword_rank_day r join site_keyword k on k.id = r.site_keyword_id
-      where k.site_id = $1 and k.removed_at is null and r.day >= $2::date and r.day <= $3::date
-      order by r.day`,
-    [siteId, firstDay, today],
-  );
+  const [site, keywords, ranks] = await Promise.all([
+    pool.query<ServiceAreaRow>("select service_area_city, service_area_region, service_area_country from site where id = $1", [siteId]),
+    pool.query<KeywordRow>("select id, phrase, weight from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]),
+    pool.query<RankRow>(
+      `select r.site_keyword_id, r.day::text as day, r.position, r.ranking_url, r.top_results, r.checked_at
+         from keyword_rank_day r join site_keyword k on k.id = r.site_keyword_id
+        where k.site_id = $1 and k.removed_at is null and r.day >= $2::date and r.day <= $3::date
+        order by r.day`,
+      [siteId, firstDay, today],
+    ),
+  ]);
+  if (!site.rows[0]) return null;
   const byKeyword = new Map<string, RankRow[]>();
   for (const row of ranks.rows) {
     const rows = byKeyword.get(row.site_keyword_id) ?? [];

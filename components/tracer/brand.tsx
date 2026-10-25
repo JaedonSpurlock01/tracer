@@ -1,18 +1,20 @@
 /**
  * -------------------------------------------------------------------------
  * @file   brand.tsx
- * -------------------------------------------------------------------------
- * @brief  Renders the Tracer gradient orb and wordmark lockup.
+ * @brief  Renders the Spurlock Labs ibex mark and the Tracer wordmark lockup.
  *
  * @description
- *  BrandMark draws the orb at a given size. BrandLockup pairs it with the
- *  Tracer wordmark for authentication screens.
+ *  BrandMark draws the ibex shield at a given size. BrandLockup pairs it
+ *  with the Tracer wordmark for authentication screens.
  *
  * @remarks
- *  The orb is a radial highlight from zinc-50 through zinc-400 to zinc-700,
- *  so it stays neutral on the zinc palette. It is decorative beside its
- *  wordmark or the account name and is hidden from assistive technology.
- *  The favicon in app/icon.svg draws the same gradient.
+ *  The mark is a monochrome alpha mask (public/brand-mark.png) painted with
+ *  currentColor through CSS masking, so one asset reads correctly on every
+ *  theme: dark strokes on light surfaces, light strokes on dark ones, and
+ *  the constellation lines keep their lighter weight through partial alpha.
+ *  It is decorative beside its wordmark or the account name and is hidden
+ *  from assistive technology. The favicon in app/icon.png is the same mark
+ *  in white on the zinc-950 shield ground.
  *
  * @see
  *  DESIGN.md
@@ -27,17 +29,19 @@ interface BrandMarkProps {
   className?: string;
 }
 
+const maskStyle = {
+  maskImage: "url(/brand-mark.png)",
+  WebkitMaskImage: "url(/brand-mark.png)",
+  maskSize: "contain",
+  WebkitMaskSize: "contain",
+  maskRepeat: "no-repeat",
+  WebkitMaskRepeat: "no-repeat",
+  maskPosition: "center",
+  WebkitMaskPosition: "center",
+} as const;
+
 export function BrandMark({ size = 24, className }: BrandMarkProps) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{ width: size, height: size }}
-      className={cn(
-        "inline-block shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,var(--color-zinc-50),var(--color-zinc-400)_45%,var(--color-zinc-700))]",
-        className,
-      )}
-    />
-  );
+  return <span aria-hidden="true" style={{ width: size, height: size, ...maskStyle }} className={cn("inline-block shrink-0 bg-current", className)} />;
 }
 
 export function BrandLockup({ className }: { className?: string }) {

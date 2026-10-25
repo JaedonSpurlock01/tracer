@@ -26,7 +26,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CallsView from "@/components/tracer/calls-view";
@@ -112,14 +112,19 @@ describe("CallsView", () => {
     expect(within(pending).getByText("Not available")).toBeVisible();
   });
 
-  it("omits the Workspace column and requests the fixed Workspace scope in Workspace Calls", async () => {
+  it("omits the Workspace column and keeps the fixed Workspace scope on the next page fetch without re-fetching the server page on mount", async () => {
     const fetch = vi.fn(async () => respond({ ...result, calls: [answered], total: 1, timeZone: "America/Los_Angeles" }));
     vi.stubGlobal("fetch", fetch);
     render(<CallsView initialResult={{ ...result, calls: [answered], total: 1, timeZone: "America/Los_Angeles" }} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} />);
     expect(headers()).not.toContain("Workspace");
     expect(screen.getByText("1 Call in Acme Plumbing")).toBeVisible();
     expect(screen.getByRole("link", { name: "Oct 17, 2026, 8:04:05 AM" })).toBeVisible();
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?workspaceId=workspace-1", { cache: "no-store" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Search Calls"), { target: { value: "312" } });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(lastRequest(fetch).get("workspaceId")).toBe("workspace-1");
+    expect(lastRequest(fetch).get("q")).toBe("312");
   });
 
   it("offers Export Recordings as the primary action and Export CSV as the secondary action", () => {
@@ -209,7 +214,6 @@ describe("CallsView", () => {
     const fetch = vi.fn(async () => respond(paged));
     vi.stubGlobal("fetch", fetch);
     render(<CallsView initialResult={paged} initialQuery={defaultQuery} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     fetch.mockImplementationOnce(async () => respond({ error: "unavailable" }, 500));
     fireEvent.click(screen.getByRole("button", { name: "Go to next page" }));
     const table = screen.getByRole("table");
@@ -227,7 +231,6 @@ describe("CallsView", () => {
     const fetch = vi.fn(async () => respond(result));
     vi.stubGlobal("fetch", fetch);
     const { container } = render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls", { cache: "no-store" }));
     fetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveSorted = resolve; }));
     fireEvent.click(screen.getByRole("button", { name: "Caller" }));
     await waitFor(() => expect(fetch).toHaveBeenLastCalledWith("/api/calls?sort=callerNumber&order=asc", { cache: "no-store" }));
@@ -242,7 +245,6 @@ describe("CallsView", () => {
     const fetch = vi.fn(async () => respond(result));
     vi.stubGlobal("fetch", fetch);
     render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Started" }));
     await waitFor(() => expect(fetch).toHaveBeenLastCalledWith("/api/calls?sort=startedAt&order=asc", { cache: "no-store" }));
   });
@@ -271,7 +273,6 @@ describe("CallsView", () => {
     vi.stubGlobal("fetch", fetch);
     const filtered: CallListQuery = { ...defaultQuery, page: 3, filters: { ...emptyCallFilters, outcomes: ["Voicemail"], leadScoreMin: 40 } };
     render(<CallsView initialResult={{ ...result, total: 60, page: 3 }} initialQuery={filtered} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?page=3&outcome=Voicemail&scoreMin=40", { cache: "no-store" }));
     fireEvent.click(within(screen.getByRole("toolbar", { name: "Filters" })).getByRole("button", { name: "Call Outcome filter options" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     await waitFor(() => expect(fetch).toHaveBeenLastCalledWith("/api/calls?scoreMin=40", { cache: "no-store" }));
@@ -287,7 +288,6 @@ describe("CallsView", () => {
     const fetch = vi.fn(async () => respond(result));
     vi.stubGlobal("fetch", fetch);
     render(<CallsView initialResult={result} initialQuery={defaultQuery} workspaceOptions={workspaceOptions} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Add Filter" }));
     fireEvent.click(await screen.findByRole("option", { name: /Call Outcome/ }));
     fireEvent.click(await screen.findByRole("option", { name: "is any of" }));
@@ -302,7 +302,6 @@ describe("CallsView", () => {
     vi.stubGlobal("fetch", fetch);
     const filtered: CallListQuery = { ...defaultQuery, page: 3, filters: { ...emptyCallFilters, leadScoreMin: 40 } };
     render(<CallsView initialResult={{ ...result, total: 60, page: 3 }} initialQuery={filtered} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?page=3&scoreMin=40", { cache: "no-store" }));
     fireEvent.click(screen.getByRole("button", { name: /Advanced Filters/ }));
     const advanced = await screen.findByRole("dialog");
     fireEvent.click(within(advanced).getByRole("button", { name: "Add group" }));
@@ -324,7 +323,6 @@ describe("CallsView", () => {
     vi.stubGlobal("fetch", fetch);
     const filtered: CallListQuery = { ...defaultQuery, page: 2, filters: { ...emptyCallFilters, leadScoreMin: 40, recordingAvailability: ["Ready"] } };
     render(<CallsView initialResult={{ ...result, total: 60, page: 2 }} initialQuery={filtered} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?page=2&scoreMin=40&recording=Ready", { cache: "no-store" }));
     fireEvent.click(screen.getByRole("button", { name: /Advanced Filters/ }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "And, change combinator" }));
     await waitFor(() => expect(lastRequest(fetch).has("adv")).toBe(true));
@@ -341,10 +339,9 @@ describe("CallsView", () => {
     const fetch = vi.fn(async () => respond({ ...result, total: 60 }));
     vi.stubGlobal("fetch", fetch);
     render(<CallsView initialResult={{ ...result, total: 60, page: 2 }} initialQuery={{ ...defaultQuery, page: 2 }} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/calls?page=2", { cache: "no-store" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search Calls" }), { target: { value: "(312) 555" } });
     await waitFor(() => expect(fetch).toHaveBeenLastCalledWith("/api/calls?q=%28312%29+555", { cache: "no-store" }));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the filters when nothing matches and offers Clear Filters to return to every Call", async () => {
@@ -357,7 +354,6 @@ describe("CallsView", () => {
     expect(within(table).queryByText("Calls appear after inbound traffic reaches an assigned Tracking Number.")).toBeNull();
     expect(screen.getByText("0 Calls")).toBeVisible();
     expect(within(screen.getByRole("toolbar", { name: "Filters" })).getByText("Missed")).toBeVisible();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     let resolveCleared: (response: Response) => void = () => undefined;
     fetch.mockImplementation(() => new Promise<Response>((resolve) => { resolveCleared = resolve; }));
     fireEvent.click(within(table).getByRole("button", { name: "Clear Filters" }));
