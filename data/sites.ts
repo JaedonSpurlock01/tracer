@@ -475,18 +475,20 @@ export function createSites(pool: Pool, actor: Actor): Sites {
       const readable = canManageWorkspaces(actor)
         ? (scope.push(organizationId), `s.organization_id = $${scope.length}`)
         : `exists (select 1 from site_link l join workspace w on w.id = l.workspace_id where l.site_id = s.id and l.ended_at is null and ${readableWorkspaceSql(actor, scope)})`;
-      const site = await pool.query<{ first_day: string | null }>(
-        `select (select min(m.day)::text from site_metric_day m where m.site_id = s.id) as first_day from site s where s.id = $1 and ${readable}`,
-        scope,
-      );
-      if (!site.rows[0]) throw new SitesError("not_found");
       const today = calendarDateInTimeZone(new Date(), timeZone);
-      const window = analyticsWindow(range, today) ?? { from: site.rows[0].first_day && site.rows[0].first_day < today ? site.rows[0].first_day : today, to: today };
-      const metrics = await pool.query<MetricRow>(
-        `select day::text as day, visits, page_views, requests, errors, top_paths, referrers, devices, lcp_ms, inp_ms, cls::text as cls
-           from site_metric_day where site_id = $1 and day >= $2::date and day <= $3::date order by day`,
-        [siteId, window.from, window.to],
-      );
+      const boundedWindow = analyticsWindow(range, today);
+      const metricsSql = `select day::text as day, visits, page_views, requests, errors, top_paths, referrers, devices, lcp_ms, inp_ms, cls::text as cls
+           from site_metric_day where site_id = $1 and day >= $2::date and day <= $3::date order by day`;
+      const [site, boundedMetrics] = await Promise.all([
+        pool.query<{ first_day: string | null }>(
+          `select (select min(m.day)::text from site_metric_day m where m.site_id = s.id) as first_day from site s where s.id = $1 and ${readable}`,
+          scope,
+        ),
+        boundedWindow ? pool.query<MetricRow>(metricsSql, [siteId, boundedWindow.from, boundedWindow.to]) : null,
+      ]);
+      if (!site.rows[0]) throw new SitesError("not_found");
+      const window = boundedWindow ?? { from: site.rows[0].first_day && site.rows[0].first_day < today ? site.rows[0].first_day : today, to: today };
+      const metrics = boundedMetrics ?? (await pool.query<MetricRow>(metricsSql, [siteId, window.from, window.to]));
       const rows = metrics.rows;
       const byDay = new Map(rows.map((row) => [row.day, row]));
       const daily: SiteSummary["daily"] = [];

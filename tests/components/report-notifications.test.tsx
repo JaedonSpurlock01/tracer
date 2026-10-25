@@ -70,9 +70,9 @@ describe("ReportNotifications", () => {
     vi.stubGlobal("fetch", routedFetch({ "GET /api/reports": { jobs: [generatingJob(), reportJob(), failed] } }));
     renderPopover();
 
-    const trigger = await screen.findByRole("button", { name: "Notifications, 1 in progress" });
-    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
     const popover = await screen.findByRole("dialog", { name: "Reports and exports" });
+    await screen.findByRole("button", { name: "Notifications, 1 in progress" });
 
     expect(within(popover).getByText("Generating")).toBeVisible();
     expect(within(popover).getByText("Completed")).toBeVisible();
@@ -91,10 +91,22 @@ describe("ReportNotifications", () => {
     expect(await screen.findByText("Reports and exports you request appear here.")).toBeVisible();
   });
 
+  it("does not load Report history until the popover opens", async () => {
+    const fetch = routedFetch({ "GET /api/reports": { jobs: [reportJob()] } });
+    vi.stubGlobal("fetch", fetch);
+    renderPopover();
+    await screen.findByRole("button", { name: "Notifications" });
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(historyRequests(fetch)).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    await waitFor(() => expect(historyRequests(fetch)).toBe(1));
+  });
+
   it("polls every 30 seconds while a job is Generating and the tab is visible", async () => {
     const fetch = routedFetch({ "GET /api/reports": { jobs: [generatingJob()] } });
     vi.stubGlobal("fetch", fetch);
     renderPopover();
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
     await screen.findByRole("button", { name: "Notifications, 1 in progress" });
     expect(historyRequests(fetch)).toBe(1);
 
@@ -118,7 +130,9 @@ describe("ReportNotifications", () => {
     const fetch = routedFetch({ "GET /api/reports": () => new Response(JSON.stringify({ jobs }), { status: 200 }) });
     vi.stubGlobal("fetch", fetch);
     renderPopover();
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
     await screen.findByRole("button", { name: "Notifications, 1 in progress" });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
     jobs = [reportJob({ id: "job-2" })];
     await act(async () => vi.advanceTimersByTime(30_000));
@@ -136,7 +150,8 @@ describe("ReportNotifications", () => {
     const fetch = routedFetch({ "GET /api/reports": { jobs: [reportJob()] } });
     vi.stubGlobal("fetch", fetch);
     renderPopover();
-    await screen.findByRole("button", { name: "Notifications" });
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
+    await waitFor(() => expect(historyRequests(fetch)).toBe(1));
     await act(async () => vi.advanceTimersByTime(120_000));
     expect(historyRequests(fetch)).toBe(1);
   });
@@ -157,7 +172,8 @@ describe("ReportNotifications", () => {
     await screen.findByRole("button", { name: "Notifications" });
     fireEvent.click(screen.getByRole("button", { name: "Request" }));
     expect(await screen.findByRole("button", { name: "Notifications, 1 in progress" })).toBeVisible();
+    expect(historyRequests(fetch)).toBe(0);
     await act(async () => vi.advanceTimersByTime(30_000));
-    expect(historyRequests(fetch)).toBe(2);
+    expect(historyRequests(fetch)).toBe(1);
   });
 });

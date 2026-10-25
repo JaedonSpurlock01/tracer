@@ -8,8 +8,11 @@
  *  email OTP, and Organization membership support.
  *
  * @remarks
- *  The factory keeps database and provider boundaries request-testable and
- *  leaves Better Auth's session cookie cache disabled for immediate revocation.
+ *  The factory keeps database and provider boundaries request-testable.
+ *  Better Auth's session cookie cache is on for 60 seconds so a navigation
+ *  does not read the session from the database every time; a user set to
+ *  Disabled keeps a working session for at most that minute, which the
+ *  Product Owner accepted on 2026-10-24 for an internal tool.
  *
  * @see
  *  docs/adr/0003-map-better-auth-membership-roles-to-canonical-roles.md
@@ -28,6 +31,9 @@ import { schema, users } from "@/data/schema";
 import { isAllowedRecipient, sendSignInCode, type TransactionalEmail } from "@/data/transactional-email";
 
 const safeAuthenticationError = "Unable to sign in with these credentials.";
+
+/** How long a signed session copy in the cookie is trusted before the database is read again. */
+export const sessionCookieCacheSeconds = 60;
 
 export interface TracerAuthOptions {
   database: NodePgDatabase<typeof schema>;
@@ -76,7 +82,7 @@ export function createTracerAuth(options: TracerAuthOptions) {
       },
     },
     emailAndPassword: { enabled: false },
-    session: { cookieCache: { enabled: false } },
+    session: { cookieCache: { enabled: true, maxAge: sessionCookieCacheSeconds } },
     databaseHooks: {
       user: {
         delete: { before: async () => false },

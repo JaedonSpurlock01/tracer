@@ -22,9 +22,9 @@ import { headers } from "next/headers";
 import { cache } from "react";
 
 import { resolveActor, type Actor } from "@/data/authorization";
-import { withTracerRuntime } from "@/data/tracer-runtime";
+import { withRequestRuntime } from "@/app/(app)/runtime";
 
 export const resolveRequestActor = cache(async (): Promise<Actor | null> => {
   const requestHeaders = await headers();
-  return withTracerRuntime(({ auth, database }) => resolveActor(auth, database, new Headers(requestHeaders)));
+  return withRequestRuntime(({ auth, database }) => resolveActor(auth, database, new Headers(requestHeaders)));
 });

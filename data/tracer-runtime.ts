@@ -6,7 +6,10 @@
  * @description
  *  Resolves Cloudflare bindings, PostgreSQL, transactional email, Better
  *  Auth, the Recording processing port, and the private Recording bucket
- *  for server routes before closing the request-scoped pool.
+ *  for server routes. openTracerRuntime hands back the runtime with a close
+ *  the caller controls; withTracerRuntime closes right after one unit of
+ *  work, and the app shell's withRequestRuntime shares one open runtime
+ *  across the actor, layouts, and page and closes it after the response.
  *
  * @remarks
  *  The runtime preserves the explicit non-production E2E email fake while
@@ -20,7 +23,9 @@
  *  than left Queued with no run, except that the explicit non-production
  *  E2E Trigger.dev fake accepts the request so a browser journey can
  *  complete the job itself.
- *  The request pool gives up on a connection after 10 seconds and a
+ *  The request pool holds up to six connections so queries issued together
+ *  run together instead of queueing behind one socket; Hyperdrive owns the
+ *  real pooling. It gives up on a connection after 10 seconds and a
  *  query after 30, because neither node-postgres nor the Cloudflare socket
  *  adapter has a default timeout and a stalled Hyperdrive connection would
  *  otherwise hang the page indefinitely. Closing the pool is never
@@ -32,6 +37,7 @@
  *  Workers Logs instead of guessed at.
  *
  * @see
+ *  app/(app)/runtime.ts
  *  data/tracer-auth.ts
  *  data/request-log.ts
  *
@@ -112,7 +118,7 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
 }
 
 export function createRequestPool(connectionString: string): Pool {
-  return new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
+  return new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000 });
 }
 
 export const poolCloseDeadlineMs = 2_000;
@@ -139,7 +145,20 @@ async function currentRay(): Promise<string | null> {
   }
 }
 
-export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Promise<T>): Promise<T> {
+export interface TracerRuntimeScope {
+  runtime: TracerRuntime;
+  /** Marks the request as failed so its log line carries the error. */
+  recordFailure(error: unknown): void;
+  /** Closes the pool in the background and writes the tracer.request line. Call once. */
+  close(ray: string | null): void;
+}
+
+/**
+ * Opens the runtime for one request. The caller decides when the request is
+ * over: withTracerRuntime closes after its callback, and the app shell
+ * closes after the response so the actor, layouts, and page share it.
+ */
+export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
   const started = Date.now();
   const { env, ctx } = await getCloudflareContext({ async: true });
   const bindings = env as AuthBindings;
@@ -155,6 +174,10 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
   const pool = createRequestPool(connectionString);
   const db = observePool(pool);
   let failure: unknown;
+  const close = (ray: string | null) => {
+    ctx.waitUntil(closeRequestPool(pool));
+    logRequest({ ray, durationMs: Date.now() - started, db, error: failure });
+  };
 
   try {
     if (!bindings.EMAIL && !fakeEnabled) {
@@ -201,7 +224,7 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       baseURL,
       backgroundTask: (promise) => ctx.waitUntil(promise),
     });
-    return await run({
+    const runtime: TracerRuntime = {
       auth,
       pool,
       database,
@@ -217,12 +240,30 @@ export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Prom
       recordingLeadAssessment: triggerSecretKey ? createTriggerRecordingProcessing({ secretKey: triggerSecretKey, taskId: recordingLeadAssessmentTaskId }) : undefined,
       recordingBucket: bindings.R2,
       reportGeneration: createRuntimeReportGeneration(triggerSecretKey),
-    });
+    };
+    return {
+      runtime,
+      recordFailure: (error) => {
+        failure = error;
+      },
+      close,
+    };
   } catch (error) {
     failure = error;
+    close(await currentRay());
+    throw error;
+  }
+}
+
+/** Opens the runtime, runs one unit of work, and closes it. Route handlers use this. */
+export async function withTracerRuntime<T>(run: (runtime: TracerRuntime) => Promise<T>): Promise<T> {
+  const scope = await openTracerRuntime();
+  try {
+    return await run(scope.runtime);
+  } catch (error) {
+    scope.recordFailure(error);
     throw error;
   } finally {
-    ctx.waitUntil(closeRequestPool(pool));
-    logRequest({ ray: await currentRay(), durationMs: Date.now() - started, db, error: failure });
+    scope.close(await currentRay());
   }
 }

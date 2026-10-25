@@ -469,16 +469,18 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
     },
 
     async listRecent(workspaceId) {
-      const workspace = await workspaces.find(workspaceId);
+      const [workspace, result] = await Promise.all([
+        workspaces.find(workspaceId),
+        pool.query<{ id: string; caller_number: string | null; state: CallDetail["state"]; outcome: OutcomeKind | null; started_at: Date; connected_seconds: number | null }>(
+          `select c.id, c.caller_number, c.state, c.outcome, c.started_at, ${connectedSecondsSql} as connected_seconds
+             from call c
+            where c.organization_id = $1 and c.workspace_id = $2
+            order by c.started_at desc, c.id
+            limit $3`,
+          [actor.organizationId, workspaceId, recentCallLimit],
+        ),
+      ]);
       if (!workspace) return null;
-      const result = await pool.query<{ id: string; caller_number: string | null; state: CallDetail["state"]; outcome: OutcomeKind | null; started_at: Date; connected_seconds: number | null }>(
-        `select c.id, c.caller_number, c.state, c.outcome, c.started_at, ${connectedSecondsSql} as connected_seconds
-           from call c
-          where c.organization_id = $1 and c.workspace_id = $2
-          order by c.started_at desc, c.id
-          limit $3`,
-        [actor.organizationId, workspace.id, recentCallLimit],
-      );
       return result.rows.map((row) => ({
         id: row.id,
         callerNumber: row.caller_number,

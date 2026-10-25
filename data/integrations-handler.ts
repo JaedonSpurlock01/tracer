@@ -30,9 +30,11 @@ import type { Pool } from "pg";
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
-import { createIntegrations, IntegrationsError, type Integrations } from "@/data/integrations";
-import { createFormsKey } from "@/data/form-submissions";
-import { describeProviderHealth, type ProviderConfiguration } from "@/data/provider-health";
+import type { CloudflareConnectionRecord, CloudflareSiteListEntry } from "@/data/cloudflare-connection";
+import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
+import { createIntegrations, IntegrationsError, type Integrations, type TwilioConnectionRecord, type TwilioNumberRecord } from "@/data/integrations";
+import { createFormsKey, type FormsKey } from "@/data/form-submissions";
+import { describeProviderHealth, type ProviderConfiguration, type ProviderHealth } from "@/data/provider-health";
 import { schema } from "@/data/schema";
 import type { RankCheckResult } from "@/data/rank-check";
 import type { SiteSyncResult } from "@/data/site-sync";
@@ -94,6 +96,46 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
+/**
+ * Loads everything the Integrations page shows in one parallel pass: the
+ * three connections, provider health, the Twilio numbers and Cloudflare
+ * Sites when their connection exists, and the Forms key status.
+ */
+export interface IntegrationsOverview {
+  providers: ProviderHealth[];
+  twilio: TwilioConnectionRecord | null;
+  numbers: TwilioNumberRecord[];
+  cloudflare: CloudflareConnectionRecord | null;
+  sites: CloudflareSiteListEntry[];
+  dataforseo: DataForSeoConnectionRecord | null;
+  formsKey: Awaited<ReturnType<FormsKey["status"]>>;
+}
+
+export async function loadIntegrationsOverview(integrations: Integrations, configuration: ProviderConfiguration, formsKey: Pick<FormsKey, "status">): Promise<IntegrationsOverview> {
+  const [twilio, cloudflare, dataforseo, transfer, analysis, media, formsKeyStatus] = await Promise.all([
+    integrations.getTwilioConnection(),
+    integrations.getCloudflareConnection(),
+    integrations.getDataForSeoConnection(),
+    integrations.getRecordingTransferHealth(),
+    integrations.getAnalysisProcessingHealth(),
+    integrations.getMediaLifecycleHealth(),
+    formsKey.status(),
+  ]);
+  const [numbers, sites] = await Promise.all([
+    twilio ? integrations.listTwilioNumbers() : Promise.resolve([]),
+    cloudflare ? integrations.listCloudflareSites() : Promise.resolve([]),
+  ]);
+  return {
+    providers: describeProviderHealth(configuration, twilio, transfer, analysis, media, cloudflare, dataforseo),
+    twilio,
+    numbers,
+    cloudflare,
+    sites,
+    dataforseo,
+    formsKey: formsKeyStatus,
+  };
+}
+
 export function createIntegrationsHandler(options: IntegrationsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
@@ -109,11 +151,7 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
       });
       const route = new URL(request.url).pathname.replace(/^\/api\/integrations\/?/, "");
       if (request.method === "GET" && route === "") {
-        const twilio = await integrations.getTwilioConnection();
-        const cloudflare = await integrations.getCloudflareConnection();
-        const dataforseo = await integrations.getDataForSeoConnection();
-        const formsKey = await createFormsKey(options.pool, actor).status();
-        return response({ providers: describeProviderHealth(options.configuration, twilio, await integrations.getRecordingTransferHealth(), await integrations.getAnalysisProcessingHealth(), await integrations.getMediaLifecycleHealth(), cloudflare, dataforseo), twilio, cloudflare, dataforseo, formsKey });
+        return response(await loadIntegrationsOverview(integrations, options.configuration, createFormsKey(options.pool, actor)));
       }
       if (request.method === "POST" && route === "forms-key") return response(await createFormsKey(options.pool, actor).generate(), 201);
       if (request.method === "DELETE" && route === "forms-key") {

@@ -4,8 +4,8 @@
  * @brief  Defines Tracer's root application layout.
  *
  * @description
- *  Applies Geist and Geist Mono, the chosen color theme, metadata, and
- *  semantic theme classes globally. The orb favicon comes from app/icon.svg.
+ *  Applies Instrument Sans and Geist Mono, the chosen color theme, metadata, and
+ *  semantic theme classes globally. The ibex favicon comes from app/icon.png.
  *
  * @remarks
  *  The color theme comes from the theme cookie, so the first response is
@@ -19,7 +19,7 @@
  * -------------------------------------------------------------------------
  */
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Instrument_Sans } from "next/font/google";
 import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 
@@ -27,9 +27,9 @@ import { resolveTheme, themeCookie } from "@/data/theme";
 
 import "./globals.css";
 
-const geist = Geist({
+const instrumentSans = Instrument_Sans({
   subsets: ["latin"],
-  variable: "--font-geist-sans",
+  variable: "--font-instrument-sans",
 });
 
 const geistMono = Geist_Mono({
@@ -51,7 +51,7 @@ export default async function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" data-theme={theme.id} className={theme.scheme === "dark" ? "dark" : undefined}>
       <body
-        className={`${geist.variable} ${geistMono.variable} min-h-screen bg-background font-sans text-foreground antialiased`}
+        className={`${instrumentSans.variable} ${geistMono.variable} min-h-screen bg-background font-sans text-foreground antialiased`}
       >
         {children}
       </body>

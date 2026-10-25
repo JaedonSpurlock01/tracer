@@ -14,14 +14,14 @@ This document defines Tracer's product experience, page architecture, visual sys
 
 ### Brand idea
 
-Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity is a terminal-styled, minimalist interface: flat matte surfaces, hairline borders, monospace identifiers, and a soft gradient orb as the mark, representing a call moving through the system. It should feel technical without stopping being customer-facing.
+Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity is a terminal-styled, minimalist interface: flat matte surfaces, hairline borders, monospace identifiers, and the Spurlock Labs ibex shield as the mark. It should feel technical without stopping being customer-facing.
 
 ### Mark
 
-- The mark is a gradient orb: a radial highlight from zinc-50 through zinc-400 to zinc-700, drawn by `BrandMark` in `components/tracer/brand.tsx`.
-- The lockup pairs the orb with the `Tracer` wordmark in Geist Semibold on authentication screens and report covers.
-- The orb alone appears in the Sidebar account menu trigger and as the favicon (`app/icon.svg`).
-- Use at most one orb per view, never behind tables, charts, transcripts, forms, or other data-heavy regions.
+- The mark is the Spurlock Labs ibex shield: a monochrome mask (`public/brand-mark.png`) painted with the current foreground color by `BrandMark` in `components/tracer/brand.tsx`, so it reads on every theme without a second asset.
+- The lockup pairs the mark with the `Tracer` wordmark in Instrument Sans Semibold on authentication screens and report covers.
+- The mark alone appears in the Sidebar account menu trigger and as the favicon (`app/icon.png`, white on the zinc-950 ground).
+- Use at most one mark per view, never behind tables, charts, transcripts, forms, or other data-heavy regions.
 - Treat the orb as decorative, hidden from assistive technology, with no perpetual animation.
 - Do not place a tagline in application chrome.
 
@@ -61,8 +61,8 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 ### Typography
 
 - Use Geist throughout the product and generated reports.
-- Use Geist Semibold for the wordmark and page headings.
-- Use Geist Mono (`font-mono`) for identifiers: phone numbers, Organization slugs, timestamps, durations, scores, and KPI values. Body copy, labels, headings, and navigation stay in Geist Sans.
+- Use Instrument Sans Semibold for the wordmark and page headings.
+- Use Geist Mono (`font-mono`) for identifiers: phone numbers, Organization slugs, timestamps, durations, scores, and KPI values. Body copy, labels, headings, and navigation stay in Instrument Sans.
 - Use `text-sm` for body content and `text-xs` for metadata, never smaller.
 - Use tabular numerals for phone numbers, durations, dates, scores, and KPIs.
 - Keep page and panel titles to one to three words where possible.
@@ -104,7 +104,7 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 
 ### Account menu
 
-The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer orb, the user's name, and the current Organization slug in Geist Mono. The menu contains:
+The top of the Sidebar holds the account menu, replacing a separate brand row and footer card. Its trigger shows the Tracer mark, the user's name, and the current Organization slug in Geist Mono. The menu contains:
 
 1. **Organizations:** the current Organization with its name, slug, and a check, then a disabled New organization action until multiple Organizations are supported
 2. **User:** a DiceBear Gaze avatar seeded by the user id, the name, the email, and an outline role Badge

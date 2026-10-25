@@ -39,7 +39,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { resolveRequestActor } from "@/app/(app)/actor";
 import { createOrganizationRepository } from "@/data/organization-repository";
 import { findUserAvatarSeed } from "@/data/user-avatar";
-import { withTracerRuntime } from "@/data/tracer-runtime";
+import { withRequestRuntime } from "@/app/(app)/runtime";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -50,7 +50,7 @@ export default async function AppLayout({ children }: AppLayoutProps) {
   if (!actor) {
     redirect("/sign-in");
   }
-  const [organization, avatarSeed] = await withTracerRuntime(({ pool }) =>
+  const [organization, avatarSeed] = await withRequestRuntime(({ pool }) =>
     Promise.all([
       createOrganizationRepository(pool).findById(actor.organizationId),
       findUserAvatarSeed(pool, actor.userId).catch(() => undefined),

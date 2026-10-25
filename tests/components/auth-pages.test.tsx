@@ -30,7 +30,7 @@ afterEach(() => {
   router.push.mockReset();
 });
 
-import AccountSettingsPage from "@/app/(app)/account/settings/page";
+import AccountSettingsPage from "@/app/(app)/(everyone)/account/settings/page";
 import SignInPage from "@/app/sign-in/page";
 import VerifyEmailPage from "@/app/verify-email/page";
 

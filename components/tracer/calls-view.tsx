@@ -6,8 +6,9 @@
  * @description
  *  Shows one page of Calls with Started, Caller, Workspace, Call Outcome,
  *  Connected Duration, Effective Lead Classification, Lead Score, Recording
- *  Availability, and row actions. The first page arrives from the server;
- *  searching, filtering, sorting, and paging fetch the next page from the
+ *  Availability, and row actions. The first page arrives from the server
+ *  and is not fetched again on mount; searching, filtering, sorting, and
+ *  paging fetch the next page from the
  *  Calls endpoint, keep the page, sort, search, and filters in the URL, and
  *  show Skeleton rows while it loads. Any search or filter change returns
  *  to the first page. Rows open Call Detail, and Play Recording opens it
@@ -106,7 +107,7 @@ export default function CallsView({
   const [searchInput, setSearchInput] = useState(initialQuery.filters.search);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const revalidated = useRef(false);
+  const mounted = useRef(false);
   const requestId = useRef(0);
   const workspaceId = workspace?.id;
 
@@ -130,14 +131,14 @@ export default function CallsView({
   }, [query, workspaceId]);
 
   useEffect(() => {
-    const quiet = !revalidated.current;
-    revalidated.current = true;
-    if (!quiet) {
-      const url = new URL(window.location.href);
-      const search = callListSearchParams(query).toString();
-      window.history.replaceState(null, "", `${url.pathname}${search ? `?${search}` : ""}`);
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
     }
-    const timer = window.setTimeout(() => void loadCalls(quiet), 0);
+    const url = new URL(window.location.href);
+    const search = callListSearchParams(query).toString();
+    window.history.replaceState(null, "", `${url.pathname}${search ? `?${search}` : ""}`);
+    const timer = window.setTimeout(() => void loadCalls(false), 0);
     return () => window.clearTimeout(timer);
   }, [loadCalls, query]);
 

@@ -17,7 +17,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspacesView from "@/components/tracer/workspaces-view";
@@ -91,14 +91,14 @@ async function skipSite() {
 }
 
 describe("WorkspacesView", () => {
-  it("renders server-provided Workspaces immediately without a loading skeleton", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise<Response>(() => undefined)),
-    );
+  it("renders server-provided Workspaces immediately without a loading skeleton or a re-fetch on mount", async () => {
+    const fetch = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetch);
     const { container } = render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
     expect(screen.getByRole("link", { name: /^Phoenix Office/ })).toBeVisible();
     expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("shows each Workspace's 30-day Calls, Good Leads, lead rate, last Call, and attention", async () => {
@@ -146,15 +146,6 @@ describe("WorkspacesView", () => {
     expect(await screen.findByRole("link", { name: /^Old Roofing/ })).toBeVisible();
   });
 
-  it("quietly revalidates the server-provided page without a loading skeleton", async () => {
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [{ ...workspace, name: "Phoenix Office Renamed" }] }), { status: 200 }));
-    vi.stubGlobal("fetch", fetch);
-    const { container } = render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
-    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
-    expect(await screen.findByRole("link", { name: /Phoenix Office Renamed/ })).toBeVisible();
-    expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=&state=All&page=1&pageSize=10");
-  });
-
   it("keeps search, state filter, and page in the URL", async () => {
     const replaceState = vi.spyOn(window.history, "replaceState");
     const fetch = vi.fn(async () => new Response(JSON.stringify({ ...result, total: 25, page: 2 }), { status: 200 }));
@@ -167,18 +158,14 @@ describe("WorkspacesView", () => {
       />,
     );
     expect(screen.getByRole("textbox", { name: "Search workspaces" })).toHaveValue("pho");
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=pho&state=Setup+Required&page=2&pageSize=10"));
     fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "gamma" } });
     await waitFor(() => expect(replaceState).toHaveBeenLastCalledWith(null, "", "/?search=gamma&state=Setup+Required"));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces?search=gamma&state=Setup+Required&page=1&pageSize=10"));
   });
 
   it("shows the first Workspace empty state and create action", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 })),
-    );
-    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [], total: 0 }} initialTimezone="America/Chicago" />);
     const emptyState = await screen.findByTestId("workspace-empty-state");
     expect(
       within(emptyState).getByText(
@@ -196,6 +183,7 @@ describe("WorkspacesView", () => {
       }),
     );
     render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "gamma" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("Workspaces are unavailable.");
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
@@ -326,11 +314,10 @@ describe("WorkspacesView", () => {
   it("posts Basics when creating a Workspace and renders name conflicts", async () => {
     const fetch = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "name_taken" }), { status: 409 }));
     vi.stubGlobal("fetch", fetch);
-    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Create Workspace" }));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [], total: 0 }} initialTimezone="America/Chicago" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" })[0]);
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Phoenix Office" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
     await waitFor(() =>
@@ -606,11 +593,8 @@ describe("WorkspacesView", () => {
 
   it("hides Workspace management for a Client Viewer", async () => {
     const active = { ...workspace, id: "workspace-2", name: "Acme Plumbing", state: "Active" as const, createdBy: null };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [active], counts: { setupRequired: 0, active: 1, archived: 0 } }), { status: 200 })),
-    );
-    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" readOnly />);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [active], counts: { setupRequired: 0, active: 1, archived: 0 } }} initialTimezone="America/Chicago" readOnly />);
     expect(await screen.findByRole("link", { name: /Acme Plumbing/ })).toBeVisible();
     expect(screen.getByText("1 Active, 0 Archived")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Create Workspace" })).not.toBeInTheDocument();
@@ -618,11 +602,8 @@ describe("WorkspacesView", () => {
   });
 
   it("explains an empty read-only Workspace list without a create action", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ ...result, workspaces: [], total: 0 }), { status: 200 })),
-    );
-    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" readOnly />);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [], total: 0 }} initialTimezone="America/Chicago" readOnly />);
     const emptyState = await screen.findByTestId("workspace-empty-state");
     expect(within(emptyState).getByText("No Workspaces are shared with you.")).toBeVisible();
     expect(within(emptyState).queryByRole("button")).not.toBeInTheDocument();
