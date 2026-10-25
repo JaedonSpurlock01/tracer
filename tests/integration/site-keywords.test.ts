@@ -27,7 +27,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createTestPool } from "./test-pool";
 
@@ -62,6 +62,7 @@ const fakeTwilio: TwilioClient = {
 };
 
 const locationLookups: string[] = [];
+let failNextLocationLookup = false;
 const structuredRequests: StructuredRequest[] = [];
 const openai: StructuredResponder = {
   async respond(request) {
@@ -76,10 +77,15 @@ const fakeDataForSeo: DataForSeoClient = {
     return query.keywords.map((phrase, index) => ({ phrase, monthlyVolume: (index + 1) * 100, difficulty: 25, intent: "commercial" as const }));
   },
   async listLocations(_credential, countryIso) {
+    if (failNextLocationLookup) {
+      failNextLocationLookup = false;
+      throw new TypeError("Cannot read properties of undefined (reading 'tasks')");
+    }
     locationLookups.push(countryIso);
     return [
       { code: 2840, name: "United States", kind: "Country" },
       { code: 21146, name: "Idaho,United States", kind: "State" },
+      { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
       { code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" },
       { code: 1016142, name: "Pocatello Regional Airport,Idaho,United States", kind: "Airport" },
       { code: 1026339, name: "St. George,Utah,United States", kind: "City" },
@@ -198,7 +204,18 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect(empty.body).toEqual({ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: null });
   });
 
-  it("searches DataForSEO locations for the Service Area picker, importing the country list once", async () => {
+  it("answers 500 and logs the error when a dependency fails unexpectedly, instead of calling it invalid input", async () => {
+    const cookie = await signIn("operator@example.com");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    failNextLocationLookup = true;
+    const failed = await json(send(cookie, "GET", "workspace-a/site/locations?q=poca"));
+    expect(failed.response.status).toBe(500);
+    expect(failed.body).toEqual({ error: "internal_error" });
+    expect(logged).toHaveBeenCalledWith("workspaces handler failed", expect.objectContaining({ message: "Cannot read properties of undefined (reading 'tasks')" }));
+    logged.mockRestore();
+  });
+
+  it("searches DataForSEO locations for the Service Area picker, importing the country list once even when DataForSEO repeats a code", async () => {
     const cookie = await signIn("operator@example.com");
     const first = await json(send(cookie, "GET", "workspace-a/site/locations?q=poca"));
     expect(first.response.status).toBe(200);
