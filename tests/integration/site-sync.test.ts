@@ -23,8 +23,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
@@ -32,6 +34,7 @@ import { CloudflareClientError, type CloudflareClient, type CloudflareDailyTraff
 import { createCloudflareConnection } from "@/data/cloudflare-connection";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 import type { SitePreviewObjects } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
@@ -177,13 +180,13 @@ const thirdRun = new Date(firstRun.getTime() + 2 * 60 * 60 * 1000);
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = new Pool({ connectionString: container.getConnectionUri() });
+  owner = createTestPool(container.getConnectionUri());
   const password = "C".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = new Pool({ connectionString: runtimeUrl.toString() });
+  runtime = createTestPool(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now()), ('solo', 'solo', 'solo', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await owner.query("insert into member (id, organization_id, user_id, role, created_at) values ('fleet-operator-membership', 'fleet', 'fleet-operator', 'owner', now())");
@@ -197,6 +200,7 @@ beforeAll(async () => {
        values ($1, $2, $3, $4, 'fleet-operator', now(), now(), now(), now())`,
       [`${organizationId}-connection`, organizationId, accountId, await encryptSecret(masterKey, accounts[accountId].token)],
     );
+      await owner.query("update cloudflare_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   }
 }, 120_000);
 

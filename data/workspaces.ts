@@ -40,6 +40,8 @@ export interface WorkspaceRecord {
   destinationNumber: string | null;
   trackingNumber: string | null;
   numberAssignmentStartedAt: string | null;
+  /** A number this Workspace left without its Twilio voice configuration being restored, until it is attached again. */
+  voiceRestoreNeeded: string | null;
   publishedFlowVersion: { version: number; publishedAt: string } | null;
   hasDraft: boolean;
   recordingEnabled: boolean;
@@ -110,6 +112,7 @@ type WorkspaceRow = {
   destination_number: string | null;
   tracking_number: string | null;
   number_assignment_started_at: Date | null;
+  voice_restore_needed: string | null;
   published_flow_version: number | null;
   published_flow_published_at: Date | null;
   has_draft: boolean;
@@ -128,6 +131,7 @@ type WorkspaceRow = {
 const recordQuery = `
   select w.id, w.name, w.reporting_timezone, w.state, w.destination_number,
          na.phone_number as tracking_number, na.started_at as number_assignment_started_at,
+         vr.phone_number as voice_restore_needed,
          fv.version as published_flow_version, fv.published_at as published_flow_published_at,
          exists (select 1 from call_flow_draft d where d.workspace_id = w.id and d.organization_id = w.organization_id) as has_draft,
          w.recording_enabled, w.analysis_enabled, w.spam_gate_enabled,
@@ -143,6 +147,15 @@ const recordQuery = `
        order by version desc
        limit 1
     ) fv on true
+    left join lateral (
+      select skipped.phone_number
+        from number_assignment skipped
+       where skipped.workspace_id = w.id and skipped.organization_id = w.organization_id
+         and skipped.voice_restore_skipped_at is not null
+         and not exists (select 1 from number_assignment later where later.twilio_number_id = skipped.twilio_number_id and later.started_at > skipped.started_at)
+       order by skipped.ended_at desc
+       limit 1
+    ) vr on true
    where w.organization_id = $1
 `;
 
@@ -155,6 +168,7 @@ function toRecord(row: WorkspaceRow): WorkspaceRecord {
     destinationNumber: row.destination_number,
     trackingNumber: row.tracking_number,
     numberAssignmentStartedAt: row.number_assignment_started_at?.toISOString() ?? null,
+    voiceRestoreNeeded: row.voice_restore_needed,
     publishedFlowVersion: row.published_flow_version === null || row.published_flow_published_at === null
       ? null
       : { version: Number(row.published_flow_version), publishedAt: row.published_flow_published_at.toISOString() },

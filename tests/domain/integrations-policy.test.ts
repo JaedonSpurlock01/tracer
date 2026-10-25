@@ -21,7 +21,12 @@ import { decideCloudflareDisconnect, decideTwilioDisconnect, isCloudflareAccount
 
 describe("Twilio integration policy", () => {
   it("allows disconnect without active workspaces", () => {
-    expect(decideTwilioDisconnect({ activeWorkspaceCount: 0 })).toEqual({ allowed: true });
+    expect(decideTwilioDisconnect({ activeWorkspaceCount: 0 })).toEqual({ allowed: true, endsAssignments: 0 });
+  });
+
+  it("allows a forced disconnect that ends the Active Workspaces' Number Assignments", () => {
+    expect(decideTwilioDisconnect({ activeWorkspaceCount: 2, force: true })).toEqual({ allowed: true, endsAssignments: 2 });
+    expect(decideTwilioDisconnect({ activeWorkspaceCount: 0, force: true })).toEqual({ allowed: true, endsAssignments: 0 });
   });
 
   it("blocks disconnect and echoes active workspace counts", () => {

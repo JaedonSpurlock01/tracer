@@ -26,8 +26,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
@@ -37,6 +39,7 @@ import { createE2eCloudflareFake } from "@/data/e2e-cloudflare-fake";
 import { createIntegrations } from "@/data/integrations";
 import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { schema } from "@/data/schema";
 import { sitePreviewObjectsFromBinding, type SitePreviewBinding } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
@@ -106,7 +109,7 @@ function workspacesHandler(options: { withBucket?: boolean } = {}) {
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
     masterKey,
     cloudflare,
@@ -128,7 +131,6 @@ function integrationsHandler(options: { local?: boolean } = {}) {
     email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
     emailFrom: "auth@example.com",
     allowedRecipients: new Set(["operator@example.com"]),
-    activeWorkspaceCount: async () => 0,
     ...(options.local
       ? {
           syncSitesLocally: async (orgId: string) => {
@@ -163,7 +165,7 @@ function post(cookie: string, route: string): Request {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
@@ -186,6 +188,7 @@ beforeAll(async () => {
      values ('connection-id', $1, $2, $3, $4, now(), now(), now(), now())`,
     [organizationId, accountId, await encryptSecret(masterKey, "synthetic-token"), bootstrapped.userId],
   );
+  await pool.query("update cloudflare_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   const discovered = await e2eFake.listSites({ accountId, apiToken: "synthetic-token" });
   const client = await pool.connect();
   try {

@@ -25,13 +25,16 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { createRetentionFixtures, RetentionFixtureError, type RetentionFixtureObjects } from "@/data/retention-fixtures";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
@@ -102,7 +105,7 @@ async function contentCounts() {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await pool.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('fleet-operator-member', 'fleet', 'fleet-operator', 'owner', now())");
@@ -115,6 +118,7 @@ beforeAll(async () => {
      values ('fleet-connection', 'fleet', 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $1, 'fleet-operator', now(), now(), now())`,
     [await encryptSecret(masterKey, "fixture-api-key-secret")],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('north-number', 'fleet', 'PN${"1".repeat(32)}', '+14155550101', 'Tracking Number', true, now(), now(), now(), now())`,

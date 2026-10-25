@@ -41,6 +41,7 @@ const workspace = {
   destinationNumber: "+14155550101",
   trackingNumber: "+14155550100",
   numberAssignmentStartedAt: "2026-01-01T00:00:00.000Z",
+  voiceRestoreNeeded: null,
   publishedFlowVersion: { version: 1, publishedAt: "2026-01-02T00:00:00.000Z" },
   hasDraft: false,
   recordingEnabled: true,
@@ -332,6 +333,14 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(screen.getByRole("heading", { name: "Setup Required" })).toBeVisible();
     expect(screen.queryByRole("group", { name: "Total Calls" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceOverview voice restore notice", () => {
+  it("names the number whose Twilio voice settings were not restored while setup is incomplete", () => {
+    const setup = { ...workspace, state: "Setup Required" as const, trackingNumber: null, publishedFlowVersion: null, voiceRestoreNeeded: "+14155550101" };
+    render(<WorkspaceOverview workspace={setup} flow={{ published: null }} analytics={analytics} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Tracer could not restore +14155550101 in Twilio. Clear its voice URL in the Twilio console or attach it to a Workspace again.");
   });
 });
 

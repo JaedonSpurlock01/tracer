@@ -28,7 +28,7 @@
  */
 import type { Pool } from "pg";
 
-import { decryptSecret } from "@/data/credential-encryption";
+import { openSecret } from "@/data/provider-credential";
 import { createInboundCalls } from "@/data/inbound-calls";
 import type { RecordingProcessing } from "@/data/recording";
 import { isValidTwilioSignature } from "@/data/twilio-signature";
@@ -60,17 +60,17 @@ async function readParams(request: Request): Promise<Record<string, string>> {
 
 async function assignmentAuthToken(options: TwilioWebhookHandlerOptions, assignmentId: string): Promise<string | null> {
   if (!options.masterKey) return null;
-  const result = await options.pool.query<{ auth_token_ciphertext: string | null }>(
-    `select c.auth_token_ciphertext
+  const result = await options.pool.query<{ auth_token_ciphertext: string | null; master_key_fingerprint: string | null }>(
+    `select c.auth_token_ciphertext, c.master_key_fingerprint
        from number_assignment a
        join twilio_connection c on c.organization_id = a.organization_id
       where a.id = $1`,
     [assignmentId],
   );
-  const ciphertext = result.rows[0]?.auth_token_ciphertext;
-  if (!ciphertext) return null;
+  const row = result.rows[0];
+  if (!row?.auth_token_ciphertext) return null;
   try {
-    return await decryptSecret(options.masterKey, ciphertext);
+    return await openSecret(options.masterKey, { ciphertext: row.auth_token_ciphertext, fingerprint: row.master_key_fingerprint });
   } catch {
     return null;
   }

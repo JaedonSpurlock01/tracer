@@ -23,7 +23,6 @@ import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { checkRankings } from "@/data/rank-check";
 import { sitePreviewObjectsFromBinding } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
-import { createWorkspaces } from "@/data/workspaces";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 import { createRuntimeTwilioClient } from "@/data/twilio-runtime";
 
@@ -38,7 +37,6 @@ async function handle(request: Request): Promise<Response> {
       twilio: createRuntimeTwilioClient(),
       cloudflare,
       dataforseo,
-      activeWorkspaceCount: (organizationId) => createWorkspaces(runtime.pool, organizationId).countActive(),
       syncSitesLocally: isE2eCloudflareFake() && masterKey
         ? (organizationId) => syncSites({
             pool: runtime.pool,

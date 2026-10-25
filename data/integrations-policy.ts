@@ -17,13 +17,18 @@
  * -------------------------------------------------------------------------
  */
 export type TwilioDisconnectDecision =
-  | { allowed: true }
+  | { allowed: true; endsAssignments: number }
   | { allowed: false; reason: "active_workspaces"; activeWorkspaceCount: number };
 
-export function decideTwilioDisconnect(input: { activeWorkspaceCount: number }): TwilioDisconnectDecision {
-  return input.activeWorkspaceCount === 0
-    ? { allowed: true }
-    : { allowed: false, reason: "active_workspaces", activeWorkspaceCount: input.activeWorkspaceCount };
+/**
+ * Disconnect is refused while Active Workspaces depend on Twilio unless the
+ * Operator forces it, in which case every open Number Assignment ends
+ * without its Twilio voice configuration being restored.
+ */
+export function decideTwilioDisconnect(input: { activeWorkspaceCount: number; force?: boolean }): TwilioDisconnectDecision {
+  if (input.activeWorkspaceCount === 0) return { allowed: true, endsAssignments: 0 };
+  if (input.force) return { allowed: true, endsAssignments: input.activeWorkspaceCount };
+  return { allowed: false, reason: "active_workspaces", activeWorkspaceCount: input.activeWorkspaceCount };
 }
 
 export function isTwilioAccountSid(value: string): boolean {

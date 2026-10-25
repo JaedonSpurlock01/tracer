@@ -29,13 +29,15 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
 import { CloudflareClientError, type CloudflareClient, type CloudflareCredential, type CloudflareSite } from "@/data/cloudflare-client";
-import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { IntegrationsError } from "@/data/integrations-error";
+import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, withTransaction, type CredentialState } from "@/data/provider-credential";
 import { decideCloudflareDisconnect, isCloudflareAccountId } from "@/data/integrations-policy";
 import type { SiteHealth } from "@/data/site-health";
 import { siteHealthFromRow, siteHealthInputJsonSql, type SiteHealthRow } from "@/data/site-health-query";
 
 export interface CloudflareConnectionRecord {
+  /** Whether the deployment's master key can open the stored secret; Unreadable needs Re-enter credential or Disconnect. */
+  credentialState: CredentialState;
   accountId: string;
   connectedAt: string;
   connectedBy: { id: string; name: string } | null;
@@ -80,6 +82,7 @@ export interface CloudflareConnectionOptions {
 type ConnectionRow = {
   account_id: string;
   api_token_ciphertext: string;
+  master_key_fingerprint: string | null;
   connected_at: Date;
   connected_by_id: string | null;
   connected_by_name: string | null;
@@ -103,7 +106,7 @@ type SiteListRow = SiteHealthRow & {
 };
 
 const connectionQuery = `
-  select c.account_id, c.api_token_ciphertext, c.connected_at, c.connected_by_user_id as connected_by_id,
+  select c.account_id, c.api_token_ciphertext, c.master_key_fingerprint, c.connected_at, c.connected_by_user_id as connected_by_id,
          u.name as connected_by_name, c.last_verified_at, c.last_failure_at, c.last_failure_detail, c.last_synced_at,
          (select count(*) from site s where s.organization_id = c.organization_id and s.removed_at is null)::int as site_count
     from cloudflare_connection c
@@ -130,8 +133,9 @@ const siteListQuery = `
    order by s.primary_hostname, s.id
 `;
 
-function toConnectionRecord(row: ConnectionRow): CloudflareConnectionRecord {
+function toConnectionRecord(row: ConnectionRow, credentialState: CredentialState): CloudflareConnectionRecord {
   return {
+    credentialState,
     accountId: row.account_id,
     connectedAt: row.connected_at.toISOString(),
     connectedBy: row.connected_by_id && row.connected_by_name ? { id: row.connected_by_id, name: row.connected_by_name } : null,
@@ -148,21 +152,6 @@ function providerFailure(error: unknown): IntegrationsError {
     return new IntegrationsError("authentication_failed", error.message);
   }
   return new IntegrationsError("provider_unavailable", error instanceof CloudflareClientError ? error.message : "Cloudflare is unavailable");
-}
-
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
 }
 
 export async function upsertDiscoveredSites(client: PoolClient, organizationId: string, discovered: CloudflareSite[], now: Date): Promise<void> {
@@ -205,27 +194,26 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
     return result.rows[0] ?? null;
   }
 
-  async function lockOrganization(client: PoolClient): Promise<void> {
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+  async function lockConnection(client: PoolClient): Promise<void> {
+    await lockOrganization(client, lock);
   }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    const now = new Date();
-    await withTransaction(options.pool, async (client) => {
-      await lockOrganization(client);
-      await client.query(
-        "update cloudflare_connection set last_failure_at = $2, last_failure_detail = $3, updated_at = $2 where organization_id = $1",
-        [options.organizationId, now, error.detail ?? error.code],
-      );
-    });
+    await recordConnectionFailure(options.pool, "cloudflare_connection", lock, options.organizationId, error);
   }
 
+  async function recordOf(row: ConnectionRow): Promise<CloudflareConnectionRecord> {
+    const readability = await credentialReadability({ fingerprint: row.master_key_fingerprint, masterKey: options.masterKey });
+    return toConnectionRecord(row, readability === "readable" ? "readable" : "unreadable");
+  }
+
+  /** Opens the stored token; an Unreadable credential is recorded on the connection before it is reported. */
   async function decryptConnection(row: ConnectionRow): Promise<CloudflareCredential> {
-    if (!options.masterKey) throw new IntegrationsError("master_key_missing");
     try {
-      return { accountId: row.account_id, apiToken: await decryptSecret(options.masterKey, row.api_token_ciphertext) };
-    } catch {
-      throw new IntegrationsError("provider_unavailable", "Cloudflare credential could not be decrypted");
+      return { accountId: row.account_id, apiToken: await openSecret(options.masterKey, { ciphertext: row.api_token_ciphertext, fingerprint: row.master_key_fingerprint }) };
+    } catch (error) {
+      if (error instanceof IntegrationsError && error.code === "credential_unreadable") await recordFailure(error);
+      throw error;
     }
   }
 
@@ -252,17 +240,14 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
   }
 
   async function recordVerified(client: PoolClient, now: Date): Promise<CloudflareConnectionRecord> {
-    await client.query(
-      "update cloudflare_connection set last_verified_at = $2, last_failure_at = null, last_failure_detail = null, updated_at = $2 where organization_id = $1",
-      [options.organizationId, now],
-    );
-    return toConnectionRecord(await requireConnection(client));
+    await recordConnectionVerified(client, "cloudflare_connection", options.organizationId, now);
+    return recordOf(await requireConnection(client));
   }
 
   return {
     async getCloudflareConnection(client) {
       const row = await selectConnection(client ?? options.pool);
-      return row ? toConnectionRecord(row) : null;
+      return row ? recordOf(row) : null;
     },
 
     async withCloudflareCredential(operation) {
@@ -284,20 +269,21 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         if (await selectConnection(client)) throw new IntegrationsError("already_connected");
         const credential = { accountId, apiToken };
         await verifyCredential(credential);
         const discovered = await discover(credential);
         const now = new Date();
+        const sealed = await sealSecret(masterKey, apiToken);
         await client.query(
           `insert into cloudflare_connection
-             (id, organization_id, account_id, api_token_ciphertext, connected_by_user_id, connected_at, last_verified_at, last_synced_at, created_at, updated_at)
-           values ($1, $2, $3, $4, $5, $6, $6, $6, $6, $6)`,
-          [randomUUID(), options.organizationId, accountId, await encryptSecret(masterKey, apiToken), input.actorUserId, now],
+             (id, organization_id, account_id, api_token_ciphertext, master_key_fingerprint, connected_by_user_id, connected_at, last_verified_at, last_synced_at, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, $7)`,
+          [randomUUID(), options.organizationId, accountId, sealed.ciphertext, sealed.fingerprint, input.actorUserId, now],
         );
         await upsertDiscoveredSites(client, options.organizationId, discovered, now);
-        return toConnectionRecord(await requireConnection(client));
+        return recordOf(await requireConnection(client));
       });
     },
 
@@ -311,7 +297,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
         throw failure;
       }
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         return recordVerified(client, new Date());
       });
     },
@@ -322,13 +308,14 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         const current = await requireConnection(client);
         await verifyCredential({ accountId: current.account_id, apiToken });
         const now = new Date();
+        const sealed = await sealSecret(masterKey, apiToken);
         await client.query(
-          "update cloudflare_connection set api_token_ciphertext = $2, updated_at = $3 where organization_id = $1",
-          [options.organizationId, await encryptSecret(masterKey, apiToken), now],
+          "update cloudflare_connection set api_token_ciphertext = $2, master_key_fingerprint = $3, updated_at = $4 where organization_id = $1",
+          [options.organizationId, sealed.ciphertext, sealed.fingerprint, now],
         );
         return recordVerified(client, now);
       });
@@ -336,7 +323,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
 
     async disconnectCloudflare() {
       await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         await requireConnection(client);
         const open = await client.query<{ count: string }>("select count(*) from site_link where organization_id = $1 and ended_at is null", [options.organizationId]);
         const decision = decideCloudflareDisconnect({ openSiteLinkCount: Number(open.rows[0]?.count ?? 0) });
@@ -357,7 +344,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
       }
       const syncedAt = new Date();
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         await upsertDiscoveredSites(client, options.organizationId, discovered, syncedAt);
         await client.query("update cloudflare_connection set last_synced_at = $2, updated_at = $2 where organization_id = $1", [options.organizationId, syncedAt]);
         return { siteCount: discovered.length, syncedAt: syncedAt.toISOString() };

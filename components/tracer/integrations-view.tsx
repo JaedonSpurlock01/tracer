@@ -9,6 +9,12 @@
  *  Switching providers happens on the client from the data the page
  *  already holds, and only rewrites the address, so a tab change never
  *  waits on the server.
+ *  A connection whose credential the deployment cannot open shows Needs
+ *  re-entry: its detail offers only Re-enter credential (the rotate form,
+ *  which never reads the old secret) and Disconnect, and the attention
+ *  lane names the cause. A blocked Twilio disconnect offers Disconnect
+ *  anyway behind an acknowledgement, which ends the Active Workspaces'
+ *  Number Assignments without restoring Twilio.
  *  A Needs attention lane above them lists unconnected Organization
  *  credentials, a missing Twilio Auth Token, and degraded providers with
  *  the action that resolves each. The detail shows the provider's facts,
@@ -41,6 +47,7 @@ import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -89,12 +96,13 @@ function formatDate(value: string | null): string {
 function stateVariant(state: ProviderState): "success-light" | "primary-light" | "warning-light" | "outline" {
   if (state === "connected") return "success-light";
   if (state === "configured") return "primary-light";
-  if (state === "degraded") return "warning-light";
+  if (state === "degraded" || state === "needs_reentry") return "warning-light";
   return "outline";
 }
 
 function stateLabel(state: ProviderState): string {
   if (state === "not_configured") return "Not configured";
+  if (state === "needs_reentry") return "Needs re-entry";
   return state[0].toUpperCase() + state.slice(1);
 }
 
@@ -142,7 +150,7 @@ export function siteHealthVariant(health: SiteHealth): "success-light" | "warnin
 }
 
 function StatusDot({ state }: { state: ProviderState }) {
-  const color = state === "connected" ? "bg-success" : state === "configured" ? "bg-primary/70" : state === "degraded" ? "bg-warning" : "bg-muted-foreground/40";
+  const color = state === "connected" ? "bg-success" : state === "configured" ? "bg-primary/70" : state === "degraded" || state === "needs_reentry" ? "bg-warning" : "bg-muted-foreground/40";
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
@@ -468,6 +476,8 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   const [authTokenOpen, setAuthTokenOpen] = useState(false);
   const [authToken, setAuthToken] = useState("");
   const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [blockedWorkspaces, setBlockedWorkspaces] = useState<number | null>(null);
+  const [forceAcknowledged, setForceAcknowledged] = useState(false);
   const [form, setForm] = useState<FormValues>(emptyForm);
   const [formError, setFormError] = useState("");
   const [cloudflare, setCloudflare] = useState<CloudflareConnectionRecord | null>(initial.cloudflare);
@@ -727,23 +737,37 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
     setTwilioAction(null);
   }
 
-  async function disconnect() {
+  async function disconnect(force = false) {
     setTwilioAction("disconnect");
     setTwilioError("");
-    const response = await mutationFetch("/api/integrations/twilio/disconnect", { method: "POST" }).catch(() => null);
+    const response = await mutationFetch("/api/integrations/twilio/disconnect", force
+      ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) }
+      : { method: "POST" }).catch(() => null);
     if (response?.ok) {
+      const body = await responseBody(response);
       setDisconnectOpen(false);
+      setBlockedWorkspaces(null);
       await reload();
-      setStatus("Twilio disconnected.");
+      setStatus(typeof body.endedAssignments === "number" && body.endedAssignments > 0
+        ? `Twilio disconnected. ${body.endedAssignments} Number Assignments ended without restoring Twilio.`
+        : "Twilio disconnected.");
     } else {
       const body = response ? await responseBody(response) : {};
       if (response?.status === 409 && typeof body.activeWorkspaceCount === "number") {
         setTwilioError(`Disconnect is blocked while ${body.activeWorkspaceCount} Active Workspaces depend on Twilio.`);
+        setBlockedWorkspaces(body.activeWorkspaceCount);
       } else {
         setTwilioError("Disconnect failed.");
       }
     }
     setTwilioAction(null);
+  }
+
+  function openDisconnect() {
+    setTwilioError("");
+    setBlockedWorkspaces(null);
+    setForceAcknowledged(false);
+    setDisconnectOpen(true);
   }
 
   async function testProvider(id: "hyperdrive" | "email") {
@@ -786,6 +810,11 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   const services = providers.filter((provider) => provider.group === "service");
   const headingId = `integration-${selected.id}`;
 
+  const reenterAction: Partial<Record<ProviderId, () => void>> = {
+    twilio: openRotate,
+    cloudflare: () => openCloudflareDialog("rotate"),
+    dataforseo: () => openDataForSeoDialog("rotate"),
+  };
   const connectAction: Partial<Record<ProviderId, () => void>> = {
     twilio: openConnect,
     cloudflare: () => openCloudflareDialog("connect"),
@@ -797,6 +826,10 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   for (const provider of providers) {
     if (provider.connectable && provider.state === "not_configured") {
       attention.push({ key: `${provider.id}-connect`, provider, message: provider.note ?? "Not connected", action: <Button type="button" size="sm" onClick={connectAction[provider.id]}>Connect {provider.name}</Button> });
+    }
+    if (provider.state === "needs_reentry") {
+      attention.push({ key: `${provider.id}-reentry`, provider, message: provider.note ?? "The stored credential cannot be opened with the current master key.", action: <Button type="button" size="sm" onClick={reenterAction[provider.id]}>Re-enter credential</Button> });
+      continue;
     }
     if (provider.id === "twilio" && twilio && !twilio.authTokenConfigured) {
       attention.push({ key: "twilio-auth-token", provider, message: "The webhook Auth Token is not configured, so Twilio webhooks cannot be verified.", action: <Button type="button" size="sm" variant="outline" onClick={openAuthToken}>Set Auth Token</Button> });
@@ -814,19 +847,35 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
       if (!twilio) return provider.connectable ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null;
       const busy = twilioAction !== null;
       const progress = actionText(twilioAction);
+      if (twilio.credentialState === "unreadable") {
+        return (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={busy} onClick={openRotate}>Re-enter credential</Button>
+            <Button type="button" variant="destructive" disabled={busy} onClick={openDisconnect}>Disconnect</Button>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={busy} onClick={() => void testTwilio()}>{twilioAction === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
           <Button type="button" variant="outline" disabled={busy} onClick={() => void syncTwilio()}>{twilioAction === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
           <Button type="button" variant="outline" disabled={busy} onClick={openRotate}>Rotate Key</Button>
           <Button type="button" variant="outline" disabled={busy} onClick={openAuthToken}>Set Auth Token</Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => setDisconnectOpen(true)}>Disconnect</Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={openDisconnect}>Disconnect</Button>
         </div>
       );
     }
     if (provider.id === "cloudflare") {
       if (!cloudflare) return provider.connectable ? <Button type="button" onClick={() => openCloudflareDialog("connect")}>Connect Cloudflare</Button> : null;
       const busy = cloudflareAction !== null;
+      if (cloudflare.credentialState === "unreadable") {
+        return (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={busy} onClick={() => openCloudflareDialog("rotate")}>Re-enter credential</Button>
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => setCloudflareDisconnectOpen(true)}>Disconnect</Button>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={busy} onClick={() => void runCloudflare("test")}>{cloudflareAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
@@ -839,6 +888,14 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
     if (provider.id === "dataforseo") {
       if (!dataforseo) return provider.connectable ? <Button type="button" onClick={() => openDataForSeoDialog("connect")}>Connect DataForSEO</Button> : null;
       const busy = dataforseoAction !== null;
+      if (dataforseo.credentialState === "unreadable") {
+        return (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={busy} onClick={() => openDataForSeoDialog("rotate")}>Re-enter credential</Button>
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => openDataForSeoDialog("disconnect")}>Disconnect</Button>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={busy} onClick={() => void runDataForSeo("test")}>{dataforseoAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
@@ -1044,7 +1101,20 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect Twilio?</AlertDialogTitle><AlertDialogDescription>The encrypted credential and synced number inventory are removed.</AlertDialogDescription></AlertDialogHeader>
           {twilioError ? <p role="alert">{twilioError}</p> : null}
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={twilioAction !== null} onClick={() => void disconnect()}>{twilioAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect"}</AlertDialogAction></AlertDialogFooter>
+          {blockedWorkspaces !== null ? (
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={forceAcknowledged} onCheckedChange={(checked) => setForceAcknowledged(checked === true)} />
+              <span>End {blockedWorkspaces} Number Assignments and return their Workspaces to Setup Required. Their Twilio voice settings will not be restored; each Workspace will say which number to clear in Twilio.</span>
+            </label>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {blockedWorkspaces !== null ? (
+              <AlertDialogAction variant="destructive" disabled={twilioAction !== null || !forceAcknowledged} onClick={() => void disconnect(true)}>{twilioAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect anyway"}</AlertDialogAction>
+            ) : (
+              <AlertDialogAction variant="destructive" disabled={twilioAction !== null} onClick={() => void disconnect()}>{twilioAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect"}</AlertDialogAction>
+            )}
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>

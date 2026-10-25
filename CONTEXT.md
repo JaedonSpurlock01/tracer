@@ -44,6 +44,14 @@ _Avoid_: Role
 The explicit authorization connecting one Client Viewer to one Workspace.
 _Avoid_: Workspace membership, customer account
 
+**Provider Credential**:
+A provider secret (Twilio API key and Auth Token, Cloudflare API token, DataForSEO password) the Organization entered on Integrations, sealed under the deployment master key with a fingerprint of that key.
+_Avoid_: API key, token, password (as the general term)
+
+**Credential State**:
+Whether the deployment's current master key can open a Provider Credential: readable or unreadable. An unreadable credential shows Needs re-entry and refuses every use until an Operator re-enters it or disconnects.
+_Avoid_: Degraded, broken connection
+
 **Call Flow**:
 A validated graph of approved steps and branches that governs how inbound Calls are handled in one Workspace.
 _Avoid_: Arbitrary TwiML, script

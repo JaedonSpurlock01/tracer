@@ -17,8 +17,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -31,7 +33,7 @@ let pool: Pool;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
 }, 120_000);
 
 afterAll(async () => {
@@ -205,6 +207,22 @@ it("migrates a clean database to the latest authentication and Organization sche
   ]));
 }, 30_000);
 
+it("stores a master key fingerprint on every connection and remembers a skipped voice restore on a Number Assignment", async () => {
+  const columns = await pool.query<{ table_name: string; column_name: string }>(
+    `select table_name, column_name from information_schema.columns
+      where table_schema = 'public' and column_name in ('master_key_fingerprint', 'master_key_version', 'voice_restore_skipped_at')
+      order by table_name, column_name`,
+  );
+  expect(columns.rows).toEqual([
+    { table_name: "cloudflare_connection", column_name: "master_key_fingerprint" },
+    { table_name: "dataforseo_connection", column_name: "master_key_fingerprint" },
+    { table_name: "number_assignment", column_name: "voice_restore_skipped_at" },
+    { table_name: "twilio_connection", column_name: "master_key_fingerprint" },
+  ]);
+  const reasons = await pool.query<{ consrc: string }>("select pg_get_constraintdef(oid) as consrc from pg_constraint where conname = 'number_assignment_ended_reason_check'");
+  expect(reasons.rows[0]?.consrc).toContain("'disconnected'");
+});
+
 it("applies the latest migrations repeatedly as a no-op", async () => {
   await migrateDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
@@ -214,7 +232,7 @@ it("applies the latest migrations repeatedly as a no-op", async () => {
        from drizzle.__drizzle_migrations`,
   );
 
-  expect(Number(result.rows[0].count)).toBe(27);
+  expect(Number(result.rows[0].count)).toBe(28);
 }, 30_000);
 
 it("enforces Transcript, immutable Lead Assessment, and one current Lead Review per Call invariants", async () => {
@@ -499,7 +517,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  const runtimePool = new Pool({ connectionString: runtimeUrl.toString() });
+  const runtimePool = createTestPool(runtimeUrl.toString());
 
   try {
     await expect(runtimePool.query("delete from \"user\"")).rejects.toMatchObject({ code: "42501" });

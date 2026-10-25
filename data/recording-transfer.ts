@@ -52,7 +52,7 @@ import { analysisEligibility } from "@/data/analysis-eligibility";
 import { appendCallEvent } from "@/data/call-events";
 import { connectedSecondsSql, spamGateResult, type KeypadEvent } from "@/data/call-details";
 import { parseCallFlowGraph, type OutcomeKind } from "@/data/call-flow";
-import { decryptSecret } from "@/data/credential-encryption";
+import { openSecret } from "@/data/provider-credential";
 import { R2ObjectError, sha256Hex, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import type { RecordingProcessing, RecordingSource } from "@/data/recording";
 import { recordingMediaRetainedSql } from "@/data/recording-media";
@@ -86,6 +86,7 @@ type RecordingRow = {
   account_sid: string | null;
   api_key_sid: string | null;
   api_key_secret_ciphertext: string | null;
+  master_key_fingerprint: string | null;
 };
 
 export class RecordingTransferError extends Error {
@@ -107,7 +108,7 @@ async function lockRecording(client: PoolClient, recordingId: string, now: Date)
   const result = await client.query<RecordingRow>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state, r.transcript_state,
             ${recordingMediaRetainedSql("r", "k.started_at", "$2")} as media_retained,
-            c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext
+            c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.master_key_fingerprint
        from recording r
        join call k on k.id = r.call_id
        left join twilio_connection c on c.organization_id = r.organization_id
@@ -119,7 +120,7 @@ async function lockRecording(client: PoolClient, recordingId: string, now: Date)
 }
 
 async function credential(deps: RecordingTransferDependencies, row: RecordingRow): Promise<TwilioCredential> {
-  return { accountSid: row.account_sid!, apiKeySid: row.api_key_sid!, apiKeySecret: await decryptSecret(deps.masterKey, row.api_key_secret_ciphertext!) };
+  return { accountSid: row.account_sid!, apiKeySid: row.api_key_sid!, apiKeySecret: await openSecret(deps.masterKey, { ciphertext: row.api_key_secret_ciphertext!, fingerprint: row.master_key_fingerprint ?? null }) };
 }
 
 async function transcriptDecision(client: PoolClient, row: RecordingRow): Promise<{ state: "Pending" | "Skipped"; skipReason: string | null }> {

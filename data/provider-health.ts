@@ -11,8 +11,11 @@
  *  records without contacting external services.
  *
  * @remarks
- *  Deferred provider tests remain explicitly non-testable until their owning
- *  milestones add connection actions. R2 and Trigger.dev report Tracer's own
+ *  A connection whose credential the deployment's master key cannot open is
+ *  Needs re-entry ahead of connected or degraded: nothing can be tested
+ *  until the Operator re-enters it or disconnects. Deferred provider tests
+ *  remain explicitly non-testable until their owning milestones add
+ *  connection actions. R2 and Trigger.dev report Tracer's own
  *  Recording transfer history instead of calling either provider, and are
  *  degraded while the newest transfer failure follows the last success.
  *  OpenAI reports its fixed transcription and Lead Assessment models, the
@@ -35,10 +38,11 @@ import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
 import type { TwilioConnectionRecord } from "@/data/integrations";
 import { leadAssessmentModel } from "@/data/lead-assessment";
 import { transcriptionModel } from "@/data/openai-client";
+import { unreadableCredentialDetail } from "@/data/provider-credential";
 
 export const providerIds = ["twilio", "cloudflare", "dataforseo", "hyperdrive", "email", "r2", "openai", "triggerdev"] as const;
 export type ProviderId = (typeof providerIds)[number];
-export type ProviderState = "connected" | "configured" | "degraded" | "not_configured";
+export type ProviderState = "connected" | "configured" | "degraded" | "needs_reentry" | "not_configured";
 /** Organization connections hold credentials entered on the Integrations page; platform services are deployment secrets or bindings. */
 export type ProviderGroup = "connection" | "service";
 
@@ -200,15 +204,15 @@ export function describeProviderHealth(
       : {
           id: "twilio",
           name: "Twilio",
-          state: twilio.lastFailureAt && (!twilio.lastVerifiedAt || twilio.lastFailureAt > twilio.lastVerifiedAt) ? "degraded" : "connected",
+          state: twilio.credentialState === "unreadable" ? "needs_reentry" : twilio.lastFailureAt && (!twilio.lastVerifiedAt || twilio.lastFailureAt > twilio.lastVerifiedAt) ? "degraded" : "connected",
           identifier: twilio.accountSid,
           lastSuccessAt: twilio.lastVerifiedAt,
           lastFailureAt: twilio.lastFailureAt,
           lastFailureDetail: twilio.lastFailureDetail,
-          testable: true,
+          testable: twilio.credentialState === "readable",
           group: "connection",
           connectable: false,
-          note: null,
+          note: twilio.credentialState === "unreadable" ? unreadableCredentialDetail : null,
         };
   const cloudflareHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
@@ -241,15 +245,15 @@ export function describeProviderHealth(
       : {
           id: "cloudflare",
           name: "Cloudflare",
-          state: cloudflare.lastFailureAt && (!cloudflare.lastVerifiedAt || cloudflare.lastFailureAt > cloudflare.lastVerifiedAt) ? "degraded" : "connected",
+          state: cloudflare.credentialState === "unreadable" ? "needs_reentry" : cloudflare.lastFailureAt && (!cloudflare.lastVerifiedAt || cloudflare.lastFailureAt > cloudflare.lastVerifiedAt) ? "degraded" : "connected",
           identifier: cloudflare.accountId,
           lastSuccessAt: cloudflare.lastVerifiedAt,
           lastFailureAt: cloudflare.lastFailureAt,
           lastFailureDetail: cloudflare.lastFailureDetail,
-          testable: true,
+          testable: cloudflare.credentialState === "readable",
           group: "connection",
           connectable: false,
-          note: null,
+          note: cloudflare.credentialState === "unreadable" ? unreadableCredentialDetail : null,
         };
   const dataforseoHealth: ProviderHealth = !configuration.twilioMasterKey
     ? {
@@ -282,15 +286,15 @@ export function describeProviderHealth(
       : {
           id: "dataforseo",
           name: "DataForSEO",
-          state: dataforseo.lastFailureAt && (!dataforseo.lastVerifiedAt || dataforseo.lastFailureAt > dataforseo.lastVerifiedAt) ? "degraded" : "connected",
+          state: dataforseo.credentialState === "unreadable" ? "needs_reentry" : dataforseo.lastFailureAt && (!dataforseo.lastVerifiedAt || dataforseo.lastFailureAt > dataforseo.lastVerifiedAt) ? "degraded" : "connected",
           identifier: dataforseo.login,
           lastSuccessAt: dataforseo.lastVerifiedAt,
           lastFailureAt: dataforseo.lastFailureAt,
           lastFailureDetail: dataforseo.lastFailureDetail,
-          testable: true,
+          testable: dataforseo.credentialState === "readable",
           group: "connection",
           connectable: false,
-          note: null,
+          note: dataforseo.credentialState === "unreadable" ? unreadableCredentialDetail : null,
         };
   const hyperdrive: ProviderHealth = {
     id: "hyperdrive",

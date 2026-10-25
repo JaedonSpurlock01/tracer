@@ -33,8 +33,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
@@ -44,6 +46,7 @@ import { encryptSecret } from "@/data/credential-encryption";
 import { createIntegrations } from "@/data/integrations";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 import { schema } from "@/data/schema";
@@ -116,7 +119,7 @@ const workspacesHandler = () => createWorkspacesHandler({
   database: database(),
   pool: runtime!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", activeWorkspaceCount: async () => 0 }),
+  integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
   recordingBucket: r2,
   masterKey,
@@ -233,19 +236,20 @@ async function mediaState(callId: string) {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = new Pool({ connectionString: container.getConnectionUri() });
+  owner = createTestPool(container.getConnectionUri());
   const password = "D".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = new Pool({ connectionString: runtimeUrl.toString() });
+  runtime = createTestPool(runtimeUrl.toString());
   ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(owner, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
   await owner.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
      values ('purge-connection', $1, 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $2, $3, now(), now(), now())`,
     [organizationId, await encryptSecret(masterKey, "purge-api-key-secret"), operatorId],
   );
+    await owner.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await owner.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
   await owner.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, analysis_enabled, created_at, updated_at)

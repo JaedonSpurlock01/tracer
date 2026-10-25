@@ -31,8 +31,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -40,6 +42,7 @@ import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { purgeCallMedia } from "@/data/media-purge";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { R2ObjectError, type ArtifactObjects, type RecordingObjects, type StoredObject } from "@/data/r2-objects";
 import type { RecordingProcessing, RecordingProcessingRequest } from "@/data/recording";
 import { transferRecording, type RecordingTransferDependencies } from "@/data/recording-transfer";
@@ -217,7 +220,7 @@ async function recordingRow(id: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
   organizationId = bootstrapped.organizationId;
@@ -227,6 +230,7 @@ beforeAll(async () => {
      values ('transfer-connection', $1, $2, 'SK11111111111111111111111111111111', $3, $4, now(), now(), now())`,
     [organizationId, accountSid, await encryptSecret(masterKey, apiKeySecret), bootstrapped.userId],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('transfer-number', $1, 'PNdddddddddddddddddddddddddddddddd', '+14155550111', 'Transfer Number', true, now(), now(), now(), now())`,

@@ -34,6 +34,7 @@ const workspace = {
   destinationNumber: null,
   trackingNumber: null,
   numberAssignmentStartedAt: null,
+  voiceRestoreNeeded: null,
   publishedFlowVersion: null,
   hasDraft: false,
   recordingEnabled: false,

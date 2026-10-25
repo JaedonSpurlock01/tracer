@@ -23,13 +23,16 @@
 import { createHmac } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow, type CallFlowGraph, type WeeklyWindow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import type { RecordingProcessing } from "@/data/recording";
 import { replayCallCallbacks, reportTrackingNumberCalls } from "@/data/call-smoke";
 import { createTwilioWebhookHandler } from "@/data/twilio-webhook-handler";
@@ -119,7 +122,7 @@ async function callState(callSid: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const { organizationId, userId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Webhook Operator", timezone: "UTC" });
   await pool.query(
@@ -127,6 +130,7 @@ beforeAll(async () => {
      values ('webhook-connection', $1, 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $2, $3, $4, now(), now(), now())`,
     [organizationId, await encryptSecret(masterKey, "api-key-secret"), await encryptSecret(masterKey, authToken), userId],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('webhook-number', $1, 'PNaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2, 'Webhook Number', true, now(), now(), now(), now())`,

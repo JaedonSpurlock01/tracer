@@ -9,7 +9,9 @@
  *  account and syncs its Sites, connects the fake DataForSEO account (each
  *  through its own provider detail on Integrations, since the Needs
  *  attention lane repeats the Connect action),
- *  releases a Site from an earlier run,
+ *  re-enters a credential the persisted local database still holds under an
+ *  earlier master key (the Needs re-entry state), releases a Site from an
+ *  earlier run,
  *  creates or archives Active Workspaces through the same pages and server
  *  interfaces a browser journey uses, optionally linking a Site at the
  *  wizard's Site step, and delivers Twilio webhooks signed with the fake
@@ -49,9 +51,29 @@ export async function signIn(page: Page, request: APIRequestContext, email: stri
   await expect(page).toHaveURL(/\/account\/settings$/);
 }
 
+/**
+ * Re-enters a provider credential when the detail shows Needs re-entry, the
+ * state a connection sealed under an earlier master key reads as. The local
+ * e2e database persists between runs, so this is the Operator's own
+ * recovery path exercised rather than a reset.
+ */
+async function reenterIfUnreadable(page: Page, detail: ReturnType<Page["getByRole"]>, fill: () => Promise<void>, submit: string): Promise<void> {
+  await expect(detail.getByRole("button", { name: /^(Connect [A-Za-z]+|Sync Numbers|Sync now|Rotate Password|Re-enter credential)$/ }).first()).toBeVisible();
+  const reenter = detail.getByRole("button", { name: "Re-enter credential" });
+  if ((await reenter.count()) === 0) return;
+  await reenter.click();
+  await fill();
+  await page.getByRole("button", { name: submit }).click();
+  await expect(detail.getByRole("button", { name: "Re-enter credential" })).toHaveCount(0);
+}
+
 export async function ensureTwilioNumbers(page: Page): Promise<void> {
   await page.goto("/integrations?provider=twilio");
   const detail = page.getByRole("region", { name: "Twilio" });
+  await reenterIfUnreadable(page, detail, async () => {
+    await page.getByLabel("API Key SID").fill(`SK${"b".repeat(32)}`);
+    await page.getByLabel("API Key Secret").fill("e2e-secret");
+  }, "Rotate Key");
   await expect(detail.getByRole("button", { name: /^(Connect Twilio|Sync Numbers)$/ })).toBeVisible();
   const connectButton = detail.getByRole("button", { name: "Connect Twilio" });
   if ((await connectButton.count()) > 0) {
@@ -73,6 +95,9 @@ export async function ensureTwilioNumbers(page: Page): Promise<void> {
 export async function ensureCloudflareSites(page: Page): Promise<void> {
   await page.goto("/integrations?provider=cloudflare");
   const detail = page.getByRole("region", { name: "Cloudflare" });
+  await reenterIfUnreadable(page, detail, async () => {
+    await page.getByLabel("API Token").fill("e2e-cloudflare-token");
+  }, "Rotate Token");
   await expect(detail.getByRole("button", { name: /^(Connect Cloudflare|Sync now)$/ })).toBeVisible();
   const connectButton = detail.getByRole("button", { name: "Connect Cloudflare" });
   if ((await connectButton.count()) > 0) {
@@ -89,6 +114,9 @@ export async function ensureCloudflareSites(page: Page): Promise<void> {
 export async function ensureDataForSeo(page: Page): Promise<void> {
   await page.goto("/integrations?provider=dataforseo");
   const detail = page.getByRole("region", { name: "DataForSEO" });
+  await reenterIfUnreadable(page, detail, async () => {
+    await page.getByLabel("API password").fill("e2e-dataforseo-password");
+  }, "Rotate Password");
   await expect(detail.getByRole("button", { name: /^(Connect DataForSEO|Rotate Password)$/ })).toBeVisible();
   const connectButton = detail.getByRole("button", { name: "Connect DataForSEO" });
   if ((await connectButton.count()) > 0) {

@@ -13,6 +13,17 @@
  *  the Integrations page.
  *
  * @remarks
+ *  The Provider Credential module (data/provider-credential.ts) owns
+ *  sealing, the master key fingerprint, readability, and failure stamps;
+ *  this module is Twilio's adapter over it: it knows the Twilio columns,
+ *  how to verify a credential with Twilio, and the number inventory. An
+ *  Unreadable credential is recorded on the connection the first time it is
+ *  used, so the Integrations page shows Needs re-entry instead of Connected.
+ *  Disconnect counts Active Workspaces on its own transaction client, and a
+ *  forced disconnect ends their Number Assignments without restoring the
+ *  Twilio voice configuration, which the Workspace remembers. Numbers a
+ *  Number Assignment ever referenced are released rather than deleted, so
+ *  the assignment history keeps its number; a later sync restores them.
  *  PostgreSQL advisory locks serialize credential and inventory mutations.
  *  Media lifecycle health is derived from the Recordings themselves rather
  *  than a stored sweep result: a purged or expired Recording whose
@@ -23,7 +34,8 @@
  *  sweep cannot delete it until Twilio is reconnected.
  *
  * @see
- *  data/credential-encryption.ts
+ *  data/provider-credential.ts
+ *  docs/adr/0006-provider-credential-module.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -34,12 +46,12 @@ import type { Pool, PoolClient } from "pg";
 
 import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
 import { createCloudflareConnection, type CloudflareConnection } from "@/data/cloudflare-connection";
-import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { DataForSeoClientError, type DataForSeoClient } from "@/data/dataforseo-client";
 import { createDataForSeoConnection, type DataForSeoConnection } from "@/data/dataforseo-connection";
 import { IntegrationsError } from "@/data/integrations-error";
 import { decideTwilioDisconnect, isTwilioAccountSid, isTwilioApiKeySid } from "@/data/integrations-policy";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
+import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, unreadableCredentialDetail, withTransaction, type CredentialState } from "@/data/provider-credential";
 import type { AnalysisProcessingHealth, MediaLifecycleHealth, RecordingTransferHealth } from "@/data/provider-health";
 import { recordingMediaExpiredSql, recordingMediaExpiresAtSql } from "@/data/recording-media";
 import { authTokenCredential, TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioIncomingPhoneNumber } from "@/data/twilio-client";
@@ -48,6 +60,8 @@ export interface TwilioConnectionRecord {
   accountSid: string;
   apiKeySid: string;
   authTokenConfigured: boolean;
+  /** Whether the deployment's master key can open the stored secrets; Unreadable needs Re-enter credential or Disconnect. */
+  credentialState: CredentialState;
   accountFriendlyName: string | null;
   connectedAt: string;
   connectedBy: { id: string; name: string } | null;
@@ -80,7 +94,6 @@ export interface IntegrationsOptions {
   cloudflare?: CloudflareClient;
   dataforseo?: DataForSeoClient;
   masterKey: string | undefined;
-  activeWorkspaceCount: () => Promise<number>;
 }
 
 export interface Integrations extends CloudflareConnection, DataForSeoConnection {
@@ -99,7 +112,8 @@ export interface Integrations extends CloudflareConnection, DataForSeoConnection
   testTwilio(): Promise<TwilioConnectionRecord>;
   rotateTwilioKey(input: { apiKeySid: string; apiKeySecret: string }): Promise<TwilioConnectionRecord>;
   setTwilioAuthToken(input: { authToken: string }): Promise<TwilioConnectionRecord>;
-  disconnectTwilio(): Promise<void>;
+  /** Removes the credential and numbers; with force, ends every open Number Assignment first without restoring Twilio. */
+  disconnectTwilio(input?: { force?: boolean }): Promise<{ endedAssignments: number }>;
   syncTwilioNumbers(): Promise<{ numbers: TwilioNumberRecord[]; syncedAt: string; skipped: number }>;
   listTwilioNumbers(): Promise<TwilioNumberRecord[]>;
   getRecordingTransferHealth(): Promise<RecordingTransferHealth>;
@@ -112,6 +126,7 @@ type ConnectionRow = {
   api_key_sid: string;
   api_key_secret_ciphertext: string;
   auth_token_ciphertext: string | null;
+  master_key_fingerprint: string | null;
   account_friendly_name: string | null;
   connected_at: Date;
   connected_by_id: string | null;
@@ -136,23 +151,8 @@ type NumberRow = {
   released_at: Date | null;
 };
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 const connectionQuery = `
-  select c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext,
+  select c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext, c.master_key_fingerprint,
          c.account_friendly_name, c.connected_at, c.connected_by_user_id as connected_by_id,
          u.name as connected_by_name, c.last_verified_at, c.last_failure_at,
          c.last_failure_detail, c.numbers_synced_at, count(n.id)::int as number_count
@@ -160,17 +160,18 @@ const connectionQuery = `
     left join "user" u on u.id = c.connected_by_user_id
     left join twilio_number n on n.organization_id = c.organization_id and n.released_at is null
    where c.organization_id = $1
-   group by c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext,
+   group by c.account_sid, c.api_key_sid, c.api_key_secret_ciphertext, c.auth_token_ciphertext, c.master_key_fingerprint,
             c.account_friendly_name, c.connected_at, c.connected_by_user_id,
             u.name, c.last_verified_at, c.last_failure_at,
             c.last_failure_detail, c.numbers_synced_at
 `;
 
-function toConnectionRecord(row: ConnectionRow): TwilioConnectionRecord {
+function toConnectionRecord(row: ConnectionRow, credentialState: CredentialState): TwilioConnectionRecord {
   return {
     accountSid: row.account_sid,
     apiKeySid: row.api_key_sid,
     authTokenConfigured: row.auth_token_ciphertext !== null,
+    credentialState,
     accountFriendlyName: row.account_friendly_name,
     connectedAt: row.connected_at.toISOString(),
     connectedBy: row.connected_by_id && row.connected_by_name ? { id: row.connected_by_id, name: row.connected_by_name } : null,
@@ -224,6 +225,7 @@ const unavailableDataForSeo: DataForSeoClient = {
 
 export function createIntegrations(options: IntegrationsOptions): Integrations {
   const lock = "tracer:integrations:" + options.organizationId;
+  const table = "twilio_connection";
   const cloudflare = createCloudflareConnection({
     pool: options.pool,
     organizationId: options.organizationId,
@@ -242,32 +244,26 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     return result.rows[0] ?? null;
   }
 
-  async function lockOrganization(client: PoolClient): Promise<void> {
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+  async function lockConnection(client: PoolClient): Promise<void> {
+    await lockOrganization(client, lock);
   }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    const now = new Date();
-    await withTransaction(options.pool, async (client) => {
-      await lockOrganization(client);
-      await client.query(
-        `update twilio_connection
-            set last_failure_at = $2, last_failure_detail = $3, updated_at = $2
-          where organization_id = $1`,
-        [options.organizationId, now, error.detail ?? error.code],
-      );
-    });
+    await recordConnectionFailure(options.pool, table, lock, options.organizationId, error);
   }
 
+  async function recordOf(row: ConnectionRow): Promise<TwilioConnectionRecord> {
+    const readability = await credentialReadability({ fingerprint: row.master_key_fingerprint, masterKey: options.masterKey });
+    return toConnectionRecord(row, readability === "readable" ? "readable" : "unreadable");
+  }
+
+  /** Opens the stored API key secret; an Unreadable credential is recorded on the connection before it is reported. */
   async function decryptConnection(row: ConnectionRow): Promise<TwilioCredential> {
-    if (!options.masterKey) {
-      throw new IntegrationsError("master_key_missing");
-    }
     try {
-      return credentialFromRow(row, await decryptSecret(options.masterKey, row.api_key_secret_ciphertext));
+      return credentialFromRow(row, await openSecret(options.masterKey, { ciphertext: row.api_key_secret_ciphertext, fingerprint: row.master_key_fingerprint }));
     } catch (error) {
-      if (error instanceof IntegrationsError) throw error;
-      throw new IntegrationsError("provider_unavailable", "Twilio credential could not be decrypted");
+      if (error instanceof IntegrationsError && error.code === "credential_unreadable") await recordFailure(error);
+      throw error;
     }
   }
 
@@ -289,7 +285,8 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
     ...dataforseo,
 
     async getTwilioConnection(client) {
-      return selectConnection(client ?? options.pool).then((row) => (row ? toConnectionRecord(row) : null));
+      const row = await selectConnection(client ?? options.pool);
+      return row ? recordOf(row) : null;
     },
 
     async withTwilioCredential<T>(
@@ -328,24 +325,24 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
         throw new IntegrationsError("master_key_missing");
       }
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         if (await selectConnection(client)) {
           throw new IntegrationsError("already_connected");
         }
         const credential = { accountSid, apiKeySid, apiKeySecret };
         const account = await verifyCredential(credential);
         const now = new Date();
-        const ciphertext = await encryptSecret(masterKey, apiKeySecret);
+        const sealed = await sealSecret(masterKey, apiKeySecret);
         await client.query(
           `insert into twilio_connection
-             (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext,
+             (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, master_key_fingerprint,
               account_friendly_name, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8, $8)`,
-          [randomUUID(), options.organizationId, accountSid, apiKeySid, ciphertext, account.friendlyName, input.actorUserId, now],
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $9, $9)`,
+          [randomUUID(), options.organizationId, accountSid, apiKeySid, sealed.ciphertext, sealed.fingerprint, account.friendlyName, input.actorUserId, now],
         );
         const row = await selectConnection(client);
         if (!row) throw new IntegrationsError("not_connected");
-        return toConnectionRecord(row);
+        return recordOf(row);
       });
     },
 
@@ -362,16 +359,11 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       }
       const now = new Date();
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
-        await client.query(
-          `update twilio_connection
-              set last_verified_at = $2, last_failure_at = null, last_failure_detail = null, updated_at = $2
-            where organization_id = $1`,
-          [options.organizationId, now],
-        );
+        await lockConnection(client);
+        await recordConnectionVerified(client, table, options.organizationId, now);
         const updated = await selectConnection(client);
         if (!updated) throw new IntegrationsError("not_connected");
-        return toConnectionRecord(updated);
+        return recordOf(updated);
       });
     },
 
@@ -384,23 +376,25 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         const current = await selectConnection(client);
         if (!current) throw new IntegrationsError("not_connected");
         const account = await verifyCredential({ accountSid: current.account_sid, apiKeySid, apiKeySecret });
         const now = new Date();
-        const ciphertext = await encryptSecret(masterKey, apiKeySecret);
+        const sealed = await sealSecret(masterKey, apiKeySecret);
+        const authTokenReadable = current.auth_token_ciphertext !== null && (await credentialReadability({ fingerprint: current.master_key_fingerprint, masterKey })) === "readable";
         await client.query(
           `update twilio_connection
-              set api_key_sid = $2, api_key_secret_ciphertext = $3,
-                  account_friendly_name = $4, last_verified_at = $5,
-                  last_failure_at = null, last_failure_detail = null, updated_at = $5
+              set api_key_sid = $2, api_key_secret_ciphertext = $3, master_key_fingerprint = $4,
+                  auth_token_ciphertext = case when $6 then auth_token_ciphertext else null end,
+                  account_friendly_name = $5, last_verified_at = $7,
+                  last_failure_at = null, last_failure_detail = null, updated_at = $7
             where organization_id = $1`,
-          [options.organizationId, apiKeySid, ciphertext, account.friendlyName, now],
+          [options.organizationId, apiKeySid, sealed.ciphertext, sealed.fingerprint, account.friendlyName, authTokenReadable, now],
         );
         const updated = await selectConnection(client);
         if (!updated) throw new IntegrationsError("not_connected");
-        return toConnectionRecord(updated);
+        return recordOf(updated);
       });
     },
 
@@ -410,9 +404,12 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         const current = await selectConnection(client);
         if (!current) throw new IntegrationsError("not_connected");
+        if ((await credentialReadability({ fingerprint: current.master_key_fingerprint, masterKey })) !== "readable") {
+          throw new IntegrationsError("credential_unreadable", unreadableCredentialDetail);
+        }
         await verifyCredential(authTokenCredential(current.account_sid, authToken));
         const now = new Date();
         await client.query(
@@ -420,23 +417,39 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
               set auth_token_ciphertext = $2, last_verified_at = $3,
                   last_failure_at = null, last_failure_detail = null, updated_at = $3
             where organization_id = $1`,
-          [options.organizationId, await encryptSecret(masterKey, authToken), now],
+          [options.organizationId, (await sealSecret(masterKey, authToken)).ciphertext, now],
         );
         const updated = await selectConnection(client);
         if (!updated) throw new IntegrationsError("not_connected");
-        return toConnectionRecord(updated);
+        return recordOf(updated);
       });
     },
 
-    async disconnectTwilio() {
-      await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+    async disconnectTwilio(input) {
+      return withTransaction(options.pool, async (client) => {
+        await lockConnection(client);
         const existing = await selectConnection(client);
         if (!existing) throw new IntegrationsError("not_connected");
-        const decision = decideTwilioDisconnect({ activeWorkspaceCount: await options.activeWorkspaceCount() });
+        const active = await client.query<{ count: number }>("select count(*)::int as count from workspace where organization_id = $1 and state = 'Active'", [options.organizationId]);
+        const decision = decideTwilioDisconnect({ activeWorkspaceCount: active.rows[0]?.count ?? 0, force: input?.force });
         if (!decision.allowed) throw new IntegrationsError("active_workspaces", undefined, decision.activeWorkspaceCount);
-        await client.query("delete from twilio_number where organization_id = $1", [options.organizationId]);
+        let endedAssignments = 0;
+        if (decision.endsAssignments > 0) {
+          const now = new Date();
+          const ended = await client.query(
+            "update number_assignment set ended_at = $2, ended_reason = 'disconnected', voice_restore_skipped_at = $2 where organization_id = $1 and ended_at is null",
+            [options.organizationId, now],
+          );
+          endedAssignments = ended.rowCount ?? 0;
+          await client.query("update workspace set state = 'Setup Required', updated_at = $2 where organization_id = $1 and state = 'Active'", [options.organizationId, now]);
+        }
+        await client.query(
+          "delete from twilio_number n where n.organization_id = $1 and not exists (select 1 from number_assignment a where a.twilio_number_id = n.id)",
+          [options.organizationId],
+        );
+        await client.query("update twilio_number set released_at = coalesce(released_at, $2), updated_at = $2 where organization_id = $1", [options.organizationId, new Date()]);
         await client.query("delete from twilio_connection where organization_id = $1", [options.organizationId]);
+        return { endedAssignments };
       });
     },
 
@@ -459,7 +472,7 @@ export function createIntegrations(options: IntegrationsOptions): Integrations {
       const skipped = incoming.length - normalized.length;
       const syncedAt = new Date();
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         for (const number of normalized) {
           await client.query(
             `insert into twilio_number

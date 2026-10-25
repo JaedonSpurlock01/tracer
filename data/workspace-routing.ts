@@ -33,6 +33,7 @@ import {
   type ValidationResult,
 } from "@/data/call-flow";
 import { IntegrationsError, type Integrations } from "@/data/integrations";
+import { unreadableCredentialDetail } from "@/data/provider-credential";
 import { normalizeE164PhoneNumber } from "@/data/phone-number";
 import { TwilioClientError, type TwilioClient, type TwilioCredential, type TwilioVoiceConfiguration } from "@/data/twilio-client";
 import { endOpenSiteLinkSql, type WorkspaceRecord, type Workspaces } from "@/data/workspaces";
@@ -49,6 +50,7 @@ export type RoutingErrorCode =
   | "draft_invalid"
   | "activation_required"
   | "disclosure_required"
+  | "credential_unreadable"
   | "provider_unavailable";
 
 export class RoutingError extends Error {
@@ -177,9 +179,9 @@ async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) =>
 }
 
 function mapIntegrationsError(error: IntegrationsError): RoutingError {
-  return error.code === "not_connected"
-    ? new RoutingError("twilio_not_connected", error.detail)
-    : new RoutingError("provider_unavailable", error.detail);
+  if (error.code === "not_connected") return new RoutingError("twilio_not_connected", error.detail);
+  if (error.code === "credential_unreadable") return new RoutingError("credential_unreadable", error.detail);
+  return new RoutingError("provider_unavailable", error.detail);
 }
 
 function requireGraph(value: unknown): CallFlowGraph {
@@ -713,6 +715,7 @@ export function createWorkspaceRouting(options: {
     },
 
     async detachNumber(workspaceId) {
+      let restoreSkipped = false;
       try {
         await withTransaction(options.pool, async (client) => {
           await lockOrganization(client);
@@ -721,22 +724,32 @@ export function createWorkspaceRouting(options: {
           if (workspace.state === "Archived") throw new RoutingError("state_unchanged");
           const assignment = await findActiveAssignment(client, workspaceId);
           if (!assignment) throw new RoutingError("number_unavailable");
+          const endAssignment = async (now: Date, skipped: boolean) => {
+            await client.query(
+              "update number_assignment set ended_at = $3, ended_reason = 'detached', voice_restore_skipped_at = $4 where organization_id = $1 and id = $2",
+              [options.organizationId, assignment.id, now, skipped ? now : null],
+            );
+            await client.query(
+              "update workspace set state = 'Setup Required', updated_at = $3 where organization_id = $1 and id = $2",
+              [options.organizationId, workspaceId, now],
+            );
+          };
+          const connection = await options.integrations.getTwilioConnection(client);
+          if (!connection) throw new IntegrationsError("not_connected");
+          if (connection.credentialState === "unreadable") {
+            restoreSkipped = true;
+            await endAssignment(new Date(), true);
+            return;
+          }
           await options.integrations.withTwilioCredential(
             async (credential) => {
               await options.twilio.updateIncomingPhoneNumberVoice(credential, assignment.twilio_sid, voiceConfiguration(assignment));
-              const now = new Date();
-              await client.query(
-                "update number_assignment set ended_at = $3, ended_reason = 'detached' where organization_id = $1 and id = $2",
-                [options.organizationId, assignment.id, now],
-              );
-              await client.query(
-                "update workspace set state = 'Setup Required', updated_at = $3 where organization_id = $1 and id = $2",
-                [options.organizationId, workspaceId, now],
-              );
+              await endAssignment(new Date(), false);
             },
             { client, deferFailureRecording: true },
           );
         });
+        if (restoreSkipped) await options.integrations.recordTwilioFailure(new IntegrationsError("credential_unreadable", unreadableCredentialDetail));
       } catch (error) {
         if (error instanceof TwilioClientError) throw mapIntegrationsError(await options.integrations.recordTwilioFailure(error));
         if (error instanceof IntegrationsError) throw mapIntegrationsError(error);

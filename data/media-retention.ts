@@ -54,7 +54,7 @@
  */
 import type { Pool, PoolClient } from "pg";
 
-import { decryptSecret } from "@/data/credential-encryption";
+import { openSecret } from "@/data/provider-credential";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { recordingMediaExpiredSql, recordingMediaRetainedSql } from "@/data/recording-media";
 import type { TwilioRecordingMedia } from "@/data/twilio-client";
@@ -77,6 +77,7 @@ type RecordingCopies = {
   account_sid: string | null;
   api_key_sid: string | null;
   api_key_secret_ciphertext: string | null;
+  master_key_fingerprint: string | null;
 };
 
 export async function deleteRecordingContent(client: Pick<PoolClient, "query">, recordingId: string): Promise<void> {
@@ -87,7 +88,7 @@ export async function deleteRecordingContent(client: Pick<PoolClient, "query">, 
 
 async function deleteTwilioCopy(deps: Pick<MediaRemovalDeps, "pool" | "twilio" | "masterKey">, recordingId: string, copies: RecordingCopies, now: Date): Promise<void> {
   if (!copies.account_sid || !copies.api_key_sid || !copies.api_key_secret_ciphertext) throw new Error("Twilio is not connected");
-  const credential = { accountSid: copies.account_sid, apiKeySid: copies.api_key_sid, apiKeySecret: await decryptSecret(deps.masterKey, copies.api_key_secret_ciphertext) };
+  const credential = { accountSid: copies.account_sid, apiKeySid: copies.api_key_sid, apiKeySecret: await openSecret(deps.masterKey, { ciphertext: copies.api_key_secret_ciphertext, fingerprint: copies.master_key_fingerprint ?? null }) };
   await deps.twilio.deleteRecording(credential, copies.twilio_recording_sid);
   await deps.pool.query(
     `update recording
@@ -106,7 +107,7 @@ export async function deleteRecordingCopies(
 ): Promise<void> {
   const copies = (await deps.pool.query<RecordingCopies>(
     `select r.r2_object_key, r.waveform_object_key, r.mp3_object_key, r.twilio_recording_sid, r.twilio_cleanup_state,
-            t.account_sid, t.api_key_sid, t.api_key_secret_ciphertext
+            t.account_sid, t.api_key_sid, t.api_key_secret_ciphertext, t.master_key_fingerprint
        from recording r
        join call c on c.id = r.call_id
        left join twilio_connection t on t.organization_id = r.organization_id

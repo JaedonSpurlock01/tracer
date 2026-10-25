@@ -9,6 +9,10 @@
  *  Hyperdrive and Email Service checks.
  *
  * @remarks
+ *  `pool.end()` resolves before its clients' sockets close, so stopping the
+ *  container right after it can send a pooled client PostgreSQL's
+ *  administrator shutdown (57P01) with no listener left; each client
+ *  ignores that one error and still throws any other.
  *  The suite uses one PostgreSQL container, real Better Auth sessions, and a
  *  deterministic in-memory Twilio provider boundary.
  *
@@ -20,12 +24,15 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { createIntegrations, IntegrationsError } from "@/data/integrations";
 import { createIntegrationsHandler } from "@/data/integrations-handler";
 import { schema } from "@/data/schema";
@@ -95,7 +102,7 @@ const auth = () => createTracerAuth({
   baseURL: "http://localhost:3000",
 });
 
-function handler(overrides: { masterKey?: string; activeWorkspaceCount?: () => Promise<number>; allowedRecipients?: ReadonlySet<string> } = {}) {
+function handler(overrides: { masterKey?: string; allowedRecipients?: ReadonlySet<string> } = {}) {
   const configuredMasterKey = "masterKey" in overrides ? overrides.masterKey : masterKey;
   return createIntegrationsHandler({
     auth: auth(),
@@ -123,7 +130,6 @@ function handler(overrides: { masterKey?: string; activeWorkspaceCount?: () => P
     },
     emailFrom: "auth@example.com",
     allowedRecipients: overrides.allowedRecipients ?? new Set(["operator@example.com"]),
-    activeWorkspaceCount: overrides.activeWorkspaceCount ?? (async () => 0),
   });
 }
 
@@ -156,7 +162,7 @@ async function json(request: Request, routeHandler = handler()): Promise<{ respo
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, {
     email: "operator@example.com",
@@ -186,6 +192,7 @@ beforeAll(async () => {
      values ('other-connection-id', 'other-organization-id', $1, $2, $3, 'Other Account', $4, now(), now(), now(), now())`,
     [accountSid, firstKeySid, otherCiphertext, operatorId],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool.query(
     `insert into twilio_number
        (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable,
@@ -281,7 +288,6 @@ describe.sequential("Organization integrations", () => {
       organizationId,
       twilio: fakeTwilio,
       masterKey,
-      activeWorkspaceCount: async () => 0,
     });
 
     await expect(integrations.withTwilioCredential(async (credential) => ({ accountSid: credential.accountSid, secret: credential.apiKeySecret }))).resolves.toEqual({ accountSid, secret: firstSecret });
@@ -297,10 +303,17 @@ describe.sequential("Organization integrations", () => {
       organizationId: "organization-without-connection",
       twilio: fakeTwilio,
       masterKey,
-      activeWorkspaceCount: async () => 0,
     });
     await expect(disconnected.withTwilioCredential(async () => "unreachable")).rejects.toBeInstanceOf(IntegrationsError);
     await expect(disconnected.withTwilioCredential(async () => "unreachable")).rejects.toMatchObject({ code: "not_connected" });
+  });
+
+  it("seals the credential with the master key fingerprint and reports it readable", async () => {
+    const cookie = await signIn("operator@example.com");
+    const row = await pool!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
+    expect(row.rows[0]?.master_key_fingerprint).toBe(await masterKeyFingerprint(masterKey));
+    const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
+    expect(health.body.twilio).toMatchObject({ credentialState: "readable" });
   });
 
   it("records test failures without discarding the last success", async () => {
@@ -398,13 +411,57 @@ describe.sequential("Organization integrations", () => {
     expect((health.body.twilio as { accountFriendlyName: string }).accountFriendlyName).toBe("Tracer Account");
   });
 
-  it("blocks disconnect while active workspaces depend on Twilio", async () => {
+  it("reports Needs re-entry when the credential was sealed under a different master key, records it on every use, and recovers on rotation", async () => {
     const cookie = await signIn("operator@example.com");
-    const blocked = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie } }), handler({ activeWorkspaceCount: async () => 2 }));
+    const rotatedKey = "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=";
+    const underRotatedKey = handler({ masterKey: rotatedKey });
+    const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }), underRotatedKey);
+    expect(health.body.twilio).toMatchObject({ credentialState: "unreadable" });
+    expect((health.body.providers as Array<{ id: string; state: string }>)[0]).toMatchObject({ id: "twilio", state: "needs_reentry" });
+
+    const tested = await json(new Request("http://localhost:3000/api/integrations/twilio/test", { method: "POST", headers: { cookie } }), underRotatedKey);
+    expect(tested.response.status).toBe(409);
+    expect(tested.body).toMatchObject({ error: "credential_unreadable", detail: expect.stringContaining("different master key") });
+    const synced = await json(new Request("http://localhost:3000/api/integrations/twilio/sync-numbers", { method: "POST", headers: { cookie } }), underRotatedKey);
+    expect(synced.body).toMatchObject({ error: "credential_unreadable" });
+    const recorded = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }), underRotatedKey);
+    expect(recorded.body.twilio).toMatchObject({ lastFailureDetail: expect.stringContaining("different master key") });
+
+    const rotated = await json(new Request("http://localhost:3000/api/integrations/twilio/rotate", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ apiKeySid: secondKeySid, apiKeySecret: secondSecret }),
+    }), underRotatedKey);
+    expect(rotated.response.status).toBe(200);
+    expect(rotated.body.connection).toMatchObject({ credentialState: "readable", lastFailureAt: null });
+    const row = await pool!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
+    expect(row.rows[0]?.master_key_fingerprint).toBe(await masterKeyFingerprint(rotatedKey));
+
+    const backUnderOriginal = await json(new Request("http://localhost:3000/api/integrations/twilio/rotate", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ apiKeySid: secondKeySid, apiKeySecret: secondSecret }),
+    }));
+    expect(backUnderOriginal.body.connection).toMatchObject({ credentialState: "readable" });
+  });
+
+  it("blocks disconnect while Active Workspaces depend on Twilio and ends their Number Assignments when forced", async () => {
+    const cookie = await signIn("operator@example.com");
+    const numberId = (await pool!.query<{ id: string }>("select id from twilio_number where organization_id = $1 and twilio_sid = 'PN11111111111111111111111111111111'", [organizationId])).rows[0].id;
+    await pool!.query(
+      "insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at) values ('disconnect-workspace', $1, 'Disconnect Workspace', 'UTC', 'Active', '+14155550199', now(), now())",
+      [organizationId],
+    );
+    await pool!.query(
+      "insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) values ('disconnect-assignment', $1, 'disconnect-workspace', $2, '+14155552671', now(), now())",
+      [organizationId, numberId],
+    );
+    const blocked = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie } }));
     expect(blocked.response.status).toBe(409);
-    expect(blocked.body).toMatchObject({ error: "active_workspaces", activeWorkspaceCount: 2 });
-    const disconnected = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie } }));
-    expect(disconnected.body).toEqual({ disconnected: true });
+    expect(blocked.body).toMatchObject({ error: "active_workspaces", activeWorkspaceCount: 1 });
+    expect((await pool!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).rows[0]).toEqual({ count: "1" });
+
+    const disconnected = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ force: true }) }));
+    expect(disconnected.response.status).toBe(200);
+    expect(disconnected.body).toEqual({ disconnected: true, endedAssignments: 1 });
+    expect((await pool!.query("select ended_reason, voice_restore_skipped_at is not null as skipped from number_assignment where id = 'disconnect-assignment'")).rows[0]).toEqual({ ended_reason: "disconnected", skipped: true });
+    expect((await pool!.query("select state from workspace where id = 'disconnect-workspace'")).rows[0]).toEqual({ state: "Setup Required" });
     await expect(pool!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
     await expect(pool!.query("select count(*) from twilio_connection where organization_id = 'other-organization-id'")).resolves.toMatchObject({ rows: [{ count: "1" }] });
   });
@@ -627,10 +684,10 @@ describe.sequential("Organization integrations", () => {
     expect(serialized).not.toContain("organizations/");
     expect(serialized).not.toContain("lifecycle-other");
 
-    const remaining = await createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth();
+    const remaining = await createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
     expect(remaining.oldestStuck).toHaveLength(5);
     await pool!.query("update recording set media_deleted_at = now() where id like 'lifecycle-backlog-%'");
-    await expect(createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth()).resolves.toEqual({
+    await expect(createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth()).resolves.toEqual({
       stuckCount: 3,
       oldestStuck: [
         await entry("lifecycle-expired-stuck", "Expired"),
@@ -638,7 +695,7 @@ describe.sequential("Organization integrations", () => {
         await entry("lifecycle-purged-no-twilio", "Purged", true),
       ],
     });
-    const other = await createIntegrations({ pool: pool!, organizationId: "other-organization-id", twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }).getMediaLifecycleHealth();
+    const other = await createIntegrations({ pool: pool!, organizationId: "other-organization-id", twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
     expect(other).toMatchObject({ stuckCount: 1, oldestStuck: [{ callId: "lifecycle-other-stuck-call", twilioNotConnected: false }] });
   });
 });

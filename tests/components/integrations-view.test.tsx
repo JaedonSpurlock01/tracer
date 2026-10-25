@@ -48,6 +48,7 @@ const connected: TwilioConnectionRecord = {
   accountSid,
   apiKeySid,
   authTokenConfigured: true,
+  credentialState: "readable",
   accountFriendlyName: "Tracer Account",
   connectedAt: "2026-10-14T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Example Operator" },
@@ -67,6 +68,7 @@ const cloudflareAccountId = "0123456789abcdef0123456789abcdef";
 const cloudflareToken = "component-only-cloudflare-token";
 
 const cloudflareConnected: CloudflareConnectionRecord = {
+  credentialState: "readable",
   accountId: cloudflareAccountId,
   connectedAt: "2026-10-20T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Example Operator" },
@@ -86,6 +88,7 @@ const dataforseoLogin = "operator@example.com";
 const dataforseoPassword = "component-only-dataforseo-password";
 
 const dataforseoConnected: DataForSeoConnectionRecord = {
+  credentialState: "readable",
   login: dataforseoLogin,
   connectedAt: "2026-10-20T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Example Operator" },
@@ -316,8 +319,11 @@ describe("IntegrationsView", () => {
     expect(document.body.textContent).not.toContain(authToken);
   });
 
-  it("reports blocked Twilio disconnects with the active workspace count", async () => {
-    const fetch = fetchStub({ ...responseRoutes({ connected: true, providers: twilioConnectedProviders }), "POST /api/integrations/twilio/disconnect": { body: { error: "active_workspaces", activeWorkspaceCount: 2 }, status: 409 } });
+  it("reports blocked Twilio disconnects with the active workspace count and offers Disconnect anyway behind an acknowledgement", async () => {
+    const fetch = fetchStub({
+      ...responseRoutes({ providers }),
+      "POST /api/integrations/twilio/disconnect": [{ body: { error: "active_workspaces", activeWorkspaceCount: 2 }, status: 409 }, { body: { disconnected: true, endedAssignments: 2 } }],
+    });
     vi.stubGlobal("fetch", fetch);
     render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
     await screen.findByText("+14155552671");
@@ -325,6 +331,29 @@ describe("IntegrationsView", () => {
     const dialog = screen.getByRole("alertdialog", { name: "Disconnect Twilio?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("2 Active Workspaces");
+    const acknowledge = within(dialog).getByRole("checkbox", { name: /End 2 Number Assignments/ });
+    const anyway = within(dialog).getByRole("button", { name: "Disconnect anyway" });
+    expect(anyway).toBeDisabled();
+    fireEvent.click(acknowledge);
+    fireEvent.click(anyway);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/integrations/twilio/disconnect", expect.objectContaining({ method: "POST", body: JSON.stringify({ force: true }) })));
+    expect(await screen.findByRole("status")).toHaveTextContent("Twilio disconnected. 2 Number Assignments ended without restoring Twilio.");
+  });
+
+  it("shows a connection that needs re-entry with Re-enter credential and Disconnect, and opens the rotate dialog from the attention lane", async () => {
+    const unreadable = { ...connected, credentialState: "unreadable" as const };
+    const needsReentry = providers.map((provider) => provider.id === "twilio" ? { ...provider, state: "needs_reentry" as const, identifier: accountSid, testable: false, connectable: false, note: "The stored credential was sealed under a different master key. Re-enter it or disconnect." } : provider);
+    vi.stubGlobal("fetch", fetchStub(responseRoutes({ providers: needsReentry })));
+    render(<IntegrationsView initial={initialData({ providers: needsReentry, twilio: unreadable })} provider="twilio" />);
+    const region = detail("Twilio");
+    expect(within(region).getByText("Needs re-entry")).toBeVisible();
+    expect(within(region).queryByRole("button", { name: "Test Connection" })).toBeNull();
+    expect(within(region).queryByRole("button", { name: "Sync Numbers" })).toBeNull();
+    expect(within(region).getByRole("button", { name: "Disconnect" })).toBeVisible();
+    const attention = screen.getByRole("list", { name: "Needs attention" });
+    expect(within(attention).getByText(/different master key/)).toBeVisible();
+    fireEvent.click(within(attention).getByRole("button", { name: "Re-enter credential" }));
+    expect(await screen.findByRole("dialog", { name: "Rotate Twilio API Key" })).toBeVisible();
   });
 
   it("tests Hyperdrive and Email inside their provider details", async () => {
