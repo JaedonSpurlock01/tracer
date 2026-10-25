@@ -39,7 +39,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
@@ -72,7 +71,6 @@ import { createSites, siteResponseForActor, SitesError, summaryResponseForActor 
 import { createWorkspaceRouting, RoutingError, type RoutingSettingsInput } from "@/data/workspace-routing";
 import { createWorkspaces, WorkspacesError, type Workspaces } from "@/data/workspaces";
 import type { TwilioClient, TwilioRecordingMedia } from "@/data/twilio-client";
-import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 import type { TransactionalEmail } from "@/data/transactional-email";
 import { canManageWorkspaces, createReadableWorkspaces } from "@/data/workspace-authorization";
@@ -83,7 +81,6 @@ const serviceAreaCountryIso = "us";
 
 export interface WorkspacesHandlerOptions {
   auth: TracerAuth;
-  database: NodePgDatabase<typeof schema>;
   pool: Pool;
   /** Forwards Form Submissions; without it every forward records Forward failed with Resend. */
   email?: TransactionalEmail;
@@ -186,7 +183,7 @@ function routingInput(body: Record<string, unknown>): RoutingSettingsInput {
 export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.database, request.headers);
+      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
       const mediaMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/(audio|peaks|mp3)$/);
       if (request.method === "GET" && mediaMatch) {

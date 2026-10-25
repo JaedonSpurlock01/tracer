@@ -75,7 +75,6 @@ const auth = () => createTracerAuth({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   email,
   emailFrom: "auth@example.com",
@@ -121,7 +120,7 @@ interface ListedCalls {
 }
 
 async function listCalls(cookie: string, query = "") {
-  const response = await createCallsHandler({ auth: auth(), database: database(), pool: pool! })(new Request(`http://localhost:3000/api/calls${query}`, { headers: { cookie } }));
+  const response = await createCallsHandler({ auth: auth(), pool: pool! })(new Request(`http://localhost:3000/api/calls${query}`, { headers: { cookie } }));
   return { response, body: (await response.json()) as ListedCalls & { error?: string } };
 }
 
@@ -531,7 +530,7 @@ describe.sequential("Calls filters", () => {
   });
 
   it("offers only readable Workspaces as Workspace filter options, by name", async () => {
-    const options = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), database(), new Headers({ cookie }))).workspaceOptions();
+    const options = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), pool!, new Headers({ cookie }))).workspaceOptions();
     expect(await options(clientCookie)).toEqual([{ id: "granted-active", name: "Acme Plumbing" }, { id: "granted-quiet", name: "Quiet Dental" }]);
     expect((await options(operatorCookie)).map((option) => option.name)).toEqual(["Acme Plumbing", "Empty Office", "Gamma HVAC", "Quiet Dental", "Roof_100% Co", "Tokyo Office"]);
   });
@@ -614,7 +613,7 @@ describe.sequential("Calls condition groups", () => {
 });
 
 describe.sequential("Call Detail previous and next Call", () => {
-  const callList = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), database(), new Headers({ cookie })));
+  const callList = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), pool!, new Headers({ cookie })));
   const query = (search = "") => callListQueryFromSearchParams(new URLSearchParams(search));
   const neighborIds = (neighbors: { previous: { id: string } | null; next: { id: string } | null } | null) => [neighbors?.previous?.id ?? null, neighbors?.next?.id ?? null];
 

@@ -93,7 +93,6 @@ const auth = () => createTracerAuth({
 function handler(overrides: { masterKey?: string } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     cloudflare: fakeCloudflare,

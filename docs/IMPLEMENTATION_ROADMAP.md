@@ -15,8 +15,8 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M24 - Keyword Discovery, started on 2026-10-25 after the Product Owner deferred M18
-- **Next milestone:** M18 - Production Hardening and Acceptance resumes, then M19 - Production Deployment and Stabilization
+- **Current milestone:** M18 - Production Hardening and Acceptance, resumed on 2026-10-25 with the Database module slice after the Product Owner deferred M24
+- **Next milestone:** M24 - Keyword Discovery resumes for its Staging gate, then M19 - Production Deployment and Stabilization
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Staging data reset to empty on 2026-10-21 for acceptance; Production deployed from `main` on 2026-10-22 and its data reset to empty on 2026-10-24 (the Operator user, Organization, and membership kept) after the master key finding below
 - **Production status:** Deployed ahead of M19 for Product Owner acceptance; Production data empty since 2026-10-24; the Neon Production compute never suspends since 2026-10-24
 - **Last roadmap review:** 2026-10-25
@@ -189,8 +189,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M21 | Search Rankings | Complete | Preview and Staging | M20 |
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
 | M23 | Form Submissions | Complete | Preview and Staging | M22 |
-| M18 | Production Hardening and Acceptance | Deferred | Staging | M23 |
-| M24 | Keyword Discovery | In Progress | Preview and Staging | M18 |
+| M18 | Production Hardening and Acceptance | In Progress | Staging | M23 |
+| M24 | Keyword Discovery | Deferred | Preview and Staging | M18 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M24 |
 
 M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M24, M19. M24 was added on 2026-10-24 at the Product Owner's request and sits before M19 because it depends on the validated Service Area that M18's Search adapter work introduces. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
@@ -1228,8 +1228,8 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 ### M18 - Production Hardening and Acceptance
 
-- **Status:** Deferred
-- **Deferral note:** The Product Owner deferred M18 on 2026-10-25 so M24 could start once the four 2026-10-24 slices had merged to `main`. The eight acceptance slices and the required acceptance below are untouched and resume after M24; the Staging deployment of the four slices and the provider reconnects it needs are tracked in the Changelog.
+- **Status:** In Progress
+- **Deferral note:** The Product Owner deferred M18 on 2026-10-25 so M24 could start once the four 2026-10-24 slices had merged to `main`, and resumed it the same day for the Database module (slice 5 below) after Production kept hanging; M24's code is merged and only its Staging gate remains. The eight acceptance slices and the required acceptance below resume after slice 5; the Staging deployment of the four slices and the provider reconnects it needs are tracked in the Changelog.
 - **Outcome:** The complete first release passes security, reliability, accessibility, cost, and operational acceptance in Staging.
 - **Depends on:** M23
 - **Target environment:** Staging
@@ -1241,6 +1241,7 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
   2. **Provider Credential module:** one module owns encryption, decryption, the master key fingerprint stored on each connection row (replacing the unused `master_key_version`), the `Unreadable` connection state, and failure recording; Twilio, Cloudflare, and DataForSEO become adapters that only verify credentials and call their provider. The Integrations page shows Needs re-entry with Re-enter credential and Disconnect; Disconnect anyway with an acknowledgement ends open Number Assignments, moves Workspaces to Setup Required, and records that the Twilio voice URL was not restored; Detach Number on an Unreadable credential succeeds with the same record. Twilio Disconnect counts Active Workspaces on the transaction's own connection. ADR 0006 records the module and amends ADR 0005's pure-count disconnect decision. Landed 2026-10-24 with migration 0027; connections sealed before it read as unreadable, so Staging reconnects its three providers after deployment.
   3. **Site sync outcomes:** the sync returns a per-Site report stored on the Site (last sync time, stage, and error); the connection's synced time is stamped only when a Site synced; an unreadable credential is recorded on the connection; the Site page shows the failing stage and reason instead of Preview pending. Landed 2026-10-24.
   4. **Search adapters that say why:** the DataForSEO adapter surfaces the task status and message; Rank Check uses the `advanced` SERP endpoint so local pack and map results count, and stores the matched item type and a check status per rank day; the Service Area becomes a picked DataForSEO location stored by `location_code`, searched through a `search_location` table imported once per country; the Search panel distinguishes Not ranking, Check failed, and Local pack. Landed 2026-10-24 with migration 0028; a Site whose Service Area was typed before the picker keeps checking by its concatenated name until an Operator picks a location.
+  5. **Database module:** one module, `data/database.ts`, is the only way application code reaches PostgreSQL: `query`, `transaction` (a callback on a handle that can only query, holding the named advisory lock when asked), `stats`, and `close`, with the 10-second connect and 30-second query timeouts, the Worker request socket, the `DatabaseUnavailableError`, and the close deadline inside it. The Worker request runtime, every Trigger.dev task run, and the integration suite open it the same way, so tests cross the Production seam. Delivered in four parts, each keeping the app runnable: (a) the module replaces the request, task, and test pools while repositories that still take a pool receive the module's own, and the actor, avatar, and Organization reads leave Drizzle, which stays only behind the Better Auth adapter; (b) Workspace routing, Workspaces, and Provider Credential take the Database; (c) Calls, Recordings, Reports, and media retention; (d) the rest, then the pool handle, the nine copied transaction helpers, and `lockOrganization` are deleted. ADR 0008 records the decision. Part (a) landed 2026-10-25.
 - **Open findings:**
   - `AUTH_EMAIL_ALLOWED_RECIPIENTS` is enforced in every environment. On 2026-10-21 the Product Owner decided Production keeps it: provisioning an Operator or Client Viewer includes adding their email to the `tracer` Worker secret, or they receive no sign-in code.
   - `.github/workflows/deploy-production.yml` (added 2026-10-21, guarded by `tests/harness/deploy-production-workflow.test.ts`) is the Production path: a manual run in the `Production` GitHub Environment that runs `pnpm test`, typecheck, and lint, applies migrations and runtime grants, deploys the `tracer` Worker, deploys the matching Trigger.dev task version with `TRIGGER_ACCESS_TOKEN`, and checks `/health`. Before its first run, `TRIGGER_ACCESS_TOKEN` must be added to the `Production` environment, and the environment needs a required reviewer and a `main`-only deployment branch rule, which it does not have yet. Slice 8 rehearses it.
@@ -1283,7 +1284,8 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 ### M24 - Keyword Discovery
 
-- **Status:** In Progress
+- **Status:** Deferred
+- **Deferral note:** Deferred by the Product Owner on 2026-10-25 so M18 could resume with the Database module; all three slices are merged to `main` and only the Staging verification gate remains.
 - **Outcome:** An Operator editing a Site's Keywords can ask Tracer to suggest city-qualified search phrases for the Business's niche and Service Area, see each suggestion's monthly search volume, and add the ones worth tracking, instead of guessing the Keyword list by hand.
 - **Depends on:** M18 (the validated Service Area and the DataForSEO adapter that reports task status)
 - **Target environment:** Preview and Staging

@@ -92,7 +92,6 @@ const workspacesHandler = () => createWorkspacesHandler({
   recordingTranscription: transcriptionRequests,
   recordingLeadAssessment: leadAssessmentRequests,
   auth: auth(),
-  database: database(),
   pool: pool!,
   twilio: fakeTwilio,
   integrations: (id) => createIntegrations({ pool: pool!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
@@ -101,7 +100,6 @@ const workspacesHandler = () => createWorkspacesHandler({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   email,
   emailFrom: "auth@example.com",

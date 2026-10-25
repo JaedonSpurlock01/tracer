@@ -20,18 +20,15 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { callListQueryFromSearchParams } from "@/data/call-list-query";
 import { createCallList } from "@/data/calls";
-import { schema } from "@/data/schema";
 import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface CallsHandlerOptions {
   auth: TracerAuth;
-  database: NodePgDatabase<typeof schema>;
   pool: Pool;
 }
 
@@ -40,7 +37,7 @@ const privateHeaders = { "cache-control": "private, no-store" };
 export function createCallsHandler(options: CallsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.database, request.headers);
+      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
       const params = new URL(request.url).searchParams;
       const result = await createCallList(options.pool, actor).list({ ...callListQueryFromSearchParams(params), workspaceId: params.get("workspaceId") ?? undefined });
       if (!result) return Response.json({ error: "not_found" }, { status: 404, headers: privateHeaders });

@@ -19,7 +19,9 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { Pool } from "pg";
+import type { Pool } from "pg";
+
+import { openDatabase } from "@/data/database";
 
 export function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -28,5 +30,5 @@ export function requiredEnvironment(name: string): string {
 }
 
 export function taskPool(): Pool {
-  return new Pool({ connectionString: requiredEnvironment("DATABASE_URL"), max: 1 });
+  return openDatabase(requiredEnvironment("DATABASE_URL"), { max: 1 }).pool;
 }

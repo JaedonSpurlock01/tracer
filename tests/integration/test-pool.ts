@@ -25,19 +25,11 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { Pool, type PoolConfig } from "pg";
+import type { Pool } from "pg";
 
-export function createTestPool(connectionString: string, options: Omit<PoolConfig, "connectionString"> = {}): Pool {
-  const pool = new Pool({ connectionString, ...options });
-  pool.on("connect", (client) => {
-    let closedByServer = false;
-    client.on("error", (error: Error & { code?: string }) => {
-      if (error.code === "57P01") closedByServer = true;
-      else if (!closedByServer) throw error;
-    });
-  });
-  pool.on("error", (error: Error & { code?: string }) => {
-    if (error.code !== "57P01") throw error;
-  });
-  return pool;
+import { openDatabase } from "@/data/database";
+
+/** The pool integration tests hand to repositories until they take a Database: the same module Production runs. */
+export function createTestPool(connectionString: string, options: { max?: number } = {}): Pool {
+  return openDatabase(connectionString, { max: options.max ?? 10 }).pool;
 }

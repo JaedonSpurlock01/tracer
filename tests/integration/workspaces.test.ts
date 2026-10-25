@@ -64,7 +64,6 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     integrations: (organizationId) => createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }),

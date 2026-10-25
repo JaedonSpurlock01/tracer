@@ -16,11 +16,9 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
-import { schema } from "@/data/schema";
 import {
   createOperatorAdministration,
   OperatorAdministrationError,
@@ -32,7 +30,6 @@ import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface OperatorAdministrationHandlerOptions {
   auth: TracerAuth;
-  database: NodePgDatabase<typeof schema>;
   pool: Pool;
   email: TransactionalEmail;
   emailFrom: string;
@@ -98,7 +95,7 @@ export function createOperatorAdministrationHandler(
   return async (request) => {
     let administration: OperatorAdministration | undefined;
     try {
-      const actor = await requireActiveOperator(options.auth, options.database, request.headers);
+      const actor = await requireActiveOperator(options.auth, options.pool, request.headers);
       administration = createOperatorAdministration(options.pool, actor.organizationId);
       const route = new URL(request.url).pathname.replace(/^\/api\/users\/?/, "");
       if (request.method === "GET" && route === "") {

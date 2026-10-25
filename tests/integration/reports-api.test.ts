@@ -81,7 +81,6 @@ const reportGeneration: ReportGeneration = {
 
 const reportsHandler = (options: { reportGeneration?: ReportGeneration | null } = {}) => createReportsHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   reportBucket,
   reportGeneration: options.reportGeneration === null ? undefined : options.reportGeneration ?? reportGeneration,
@@ -89,7 +88,6 @@ const reportsHandler = (options: { reportGeneration?: ReportGeneration | null } 
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  database: database(),
   pool: pool!,
   email,
   emailFrom: "auth@example.com",

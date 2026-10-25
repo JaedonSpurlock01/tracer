@@ -106,7 +106,6 @@ const auth = () => createTracerAuth({
 function workspacesHandler(options: { withBucket?: boolean } = {}) {
   return createWorkspacesHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
@@ -122,7 +121,6 @@ const fullSyncRuns: string[] = [];
 function integrationsHandler(options: { local?: boolean } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     cloudflare,

@@ -26,5 +26,5 @@ import { withRequestRuntime } from "@/app/(app)/runtime";
 
 export const resolveRequestActor = cache(async (): Promise<Actor | null> => {
   const requestHeaders = await headers();
-  return withRequestRuntime(({ auth, database }) => resolveActor(auth, database, new Headers(requestHeaders)));
+  return withRequestRuntime(({ auth, pool }) => resolveActor(auth, pool, new Headers(requestHeaders)));
 });

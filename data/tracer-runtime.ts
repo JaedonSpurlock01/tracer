@@ -23,16 +23,11 @@
  *  than left Queued with no run, except that the explicit non-production
  *  E2E Trigger.dev fake accepts the request so a browser journey can
  *  complete the job itself.
- *  The request pool holds up to six connections so queries issued together
- *  run together instead of queueing behind one socket; Hyperdrive owns the
- *  real pooling. It gives up on a connection after 10 seconds and a
- *  query after 30, and inside the Worker it drives RequestSocket instead
- *  of pg-cloudflare: pg reports a connect timeout only through the
- *  socket's close, and pg-cloudflare's close waits for Hyperdrive to
- *  confirm, which a stalled connection never does, so Production hung
- *  for minutes with those timeouts in place. Closing the pool is never
- *  awaited by the response and keeps a two-second deadline as a
- *  backstop. Every request writes one
+ *  The request opens one Database (data/database.ts) with six connections
+ *  so queries issued together run together instead of queueing behind one
+ *  socket; Hyperdrive owns the real pooling, and the Database module owns
+ *  the timeouts, the Worker socket, the stats, and the close deadline.
+ *  Closing is never awaited by the response. Every request writes one
  *  tracer.request log line with its Cloudflare ray, duration, outcome,
  *  and database timing so a slow or failed page can be read back from
  *  Workers Logs instead of guessed at.
@@ -45,17 +40,14 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
-import { Pool, type PoolConfig } from "pg";
-import { isCloudflareWorker, loadCloudflareSockets, RequestSocket } from "@/data/request-socket";
+import type { Pool } from "pg";
+import { openDatabase, type Database } from "@/data/database";
 
-import { logRequest, observePool } from "@/data/request-log";
+import { logRequest } from "@/data/request-log";
 
 import { rememberE2eOtp } from "@/data/e2e-auth-fake";
-import { schema } from "@/data/schema";
 import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
 import { type ProviderConfiguration } from "@/data/provider-health";
 import type { RecordingProcessing } from "@/data/recording";
@@ -88,8 +80,9 @@ interface AuthBindings {
 
 export interface TracerRuntime {
   auth: TracerAuth;
+  database: Database;
+  /** The Database module's pool, for repositories that have not yet taken a Database. */
   pool: Pool;
-  database: NodePgDatabase<typeof schema>;
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
@@ -121,37 +114,6 @@ function allowedRecipients(value: string | undefined): ReadonlySet<string> {
       .map((recipient) => recipient.trim().toLowerCase())
       .filter(Boolean),
   );
-}
-
-/**
- * One pool per request. An idle client's socket error is logged while the
- * request runs and ignored once the pool is closing: pg-cloudflare reports
- * the reader being cancelled by our own close as an error, and pg-pool
- * re-emits an idle client's error on the pool, where a missing listener
- * surfaced as an unhandledRejection on every Production request.
- */
-export function createRequestPool(connectionString: string, sockets = isCloudflareWorker() ? loadCloudflareSockets : undefined): Pool {
-  const stream = sockets ? (config: { ssl?: unknown }) => new RequestSocket(Boolean(config.ssl), sockets) : undefined;
-  const pool = new Pool({ connectionString, max: 6, connectionTimeoutMillis: 10_000, query_timeout: 30_000, stream: stream as PoolConfig["stream"] });
-  pool.on("error", (error) => {
-    if (!(pool as unknown as { ending?: boolean }).ending) console.error("request pool connection failed", error);
-  });
-  return pool;
-}
-
-export const poolCloseDeadlineMs = 2_000;
-
-/** Ends the pool, giving up after the deadline so a dead connection never holds a request. */
-export async function closeRequestPool(pool: Pick<Pool, "end">, deadlineMs = poolCloseDeadlineMs): Promise<"closed" | "abandoned"> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<"abandoned">((resolve) => {
-    timer = setTimeout(() => resolve("abandoned"), deadlineMs);
-  });
-  try {
-    return await Promise.race([pool.end().then(() => "closed" as const, () => "closed" as const), deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** The Cloudflare ray of the current request, or null outside one. */
@@ -189,19 +151,17 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
   if (!connectionString) {
     throw new Error("HYPERDRIVE is required");
   }
-  const pool = createRequestPool(connectionString);
-  const db = observePool(pool);
+  const database = openDatabase(connectionString, { max: 6 });
   let failure: unknown;
   const close = (ray: string | null) => {
-    ctx.waitUntil(closeRequestPool(pool));
-    logRequest({ ray, durationMs: Date.now() - started, db, error: failure });
+    ctx.waitUntil(database.close());
+    logRequest({ ray, durationMs: Date.now() - started, db: database.stats, error: failure });
   };
 
   try {
     if (!bindings.EMAIL && !fakeEnabled) {
       throw new Error("EMAIL is required");
     }
-    const database = drizzle(pool, { schema });
     const providerEmail: TransactionalEmail = bindings.EMAIL
       ? createCloudflareTransactionalEmail(bindings.EMAIL)
       : {
@@ -234,7 +194,7 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
       triggerdev: Boolean(triggerSecretKey),
     };
     const auth = createTracerAuth({
-      database,
+      database: database.drizzle,
       email,
       emailFrom,
       allowedRecipients: allowed,
@@ -244,8 +204,8 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
     });
     const runtime: TracerRuntime = {
       auth,
-      pool,
       database,
+      pool: database.pool,
       email,
       emailFrom,
       allowedRecipients: allowed,
