@@ -17,8 +17,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -31,7 +33,7 @@ let pool: Pool;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
 }, 120_000);
 
 afterAll(async () => {
@@ -515,7 +517,7 @@ it("grants Better Auth tables without granting schema creation or user deletion"
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  const runtimePool = new Pool({ connectionString: runtimeUrl.toString() });
+  const runtimePool = createTestPool(runtimeUrl.toString());
 
   try {
     await expect(runtimePool.query("delete from \"user\"")).rejects.toMatchObject({ code: "42501" });

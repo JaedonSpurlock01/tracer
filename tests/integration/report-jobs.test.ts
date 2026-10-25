@@ -39,6 +39,8 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { createTestPool } from "./test-pool";
+
 import type { Actor } from "@/data/authorization";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { migrateDatabase } from "@/data/migrate";
@@ -130,7 +132,7 @@ async function grant(userId: string, workspaceId: string): Promise<void> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   pool.on("connect", (client) => {
     clients.push(client);
     client.on("error", (error: Error & { code?: string }) => {

@@ -44,8 +44,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { createAnalytics, describeWorkspaceAttention, reportAnalyticsSummary, withWorkspaceListStats, type Analytics, type ReportAnalyticsScope } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
@@ -245,7 +247,7 @@ const dstCalls: SeedCall[] = [
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   for (const id of ["fleet", "other", "dst"]) await seedOrganization(id);
   await seedWorkspace({ organizationId: "fleet", id: "north", name: "North Plumbing", timezone: "America/Chicago", trackingNumber: "+14155550101" });

@@ -33,8 +33,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
@@ -234,13 +236,13 @@ async function mediaState(callId: string) {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = new Pool({ connectionString: container.getConnectionUri() });
+  owner = createTestPool(container.getConnectionUri());
   const password = "D".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = new Pool({ connectionString: runtimeUrl.toString() });
+  runtime = createTestPool(runtimeUrl.toString());
   ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(owner, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
   await owner.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)

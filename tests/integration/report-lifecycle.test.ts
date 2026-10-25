@@ -29,8 +29,10 @@
 import { randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { migrateDatabase } from "@/data/migrate";
 import type { ArtifactObjects } from "@/data/r2-objects";
@@ -118,13 +120,13 @@ async function job(id: string): Promise<{ status: string; failure_reason: string
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = new Pool({ connectionString: container.getConnectionUri() });
+  owner = createTestPool(container.getConnectionUri());
   const password = "B".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = new Pool({ connectionString: runtimeUrl.toString() });
+  runtime = createTestPool(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('report-viewer', 'Report Viewer', 'report-viewer@example.com', true, 'Active', 'America/Chicago', now(), now())`);
 }, 120_000);
