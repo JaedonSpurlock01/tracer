@@ -28,11 +28,13 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
-import { decryptSecret, encryptSecret } from "@/data/credential-encryption";
 import { DataForSeoClientError, type DataForSeoClient, type DataForSeoCredential } from "@/data/dataforseo-client";
 import { IntegrationsError } from "@/data/integrations-error";
+import { credentialReadability, lockOrganization, openSecret, recordConnectionFailure, recordConnectionVerified, sealSecret, withTransaction, type CredentialState } from "@/data/provider-credential";
 
 export interface DataForSeoConnectionRecord {
+  /** Whether the deployment's master key can open the stored secret; Unreadable needs Re-enter credential or Disconnect. */
+  credentialState: CredentialState;
   login: string;
   connectedAt: string;
   connectedBy: { id: string; name: string } | null;
@@ -63,6 +65,7 @@ export interface DataForSeoConnectionOptions {
 type ConnectionRow = {
   login: string;
   password_ciphertext: string;
+  master_key_fingerprint: string | null;
   connected_at: Date;
   connected_by_id: string | null;
   connected_by_name: string | null;
@@ -75,7 +78,7 @@ type ConnectionRow = {
 };
 
 const connectionQuery = `
-  select c.login, c.password_ciphertext, c.connected_at, c.connected_by_user_id as connected_by_id, u.name as connected_by_name,
+  select c.login, c.password_ciphertext, c.master_key_fingerprint, c.connected_at, c.connected_by_user_id as connected_by_id, u.name as connected_by_name,
          c.last_verified_at, c.last_failure_at, c.last_failure_detail, c.last_checked_at,
          case when c.lookups_month = date_trunc('month', current_date)::date then c.lookups_this_month else 0 end as lookups_this_month,
          (select count(*) from site_keyword k join site s on s.id = k.site_id
@@ -85,8 +88,9 @@ const connectionQuery = `
    where c.organization_id = $1
 `;
 
-function toConnectionRecord(row: ConnectionRow): DataForSeoConnectionRecord {
+function toConnectionRecord(row: ConnectionRow, credentialState: CredentialState): DataForSeoConnectionRecord {
   return {
+    credentialState,
     login: row.login,
     connectedAt: row.connected_at.toISOString(),
     connectedBy: row.connected_by_id && row.connected_by_name ? { id: row.connected_by_id, name: row.connected_by_name } : null,
@@ -106,21 +110,6 @@ function providerFailure(error: unknown): IntegrationsError {
   return new IntegrationsError("provider_unavailable", error instanceof DataForSeoClientError ? error.message : "DataForSEO is unavailable");
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 export function createDataForSeoConnection(options: DataForSeoConnectionOptions): DataForSeoConnection {
   const lock = "tracer:dataforseo:" + options.organizationId;
 
@@ -129,27 +118,26 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
     return result.rows[0] ?? null;
   }
 
-  async function lockOrganization(client: PoolClient): Promise<void> {
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+  async function lockConnection(client: PoolClient): Promise<void> {
+    await lockOrganization(client, lock);
   }
 
   async function recordFailure(error: IntegrationsError): Promise<void> {
-    const now = new Date();
-    await withTransaction(options.pool, async (client) => {
-      await lockOrganization(client);
-      await client.query(
-        "update dataforseo_connection set last_failure_at = $2, last_failure_detail = $3, updated_at = $2 where organization_id = $1",
-        [options.organizationId, now, error.detail ?? error.code],
-      );
-    });
+    await recordConnectionFailure(options.pool, "dataforseo_connection", lock, options.organizationId, error);
   }
 
+  async function recordOf(row: ConnectionRow): Promise<DataForSeoConnectionRecord> {
+    const readability = await credentialReadability({ fingerprint: row.master_key_fingerprint, masterKey: options.masterKey });
+    return toConnectionRecord(row, readability === "readable" ? "readable" : "unreadable");
+  }
+
+  /** Opens the stored password; an Unreadable credential is recorded on the connection before it is reported. */
   async function decryptConnection(row: ConnectionRow): Promise<DataForSeoCredential> {
-    if (!options.masterKey) throw new IntegrationsError("master_key_missing");
     try {
-      return { login: row.login, password: await decryptSecret(options.masterKey, row.password_ciphertext) };
-    } catch {
-      throw new IntegrationsError("provider_unavailable", "DataForSEO credential could not be decrypted");
+      return { login: row.login, password: await openSecret(options.masterKey, { ciphertext: row.password_ciphertext, fingerprint: row.master_key_fingerprint }) };
+    } catch (error) {
+      if (error instanceof IntegrationsError && error.code === "credential_unreadable") await recordFailure(error);
+      throw error;
     }
   }
 
@@ -168,17 +156,14 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
   }
 
   async function recordVerified(client: PoolClient, now: Date): Promise<DataForSeoConnectionRecord> {
-    await client.query(
-      "update dataforseo_connection set last_verified_at = $2, last_failure_at = null, last_failure_detail = null, updated_at = $2 where organization_id = $1",
-      [options.organizationId, now],
-    );
-    return toConnectionRecord(await requireConnection(client));
+    await recordConnectionVerified(client, "dataforseo_connection", options.organizationId, now);
+    return recordOf(await requireConnection(client));
   }
 
   return {
     async getDataForSeoConnection(client) {
       const row = await selectConnection(client ?? options.pool);
-      return row ? toConnectionRecord(row) : null;
+      return row ? recordOf(row) : null;
     },
 
     async withDataForSeoCredential(operation) {
@@ -200,17 +185,18 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         if (await selectConnection(client)) throw new IntegrationsError("already_connected");
         await verifyCredential({ login, password });
         const now = new Date();
+        const sealed = await sealSecret(masterKey, password);
         await client.query(
           `insert into dataforseo_connection
-             (id, organization_id, login, password_ciphertext, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
-           values ($1, $2, $3, $4, $5, $6, $6, $6, $6)`,
-          [randomUUID(), options.organizationId, login, await encryptSecret(masterKey, password), input.actorUserId, now],
+             (id, organization_id, login, password_ciphertext, master_key_fingerprint, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7)`,
+          [randomUUID(), options.organizationId, login, sealed.ciphertext, sealed.fingerprint, input.actorUserId, now],
         );
-        return toConnectionRecord(await requireConnection(client));
+        return recordOf(await requireConnection(client));
       });
     },
 
@@ -224,7 +210,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
         throw failure;
       }
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         return recordVerified(client, new Date());
       });
     },
@@ -235,13 +221,14 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
       const masterKey = options.masterKey;
       if (!masterKey) throw new IntegrationsError("master_key_missing");
       return withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         const current = await requireConnection(client);
         await verifyCredential({ login: current.login, password });
         const now = new Date();
+        const sealed = await sealSecret(masterKey, password);
         await client.query(
-          "update dataforseo_connection set password_ciphertext = $2, updated_at = $3 where organization_id = $1",
-          [options.organizationId, await encryptSecret(masterKey, password), now],
+          "update dataforseo_connection set password_ciphertext = $2, master_key_fingerprint = $3, updated_at = $4 where organization_id = $1",
+          [options.organizationId, sealed.ciphertext, sealed.fingerprint, now],
         );
         return recordVerified(client, now);
       });
@@ -249,7 +236,7 @@ export function createDataForSeoConnection(options: DataForSeoConnectionOptions)
 
     async disconnectDataForSeo() {
       await withTransaction(options.pool, async (client) => {
-        await lockOrganization(client);
+        await lockConnection(client);
         await requireConnection(client);
         await client.query("delete from dataforseo_connection where organization_id = $1", [options.organizationId]);
       });

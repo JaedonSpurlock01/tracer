@@ -153,7 +153,7 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
     organizationId,
     twilio,
     workspaces,
-    integrations: createIntegrations({ pool: runtime.pool, organizationId, twilio, masterKey: runtime.masterKey, activeWorkspaceCount: () => workspaces.countActive() }),
+    integrations: createIntegrations({ pool: runtime.pool, organizationId, twilio, masterKey: runtime.masterKey }),
     baseURL: runtime.baseURL,
   });
   const analytics = createAnalytics(runtime.pool, actor);
@@ -238,7 +238,6 @@ export async function loadIntegrationsPage(runtime: PageRuntime, actor: Actor, c
     cloudflare: clients.cloudflare,
     dataforseo: clients.dataforseo,
     masterKey: runtime.masterKey,
-    activeWorkspaceCount: () => createWorkspaces(runtime.pool, actor.organizationId).countActive(),
   });
   return loadIntegrationsOverview(integrations, runtime.providerConfiguration, createFormsKey(runtime.pool, actor));
 }

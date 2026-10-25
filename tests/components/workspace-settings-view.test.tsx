@@ -35,6 +35,7 @@ const workspace = {
   destinationNumber: null,
   trackingNumber: null,
   numberAssignmentStartedAt: null,
+  voiceRestoreNeeded: null,
   publishedFlowVersion: null,
   hasDraft: false,
   recordingEnabled: false,
@@ -306,6 +307,12 @@ describe("WorkspaceSettingsView", () => {
       expect(screen.getByText("No Tracking Number")).toBeVisible();
       expect(screen.getByText("Setup Required")).toBeVisible();
       expect(refreshClientCache).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the Operator when the detached number's Twilio voice settings were not restored", () => {
+      vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+      render(<WorkspaceSettingsView initialWorkspace={{ ...workspace, state: "Setup Required", trackingNumber: null, voiceRestoreNeeded: "+14155550101" }} section="number" />);
+      expect(screen.getByRole("alert")).toHaveTextContent("Tracer could not restore +14155550101 in Twilio. Clear its voice URL in the Twilio console or attach it to a Workspace again.");
     });
 
     it("shows a successful detach without waiting for the client cache to clear", async () => {

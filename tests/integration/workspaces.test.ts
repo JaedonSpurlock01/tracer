@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { type TwilioClient } from "@/data/twilio-client";
@@ -64,7 +65,7 @@ function handler() {
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
-    integrations: (organizationId) => createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    integrations: (organizationId) => createIntegrations({ pool: pool!, organizationId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }
@@ -125,6 +126,7 @@ beforeAll(async () => {
              'SK11111111111111111111111111111111', 'v1:placeholder-ciphertext', $2, now(), now(), now())`,
     [firstOrganizationId, firstOperatorId],
   );
+  await pool!.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool!.query(
     `insert into twilio_number
        (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable,
@@ -190,6 +192,7 @@ describe.sequential("Workspaces", () => {
     await expect(createWorkspaces(pool!, firstOrganizationId).find(id)).resolves.toMatchObject({
       trackingNumber: "+14155550101",
       numberAssignmentStartedAt: startedAt,
+      voiceRestoreNeeded: null,
       publishedFlowVersion: { version: 2, publishedAt: "2026-01-04T05:06:07.000Z" },
       hasDraft: true,
     });

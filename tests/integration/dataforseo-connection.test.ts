@@ -86,7 +86,7 @@ const auth = () => createTracerAuth({
   baseURL: "http://localhost:3000",
 });
 
-function handler() {
+function handler(overrides: { masterKey?: string } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
     database: database(),
@@ -94,12 +94,11 @@ function handler() {
     twilio: fakeTwilio,
     cloudflare: fakeCloudflare,
     dataforseo: fakeDataForSeo,
-    masterKey,
+    masterKey: overrides.masterKey ?? masterKey,
     configuration: { twilioMasterKey: true, hyperdrive: true, email: true, emailFrom: "auth@example.com", emailAllowlistCount: 1, r2: false, r2Bucket: null, openai: false, triggerdev: false },
     email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
     emailFrom: "auth@example.com",
     allowedRecipients: new Set(["operator@example.com"]),
-    activeWorkspaceCount: async () => 0,
   });
 }
 
@@ -116,8 +115,8 @@ async function signIn(email: string): Promise<string> {
   return (verify.headers.get("set-cookie") ?? "").split(";", 1)[0];
 }
 
-async function json(request: Request): Promise<{ response: Response; body: Record<string, unknown> }> {
-  const response = await handler()(request);
+async function json(request: Request, routeHandler = handler()): Promise<{ response: Response; body: Record<string, unknown> }> {
+  const response = await routeHandler(request);
   return { response, body: await response.json() as Record<string, unknown> };
 }
 
@@ -174,6 +173,7 @@ describe.sequential("Organization DataForSEO connection", () => {
     const connected = await json(post(cookie, "dataforseo/connect", { login, password: firstPassword }));
     expect(connected.response.status).toBe(201);
     expect(connected.body.connection).toEqual({
+      credentialState: "readable",
       login,
       connectedAt: expect.any(String),
       connectedBy: { id: operatorId, name: "Example Operator" },
@@ -216,6 +216,22 @@ describe.sequential("Organization DataForSEO connection", () => {
     const restored = await json(post(cookie, "dataforseo/test"));
     expect(restored.response.status).toBe(200);
     expect(restored.body.connection).toMatchObject({ lastFailureAt: null });
+  });
+
+  it("reports Needs re-entry under a different master key and recovers on rotation", async () => {
+    const cookie = await signIn("operator@example.com");
+    const rotatedKey = "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=";
+    const underRotatedKey = handler({ masterKey: rotatedKey });
+    const health = await json(overview(cookie), underRotatedKey);
+    expect(health.body.dataforseo).toMatchObject({ credentialState: "unreadable" });
+    expect((health.body.providers as Array<{ id: string; state: string }>).find((provider) => provider.id === "dataforseo")?.state).toBe("needs_reentry");
+    const tested = await json(post(cookie, "dataforseo/test"), underRotatedKey);
+    expect(tested.response.status).toBe(409);
+    expect(tested.body).toMatchObject({ error: "credential_unreadable" });
+    const rotated = await json(post(cookie, "dataforseo/rotate", { password: secondPassword }), underRotatedKey);
+    expect(rotated.response.status).toBe(200);
+    expect(rotated.body.connection).toMatchObject({ credentialState: "readable", lastFailureAt: null });
+    expect((await json(post(cookie, "dataforseo/rotate", { password: secondPassword }))).body.connection).toMatchObject({ credentialState: "readable" });
   });
 
   it("verifies the replacement password before rotating it", async () => {

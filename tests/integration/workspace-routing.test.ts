@@ -25,6 +25,7 @@ import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { TwilioClientError, type TwilioClient, type TwilioVoiceConfiguration } from "@/data/twilio-client";
@@ -113,7 +114,6 @@ function integrationsFor(organization: string) {
     organizationId: organization,
     twilio: fakeTwilio,
     masterKey,
-    activeWorkspaceCount: async () => 0,
   });
 }
 
@@ -206,6 +206,7 @@ beforeAll(async () => {
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at) values ('routing-connection', $1, $2, $3, $4, $5, now(), now(), now())`,
     [organizationId, accountSid, apiKeySid, ciphertext, operatorId],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   for (const [id, sid, phoneNumber, voiceCapable] of [
     ["routing-number-a", "PNaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "+14155550101", true],
     ["routing-number-b", "PNbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "+14155550102", true],
@@ -992,6 +993,32 @@ describe.sequential("Workspace routing", () => {
     expect((await pool!.query("select twilio_number_id from number_assignment where workspace_id = $1 and ended_at is null", [workspaceId])).rows).toEqual([
       { twilio_number_id: "routing-number-p" },
     ]);
+  });
+
+  it("detaches without restoring Twilio when the credential is unreadable, remembers the number needs clearing, and forgets it once the number is attached again", async () => {
+    const cookie = await signIn("operator@example.com");
+    const workspaceId = (await pool!.query("select id from workspace where name = 'Detach Workspace'")).rows[0].id as string;
+    await pool!.query("update twilio_connection set master_key_fingerprint = 'ffffffffffff' where organization_id = $1", [organizationId]);
+    updates.length = 0;
+    const detached = await json(new Request(`${baseURL}/api/workspaces/${workspaceId}/detach-number`, { method: "POST", headers: { cookie } }));
+    expect(detached.response.status).toBe(200);
+    expect(detached.body.workspace).toMatchObject({ state: "Setup Required", trackingNumber: null, voiceRestoreNeeded: "+14155550116" });
+    expect(updates).toEqual([]);
+    expect((await pool!.query("select ended_reason, voice_restore_skipped_at is not null as skipped from number_assignment where workspace_id = $1 order by started_at desc limit 1", [workspaceId])).rows).toEqual([
+      { ended_reason: "detached", skipped: true },
+    ]);
+    expect((await pool!.query("select last_failure_detail from twilio_connection where organization_id = $1", [organizationId])).rows[0].last_failure_detail).toContain("different master key");
+
+    await pool!.query("update twilio_connection set master_key_fingerprint = $2, last_failure_at = null, last_failure_detail = null where organization_id = $1", [organizationId, await masterKeyFingerprint(masterKey)]);
+    const reactivated = await json(
+      new Request(`${baseURL}/api/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: "routing-number-p" }),
+      }),
+    );
+    expect(reactivated.response.status).toBe(200);
+    expect(reactivated.body.workspace).toMatchObject({ state: "Active", trackingNumber: "+14155550116", voiceRestoreNeeded: null });
   });
 
   it("refuses to detach a number outside an Active Workspace", async () => {

@@ -74,6 +74,7 @@ const workspace = {
   destinationNumber: "+14155550101",
   trackingNumber: "+14155550100",
   numberAssignmentStartedAt: "2026-01-01T00:00:00.000Z",
+  voiceRestoreNeeded: null,
   publishedFlowVersion: { version: 1, publishedAt: "2026-01-02T00:00:00.000Z" },
   hasDraft: false,
   recordingEnabled: false,

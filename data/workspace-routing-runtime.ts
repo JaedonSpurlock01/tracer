@@ -41,7 +41,6 @@ export function createWorkspaceRoutingRuntimeParts(
     organizationId,
     twilio,
     masterKey: runtime.masterKey,
-    activeWorkspaceCount: () => workspaces.countActive(),
   });
   return { twilio, integrations, workspaces };
 }

@@ -77,7 +77,7 @@ function handler(places: PlacesClient | null) {
     pool: pool!,
     twilio: fakeTwilio,
     places: places ?? undefined,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }

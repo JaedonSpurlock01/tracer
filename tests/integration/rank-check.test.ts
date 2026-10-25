@@ -28,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encryptSecret } from "@/data/credential-encryption";
 import { DataForSeoClientError, type DataForSeoClient, type DataForSeoSerpItem, type DataForSeoSerpQuery } from "@/data/dataforseo-client";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { checkRankings } from "@/data/rank-check";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 
@@ -130,6 +131,7 @@ beforeAll(async () => {
      values ('fleet-connection', 'fleet', 'fleet@example.com', $1, 'fleet-operator', now(), now(), 40, (date_trunc('month', current_date) - interval '1 month')::date, now(), now())`,
     [await encryptSecret(masterKey, password)],
   );
+    await owner.query("update dataforseo_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
 }, 120_000);
 
 afterAll(async () => {

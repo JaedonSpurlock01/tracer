@@ -93,7 +93,7 @@ const workspacesHandler = () => createWorkspacesHandler({
   database: database(),
   pool: pool!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ pool: pool!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", activeWorkspaceCount: async () => 0 }),
+  integrations: (id) => createIntegrations({ pool: pool!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
 });
 

@@ -43,6 +43,7 @@ const connection: TwilioConnectionRecord = {
   accountSid: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   apiKeySid: "SK11111111111111111111111111111111",
   authTokenConfigured: true,
+  credentialState: "readable",
   accountFriendlyName: "Example Account",
   connectedAt: "2026-10-14T00:00:00.000Z",
   connectedBy: { id: "operator", name: "Operator" },
@@ -81,6 +82,13 @@ describe("provider health", () => {
     }, noTransfers, noAnalysis, noLifecycle)[0];
 
     expect(degraded).toMatchObject({ state: "degraded", identifier: connection.accountSid, lastSuccessAt: connection.lastVerifiedAt, testable: true });
+  });
+
+  it("marks a connection Needs re-entry when its credential is unreadable, ahead of connected or degraded", () => {
+    const unreadable = describeProviderHealth(configured, { ...connection, credentialState: "unreadable" }, noTransfers, noAnalysis, noLifecycle)[0];
+
+    expect(unreadable).toMatchObject({ state: "needs_reentry", identifier: connection.accountSid, testable: false, connectable: false });
+    expect(unreadable.note).toMatch(/different master key/);
   });
 
   it("describes email with an empty allowlist as degraded", () => {
@@ -201,6 +209,7 @@ describe("provider health", () => {
 
   it("describes the Cloudflare connection as not configured, connected, or degraded", () => {
     const cloudflare = {
+      credentialState: "readable" as const,
       accountId: "0123456789abcdef0123456789abcdef",
       connectedAt: "2026-10-20T00:00:00.000Z",
       connectedBy: { id: "operator", name: "Example Operator" },

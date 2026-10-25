@@ -54,7 +54,6 @@ export interface IntegrationsHandlerOptions {
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
-  activeWorkspaceCount: (organizationId: string) => Promise<number>;
   syncSitesLocally?: (organizationId: string) => Promise<SiteSyncResult>;
   checkRankingsLocally?: (organizationId: string) => Promise<RankCheckResult>;
 }
@@ -72,7 +71,7 @@ function errorResponse(error: unknown): Response {
       ? 400
       : error.code === "not_connected"
         ? 404
-        : error.code === "already_connected" || error.code === "active_workspaces" || error.code === "active_site_links"
+        : error.code === "already_connected" || error.code === "active_workspaces" || error.code === "active_site_links" || error.code === "credential_unreadable"
           ? 409
           : error.code === "authentication_failed"
             ? 422
@@ -86,6 +85,12 @@ function errorResponse(error: unknown): Response {
     return response(body, status);
   }
   return response({ error: "invalid_input" }, 400);
+}
+
+/** Reads a JSON body when one was sent; a bodiless POST reads as an empty object. */
+async function optionalBody(request: Request): Promise<Record<string, unknown>> {
+  if (!request.headers.get("content-type")?.includes("application/json")) return {};
+  return readBody(request);
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
@@ -147,7 +152,6 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
         cloudflare: options.cloudflare,
         dataforseo: options.dataforseo,
         masterKey: options.masterKey,
-        activeWorkspaceCount: () => options.activeWorkspaceCount(actor.organizationId),
       });
       const route = new URL(request.url).pathname.replace(/^\/api\/integrations\/?/, "");
       if (request.method === "GET" && route === "") {
@@ -234,8 +238,9 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
         return response({ connection: await integrations.setTwilioAuthToken({ authToken: body.authToken }) });
       }
       if (request.method === "POST" && route === "twilio/disconnect") {
-        await integrations.disconnectTwilio();
-        return response({ disconnected: true });
+        const force = (await optionalBody(request)).force === true;
+        const result = await integrations.disconnectTwilio({ force });
+        return response(force ? { disconnected: true, endedAssignments: result.endedAssignments } : { disconnected: true });
       }
       if (request.method === "POST" && route === "twilio/sync-numbers") {
         return response(await integrations.syncTwilioNumbers());

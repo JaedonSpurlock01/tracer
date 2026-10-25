@@ -44,6 +44,7 @@ import { encryptSecret } from "@/data/credential-encryption";
 import { createIntegrations } from "@/data/integrations";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 import { schema } from "@/data/schema";
@@ -116,7 +117,7 @@ const workspacesHandler = () => createWorkspacesHandler({
   database: database(),
   pool: runtime!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", activeWorkspaceCount: async () => 0 }),
+  integrations: (id) => createIntegrations({ pool: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
   recordingBucket: r2,
   masterKey,
@@ -246,6 +247,7 @@ beforeAll(async () => {
      values ('purge-connection', $1, 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $2, $3, now(), now(), now())`,
     [organizationId, await encryptSecret(masterKey, "purge-api-key-secret"), operatorId],
   );
+    await owner.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await owner.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
   await owner.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, analysis_enabled, created_at, updated_at)

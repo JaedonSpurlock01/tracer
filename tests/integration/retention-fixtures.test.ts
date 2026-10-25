@@ -32,6 +32,7 @@ import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { createRetentionFixtures, RetentionFixtureError, type RetentionFixtureObjects } from "@/data/retention-fixtures";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
@@ -115,6 +116,7 @@ beforeAll(async () => {
      values ('fleet-connection', 'fleet', 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $1, 'fleet-operator', now(), now(), now())`,
     [await encryptSecret(masterKey, "fixture-api-key-secret")],
   );
+  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   await pool.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('north-number', 'fleet', 'PN${"1".repeat(32)}', '+14155550101', 'Tracking Number', true, now(), now(), now(), now())`,

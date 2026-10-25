@@ -4,8 +4,11 @@
  * @brief  Defines the Organization integration error.
  *
  * @description
- *  Shared by the Twilio and Cloudflare connection services and mapped to
- *  HTTP status codes by the Integrations handler.
+ *  Shared by the Twilio, Cloudflare, and DataForSEO connection services and
+ *  mapped to HTTP status codes by the Integrations handler.
+ *  credential_unreadable means the stored secret was sealed under a
+ *  different master key than the deployment holds now; the Operator
+ *  recovers by re-entering the credential or disconnecting.
  *
  * @remarks
  *  Lives apart from the services so the Cloudflare connection module and
@@ -22,6 +25,7 @@
 export type IntegrationsErrorCode =
   | "invalid_input"
   | "master_key_missing"
+  | "credential_unreadable"
   | "not_connected"
   | "already_connected"
   | "authentication_failed"

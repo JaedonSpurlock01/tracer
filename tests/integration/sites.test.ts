@@ -74,7 +74,7 @@ function handler() {
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }

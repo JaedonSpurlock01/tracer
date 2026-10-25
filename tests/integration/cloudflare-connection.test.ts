@@ -90,19 +90,18 @@ const auth = () => createTracerAuth({
   baseURL: "http://localhost:3000",
 });
 
-function handler() {
+function handler(overrides: { masterKey?: string } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
     database: database(),
     pool: pool!,
     twilio: fakeTwilio,
     cloudflare: fakeCloudflare,
-    masterKey,
+    masterKey: overrides.masterKey ?? masterKey,
     configuration: { twilioMasterKey: true, hyperdrive: true, email: true, emailFrom: "auth@example.com", emailAllowlistCount: 1, r2: false, r2Bucket: null, openai: false, triggerdev: false },
     email: { async send(message) { messages.push(message); return { messageId: `email-${messages.length}` }; } },
     emailFrom: "auth@example.com",
     allowedRecipients: new Set(["operator@example.com"]),
-    activeWorkspaceCount: async () => 0,
   });
 }
 
@@ -119,8 +118,8 @@ async function signIn(email: string): Promise<string> {
   return (verify.headers.get("set-cookie") ?? "").split(";", 1)[0];
 }
 
-async function json(request: Request): Promise<{ response: Response; body: Record<string, unknown> }> {
-  const response = await handler()(request);
+async function json(request: Request, routeHandler = handler()): Promise<{ response: Response; body: Record<string, unknown> }> {
+  const response = await routeHandler(request);
   return { response, body: await response.json() as Record<string, unknown> };
 }
 
@@ -271,6 +270,24 @@ describe.sequential("Organization Cloudflare connection", () => {
     verifiedTokens.length = 0;
     await json(post(cookie, "cloudflare/test"));
     expect(verifiedTokens).toEqual([secondToken]);
+  });
+
+  it("reports Needs re-entry under a different master key, records it when a sync is attempted, and recovers on rotation", async () => {
+    const cookie = await signIn("operator@example.com");
+    const rotatedKey = "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=";
+    const underRotatedKey = handler({ masterKey: rotatedKey });
+    const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }), underRotatedKey);
+    expect(health.body.cloudflare).toMatchObject({ credentialState: "unreadable" });
+    expect((health.body.providers as Array<{ id: string; state: string }>).find((provider) => provider.id === "cloudflare")?.state).toBe("needs_reentry");
+    const synced = await json(post(cookie, "cloudflare/sync"), underRotatedKey);
+    expect(synced.response.status).toBe(409);
+    expect(synced.body).toMatchObject({ error: "credential_unreadable" });
+    const recorded = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }), underRotatedKey);
+    expect(recorded.body.cloudflare).toMatchObject({ lastFailureDetail: expect.stringContaining("different master key") });
+    const rotated = await json(post(cookie, "cloudflare/rotate", { apiToken: secondToken }), underRotatedKey);
+    expect(rotated.response.status).toBe(200);
+    expect(rotated.body.connection).toMatchObject({ credentialState: "readable", lastFailureAt: null });
+    expect((await json(post(cookie, "cloudflare/rotate", { apiToken: secondToken }))).body.connection).toMatchObject({ credentialState: "readable" });
   });
 
   it("syncs Sites, marking a Worker that lost its domains removed and restoring it when they return", async () => {

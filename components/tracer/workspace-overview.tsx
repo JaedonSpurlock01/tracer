@@ -360,6 +360,11 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
               <h2 className="font-semibold">Setup Required</h2>
               <p className="text-sm text-muted-foreground">Finish these requirements before the Workspace can become Active.</p>
             </div>
+            {workspace.voiceRestoreNeeded ? (
+              <p role="alert" className="text-sm text-warning">
+                Tracer could not restore {workspace.voiceRestoreNeeded} in Twilio. Clear its voice URL in the Twilio console or attach it to a Workspace again.
+              </p>
+            ) : null}
             <ul className="grid gap-2">
               {checklist.map((item) => (
                 <li key={item.label} className="flex items-center gap-2 text-sm">

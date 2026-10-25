@@ -32,6 +32,7 @@ import { CloudflareClientError, type CloudflareClient, type CloudflareDailyTraff
 import { createCloudflareConnection } from "@/data/cloudflare-connection";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
+import { masterKeyFingerprint } from "@/data/provider-credential";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
 import type { SitePreviewObjects } from "@/data/site-preview";
 import { syncSites } from "@/data/site-sync";
@@ -197,6 +198,7 @@ beforeAll(async () => {
        values ($1, $2, $3, $4, 'fleet-operator', now(), now(), now(), now())`,
       [`${organizationId}-connection`, organizationId, accountId, await encryptSecret(masterKey, accounts[accountId].token)],
     );
+      await owner.query("update cloudflare_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   }
 }, 120_000);
 

@@ -17,6 +17,9 @@
  *
  * @remarks
  *  Each section is a separate route so it can be linked and bookmarked.
+ *  When a number left the Workspace without its Twilio voice settings
+ *  restored (an Unreadable credential or a forced disconnect), the Number
+ *  page says so until the number is attached again.
  *  Detach Number returns the Workspace to Setup Required because an Active
  *  Workspace always has exactly one active Number Assignment.
  *
@@ -435,6 +438,11 @@ export default function WorkspaceSettingsView({
                     <Link className="underline" href={`/workspaces/${workspace.id}/flow`}>
                       Edit the Destination Number in the Call Flow
                     </Link>
+                  ) : null}
+                  {workspace.voiceRestoreNeeded ? (
+                    <p role="alert" className="text-sm text-warning">
+                      Tracer could not restore {workspace.voiceRestoreNeeded} in Twilio. Clear its voice URL in the Twilio console or attach it to a Workspace again.
+                    </p>
                   ) : null}
                   {detachError ? <p role="alert">{detachError}</p> : null}
                   <div className="flex flex-wrap gap-2">

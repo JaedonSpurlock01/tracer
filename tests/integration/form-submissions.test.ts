@@ -90,7 +90,7 @@ function handler() {
     pool: pool!,
     email: forwardingEmail,
     twilio: fakeTwilio,
-    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey, activeWorkspaceCount: async () => 0 }),
+    integrations: (orgId) => createIntegrations({ pool: pool!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
   });
 }
