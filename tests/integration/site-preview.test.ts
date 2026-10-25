@@ -25,12 +25,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { CloudflareClientError, type CloudflareClient } from "@/data/cloudflare-client";
 import { upsertDiscoveredSites } from "@/data/cloudflare-connection";
@@ -48,8 +47,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 const viewerId = "viewer-user-id";
 const messages: TransactionalEmailMessage[] = [];
@@ -105,7 +103,7 @@ const auth = () => createTracerAuth({
 function workspacesHandler(options: { withBucket?: boolean } = {}) {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
@@ -120,7 +118,7 @@ const fullSyncRuns: string[] = [];
 function integrationsHandler(options: { local?: boolean } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     cloudflare,
     masterKey,
@@ -163,32 +161,31 @@ function post(cookie: string, route: string): Request {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
        ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
        ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Active', now(), now()),
        ('workspace-c', $1, 'Blackfoot Paving', 'America/Boise', 'Setup Required', now(), now())`,
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query(
     `insert into cloudflare_connection (id, organization_id, account_id, api_token_ciphertext, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
      values ('connection-id', $1, $2, $3, $4, now(), now(), now(), now())`,
     [organizationId, accountId, await encryptSecret(masterKey, "synthetic-token"), bootstrapped.userId],
   );
-  await pool.query("update cloudflare_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database.query("update cloudflare_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
   const discovered = await e2eFake.listSites({ accountId, apiToken: "synthetic-token" });
-  const client = await pool.connect();
+  const client = await database.pool.connect();
   try {
     await client.query("begin");
     await upsertDiscoveredSites(client, organizationId, discovered, new Date("2026-10-19T12:00:00.000Z"));
@@ -196,20 +193,20 @@ beforeAll(async () => {
   } finally {
     client.release();
   }
-  pavingSiteId = (await pool.query<{ id: string }>("select id from site where script_name = 'asphalt-paving-pocatello'")).rows[0].id;
-  await pool.query("update site set live_version_id = 'e2e-asphalt-paving-pocatello-version-1' where id = $1", [pavingSiteId]);
-  await pool.query(
+  pavingSiteId = (await database.query<{ id: string }>("select id from site where script_name = 'asphalt-paving-pocatello'")).rows[0].id;
+  await database.query("update site set live_version_id = 'e2e-asphalt-paving-pocatello-version-1' where id = $1", [pavingSiteId]);
+  await database.query(
     "insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('link-a', $1, $2, 'workspace-a', now(), $3)",
     [organizationId, pavingSiteId, bootstrapped.userId],
   );
-  await pool.query(
+  await database.query(
     "insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('link-b', $1, (select id from site where script_name = 'asphalt-paving-st-george'), 'workspace-b', now(), $2)",
     [organizationId, bootstrapped.userId],
   );
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -233,7 +230,7 @@ describe.sequential("Site preview routes", () => {
     const second = await workspacesHandler()(post(cookie, "workspace-a/site/preview/refresh"));
     expect(second.status).toBe(200);
     expect(screenshots).toBe(2);
-    expect((await pool!.query("select count(*)::int as count from site_preview where site_id = $1", [pavingSiteId])).rows[0].count).toBe(2);
+    expect((await database!.query("select count(*)::int as count from site_preview where site_id = $1", [pavingSiteId])).rows[0].count).toBe(2);
 
     const served = await workspacesHandler()(get(cookie, "workspace-a/site/preview"));
     expect(served.status).toBe(200);
@@ -258,7 +255,7 @@ describe.sequential("Site preview routes", () => {
     expect(failed.status).toBe(502);
     expect(await failed.json()).toEqual({ error: "provider_unavailable", detail: "Cloudflare request failed (HTTP 503)" });
     unavailable = false;
-    expect((await pool!.query("select last_failure_detail from cloudflare_connection where organization_id = $1", [organizationId])).rows[0].last_failure_detail).toBe("Cloudflare request failed (HTTP 503)");
+    expect((await database!.query("select last_failure_detail from cloudflare_connection where organization_id = $1", [organizationId])).rows[0].last_failure_detail).toBe("Cloudflare request failed (HTTP 503)");
     const withoutBucket = await workspacesHandler({ withBucket: false })(post(cookie, "workspace-a/site/preview/refresh"));
     expect(withoutBucket.status).toBe(503);
   });
@@ -270,13 +267,13 @@ describe.sequential("Site preview routes", () => {
     expect(discoveryOnly.status).toBe(200);
     expect(await discoveryOnly.json()).toEqual({ siteCount: 6, syncedAt: expect.any(String) });
     expect(fullSyncRuns).toEqual([]);
-    expect((await pool!.query("select count(*)::int as count from site_check")).rows[0].count).toBe(0);
+    expect((await database!.query("select count(*)::int as count from site_check")).rows[0].count).toBe(0);
 
     const full = await integrationsHandler({ local: true })(request());
     expect(full.status).toBe(200);
     expect(await full.json()).toEqual({ siteCount: 6, syncedAt: expect.any(String), sync: { sites: 6, synced: 6, failed: 0 } });
     expect(fullSyncRuns).toEqual([organizationId]);
-    expect((await pool!.query("select count(*)::int as count from site_check")).rows[0].count).toBe(6);
-    expect((await pool!.query("select count(distinct site_id)::int as count from site_metric_day")).rows[0].count).toBe(6);
+    expect((await database!.query("select count(*)::int as count from site_check")).rows[0].count).toBe(6);
+    expect((await database!.query("select count(distinct site_id)::int as count from site_metric_day")).rows[0].count).toBe(6);
   });
 });

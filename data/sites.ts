@@ -33,7 +33,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable, Transaction } from "@/data/database";
 
 import { addCalendarDays, analyticsWindow, calendarDateInTimeZone, type AnalyticsRange } from "@/data/analytics-range";
 import { AuthorizationError, type Actor } from "@/data/authorization";
@@ -309,36 +309,21 @@ function weightedVital(rows: MetricRow[], value: (row: MetricRow) => number | nu
   return Math.round((total / weight) * factor) / factor;
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export function createSites(pool: Pool, actor: Actor): Sites {
+export function createSites(database: Database, actor: Actor): Sites {
   const organizationId = actor.organizationId;
-  const workspaces = createReadableWorkspaces(pool, actor);
+  const workspaces = createReadableWorkspaces(database, actor);
   const lock = `tracer:sites:${organizationId}`;
 
   function requireOperator(): void {
     if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   }
 
-  async function selectLinked(client: Pool | PoolClient, workspaceId: string): Promise<SiteRecord | null> {
+  async function selectLinked(client: Queryable, workspaceId: string): Promise<SiteRecord | null> {
     const result = await client.query<SiteRow>(linkedSiteQuery, [organizationId, workspaceId]);
     return result.rows[0] ? toSiteRecord(result.rows[0]) : null;
   }
 
-  async function startLink(client: PoolClient, workspaceId: string, siteId: string, actorUserId: string, now: Date): Promise<void> {
+  async function startLink(client: Transaction, workspaceId: string, siteId: string, actorUserId: string, now: Date): Promise<void> {
     const site = await client.query<{ id: string; linked_workspace_id: string | null }>(
       `select s.id, (select l.workspace_id from site_link l where l.site_id = s.id and l.ended_at is null) as linked_workspace_id
          from site s where s.organization_id = $1 and s.id = $2 and s.removed_at is null for update`,
@@ -354,12 +339,12 @@ export function createSites(pool: Pool, actor: Actor): Sites {
     );
   }
 
-  async function endLink(client: PoolClient, workspaceId: string, now: Date): Promise<boolean> {
+  async function endLink(client: Transaction, workspaceId: string, now: Date): Promise<boolean> {
     const ended = await client.query("update site_link set ended_at = $3 where organization_id = $1 and workspace_id = $2 and ended_at is null", [organizationId, workspaceId, now]);
     return Boolean(ended.rowCount);
   }
 
-  async function requireWorkspace(client: PoolClient, workspaceId: string): Promise<void> {
+  async function requireWorkspace(client: Transaction, workspaceId: string): Promise<void> {
     const workspace = await client.query("select 1 from workspace where organization_id = $1 and id = $2 for update", [organizationId, workspaceId]);
     if (!workspace.rowCount) throw new SitesError("not_found");
   }
@@ -377,7 +362,7 @@ export function createSites(pool: Pool, actor: Actor): Sites {
         where += ` and (s.primary_hostname ilike $${values.length} or s.script_name ilike $${values.length})`;
       }
       values.push((page - 1) * pageSize, pageSize);
-      const result = await pool.query<PickerRow>(
+      const result = await database.query<PickerRow>(
         `select s.id, s.script_name, s.primary_hostname, s.last_deployed_at, s.live_version_id,
                 ${siteHostnamesJsonSql("s")} as hostnames,
                 w.id as workspace_id, w.name as workspace_name,
@@ -417,25 +402,23 @@ export function createSites(pool: Pool, actor: Actor): Sites {
     async findLinked(workspaceId) {
       const workspace = await workspaces.find(workspaceId);
       if (!workspace) return null;
-      return selectLinked(pool, workspace.id);
+      return selectLinked(database, workspace.id);
     },
 
     async link(workspaceId, siteId, actorUserId) {
       requireOperator();
-      return withTransaction(pool, async (client) => {
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+      return database.transaction(async (client) => {
         await requireWorkspace(client, workspaceId);
         await startLink(client, workspaceId, siteId, actorUserId, new Date());
         const linked = await selectLinked(client, workspaceId);
         if (!linked) throw new SitesError("not_found");
         return linked;
-      });
+      }, { lock });
     },
 
     async replace(workspaceId, siteId, actorUserId) {
       requireOperator();
-      return withTransaction(pool, async (client) => {
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+      return database.transaction(async (client) => {
         await requireWorkspace(client, workspaceId);
         const current = await selectLinked(client, workspaceId);
         if (current?.id === siteId) return current;
@@ -451,22 +434,21 @@ export function createSites(pool: Pool, actor: Actor): Sites {
         const linked = await selectLinked(client, workspaceId);
         if (!linked) throw new SitesError("not_found");
         return linked;
-      });
+      }, { lock });
     },
 
     async detach(workspaceId) {
       requireOperator();
-      await withTransaction(pool, async (client) => {
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [lock]);
+      await database.transaction(async (client) => {
         await requireWorkspace(client, workspaceId);
         if (!(await endLink(client, workspaceId, new Date()))) throw new SitesError("not_found");
-      });
+      }, { lock });
     },
 
     async setDomainRenewal(workspaceId, input) {
       requireOperator();
       const domain = parseDomainRenewal(input);
-      const updated = await pool.query<{ domain_registrar: string | null; domain_renewal_cents: number | null; domain_renews_on: string | null }>(
+      const updated = await database.query<{ domain_registrar: string | null; domain_renewal_cents: number | null; domain_renews_on: string | null }>(
         `update site s set domain_registrar = $3, domain_renewal_cents = $4, domain_renews_on = $5::date, updated_at = $6
           from site_link l
          where l.site_id = s.id and l.organization_id = $1 and l.workspace_id = $2 and l.ended_at is null and s.organization_id = $1
@@ -487,15 +469,15 @@ export function createSites(pool: Pool, actor: Actor): Sites {
       const metricsSql = `select day::text as day, visits, page_views, requests, errors, top_paths, referrers, devices, lcp_ms, inp_ms, cls::text as cls
            from site_metric_day where site_id = $1 and day >= $2::date and day <= $3::date order by day`;
       const [site, boundedMetrics] = await Promise.all([
-        pool.query<{ first_day: string | null }>(
+        database.query<{ first_day: string | null }>(
           `select (select min(m.day)::text from site_metric_day m where m.site_id = s.id) as first_day from site s where s.id = $1 and ${readable}`,
           scope,
         ),
-        boundedWindow ? pool.query<MetricRow>(metricsSql, [siteId, boundedWindow.from, boundedWindow.to]) : null,
+        boundedWindow ? database.query<MetricRow>(metricsSql, [siteId, boundedWindow.from, boundedWindow.to]) : null,
       ]);
       if (!site.rows[0]) throw new SitesError("not_found");
       const window = boundedWindow ?? { from: site.rows[0].first_day && site.rows[0].first_day < today ? site.rows[0].first_day : today, to: today };
-      const metrics = boundedMetrics ?? (await pool.query<MetricRow>(metricsSql, [siteId, window.from, window.to]));
+      const metrics = boundedMetrics ?? (await database.query<MetricRow>(metricsSql, [siteId, window.from, window.to]));
       const rows = metrics.rows;
       const byDay = new Map(rows.map((row) => [row.day, row]));
       const daily: SiteSummary["daily"] = [];

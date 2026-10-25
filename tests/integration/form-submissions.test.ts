@@ -26,12 +26,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -46,8 +45,7 @@ import type { TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -87,7 +85,7 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     email: forwardingEmail,
     twilio: fakeTwilio,
     integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
@@ -122,7 +120,7 @@ const dan = { Name: "Dan Whitfield", Phone: "(208) 555-0199", Email: "dan.w@exam
 
 async function post(submissionId: string, fields: Record<string, string>, options: { key?: string | null; page?: string; site?: string } = {}): Promise<{ response: Response; body: Record<string, unknown> }> {
   const key = options.key === undefined ? formKey : options.key;
-  const response = await createFormsHandler({ pool: pool!, email: forwardingEmail })(
+  const response = await createFormsHandler({ database: database!, email: forwardingEmail })(
     new Request("http://localhost:3000/api/forms", {
       method: "POST",
       headers: { "content-type": "application/json", ...(key === null ? {} : { authorization: `Bearer ${key}` }) },
@@ -143,50 +141,49 @@ function viewerActor(): Actor {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
        ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
        ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Active', now(), now())`,
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at) values
        ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     "insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('link-a', $1, 'site-pocatello', 'workspace-a', now(), $2)",
     [organizationId, operatorId],
   );
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
 describe.sequential("Form Submissions", () => {
   it("lets an Operator generate the Organization's one Forms key and refuses a Client Viewer", async () => {
-    expect(() => createFormsKey(pool!, viewerActor())).toThrow();
-    const keys = createFormsKey(pool!, operatorActor());
+    expect(() => createFormsKey(database!, viewerActor())).toThrow();
+    const keys = createFormsKey(database!, operatorActor());
     expect(await keys.status()).toBeNull();
     const generated = await keys.generate();
     expect(generated).toEqual({ key: expect.stringMatching(/^fk_[A-Za-z0-9_-]{32,}$/), createdAt: expect.any(String) });
     formKey = generated.key;
     expect(await keys.status()).toEqual({ createdAt: generated.createdAt });
-    const stored = await pool!.query<{ forms_key_hash: string }>("select forms_key_hash from organization where id = $1", [organizationId]);
+    const stored = await database!.query<{ forms_key_hash: string }>("select forms_key_hash from organization where id = $1", [organizationId]);
     expect(stored.rows[0].forms_key_hash).not.toContain(formKey);
     expect(stored.rows[0].forms_key_hash).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -198,17 +195,17 @@ describe.sequential("Form Submissions", () => {
     expect(unknown.response.status).toBe(404);
     expect(unknown.body).toEqual({ error: "site_unknown" });
     expect((await post("s-nosite", maria, { site: "" })).response.status).toBe(400);
-    await pool!.query("update site_link set ended_at = now() where id = 'link-a'");
+    await database!.query("update site_link set ended_at = now() where id = 'link-a'");
     const unlinked = await post("s-unlinked", maria);
     expect(unlinked.response.status).toBe(409);
     expect(unlinked.body).toEqual({ error: "site_not_linked" });
-    await pool!.query(
+    await database!.query(
       "insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('link-a2', $1, 'site-pocatello', 'workspace-a', now(), $2)",
       [organizationId, operatorId],
     );
     expect((await post("s-noname", { Phone: "(208) 555-0000" })).response.status).toBe(400);
     expect((await post("s-nocontact", { Name: "Nobody" })).response.status).toBe(400);
-    expect((await pool!.query("select count(*)::int as n from form_submission")).rows[0].n).toBe(0);
+    expect((await database!.query("select count(*)::int as n from form_submission")).rows[0].n).toBe(0);
   });
 
   it("stores a submission with no recipients as Not forwarded, then forwards it on Resend from the Site's address", async () => {
@@ -243,14 +240,14 @@ describe.sequential("Form Submissions", () => {
     expect(again.response.status).toBe(200);
     expect(again.body.submission).toMatchObject({ id: ids.first, forward: { status: "Sent" } });
     expect(forwarded).toHaveLength(1);
-    expect((await pool!.query("select count(*)::int as n from form_submission")).rows[0].n).toBe(1);
+    expect((await database!.query("select count(*)::int as n from form_submission")).rows[0].n).toBe(1);
   });
 
   it("forwards the same person's second submission but holds the third until approved and rejects a fourth", async () => {
     const second = await post("s-2", { ...maria, Email: "maria.lopez@other.example", Service: "Asphalt Repair" });
     expect(second.response.status).toBe(201);
     expect(second.body.submission).toMatchObject({ held: false, forward: { status: "Sent" } });
-    expect((await pool!.query("select repeat_of_id from form_submission where submission_id = 's-2'")).rows[0].repeat_of_id).toBe(ids.first);
+    expect((await database!.query("select repeat_of_id from form_submission where submission_id = 's-2'")).rows[0].repeat_of_id).toBe(ids.first);
     expect(forwarded).toHaveLength(2);
 
     const third = await post("s-3", maria);
@@ -275,10 +272,10 @@ describe.sequential("Form Submissions", () => {
     expect(rejected.body.submission).toMatchObject({ id: ids.fourth, held: false, forward: { status: "Rejected" }, effectiveClassification: { classification: "Not Good Lead", source: "review" } });
     expect(forwarded).toHaveLength(3);
 
-    await pool!.query("update form_submission set received_at = received_at - interval '25 hours'");
+    await database!.query("update form_submission set received_at = received_at - interval '25 hours'");
     const fresh = await post("s-5", maria);
     expect(fresh.body.submission).toMatchObject({ held: false, forward: { status: "Sent" } });
-    expect((await pool!.query("select repeat_of_id from form_submission where submission_id = 's-5'")).rows[0].repeat_of_id).toBeNull();
+    expect((await database!.query("select repeat_of_id from form_submission where submission_id = 's-5'")).rows[0].repeat_of_id).toBeNull();
     ids.fresh = (fresh.body.submission as { id: string }).id;
     expect(forwarded).toHaveLength(4);
   });
@@ -338,7 +335,7 @@ describe.sequential("Form Submissions", () => {
   });
 
   it("counts Good Lead Form Submissions beside Calls in analytics and Per Lead revenue", async () => {
-    const analytics = createAnalytics(pool!, operatorActor());
+    const analytics = createAnalytics(database!, operatorActor());
     const summary = await analytics.summary({ workspaceId: "workspace-a", range: { kind: "all" } });
     // first, second (repeat), third (approved), fresh, dan are Good Leads; fourth was rejected.
     expect(summary?.kpis.goodLeads.value).toBe(5);
@@ -351,12 +348,12 @@ describe.sequential("Form Submissions", () => {
     const now = new Date();
     const month = { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
     expect((await json(send(operator, "POST", "workspace-a/deal", { kind: "Per Lead", amountCents: 7500, startedOn: `${month.year}-${String(month.month).padStart(2, "0")}-01` }))).response.status).toBe(201);
-    const monthly = await createCostRevenue(pool!, operatorActor()).monthly(["workspace-a"], month);
+    const monthly = await createCostRevenue(database!, operatorActor()).monthly(["workspace-a"], month);
     expect(monthly["workspace-a"]).toMatchObject({ goodLeads: 5, revenueCents: 5 * 7500 });
   });
 
   it("revokes the Forms key so every Site's POSTs are refused until a new one is generated", async () => {
-    const keys = createFormsKey(pool!, operatorActor());
+    const keys = createFormsKey(database!, operatorActor());
     await keys.revoke();
     expect(await keys.status()).toBeNull();
     expect((await post("s-7", dan)).response.status).toBe(401);

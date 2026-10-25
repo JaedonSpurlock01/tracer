@@ -30,5 +30,5 @@ import type { WorkspaceRecord } from "@/data/workspaces";
 export const findRequestWorkspace = cache(async (id: string): Promise<WorkspaceRecord | null> => {
   const actor = await resolveRequestActor();
   if (actor?.state !== "Active") return null;
-  return withRequestRuntime(({ pool }) => createReadableWorkspaces(pool, actor).find(id));
+  return withRequestRuntime(({ database }) => createReadableWorkspaces(database, actor).find(id));
 });

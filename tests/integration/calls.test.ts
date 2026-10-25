@@ -34,12 +34,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { requireActiveActor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -48,12 +47,11 @@ import { createCallList } from "@/data/calls";
 import { createCallsHandler } from "@/data/calls-handler";
 import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorCookie = "";
 let clientCookie = "";
@@ -62,9 +60,8 @@ const backgroundTasks: Promise<unknown>[] = [];
 const recipients = new Set(["operator@example.com", "client@example.com"]);
 const email = { async send(message: (typeof messages)[number]) { messages.push(message); return { messageId: `email-${messages.length}` }; } };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -75,7 +72,7 @@ const auth = () => createTracerAuth({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -120,7 +117,7 @@ interface ListedCalls {
 }
 
 async function listCalls(cookie: string, query = "") {
-  const response = await createCallsHandler({ auth: auth(), pool: pool! })(new Request(`http://localhost:3000/api/calls${query}`, { headers: { cookie } }));
+  const response = await createCallsHandler({ auth: auth(), database: database! })(new Request(`http://localhost:3000/api/calls${query}`, { headers: { cookie } }));
   return { response, body: (await response.json()) as ListedCalls & { error?: string } };
 }
 
@@ -137,19 +134,19 @@ let seeded = 0;
 
 async function seedWorkspaceRouting(workspaceId: string): Promise<void> {
   seeded += 1;
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
   const trackingNumber = `+1415555${String(seeded).padStart(4, "0")}`;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Call Number', true, now(), now(), now(), now())`,
     [`${workspaceId}-number`, workspace.organization_id, `PN${String(seeded).padStart(32, "0")}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ($1, $2, $3, $4, $5, now(), now())`,
     [`${workspaceId}-assignment`, workspace.organization_id, workspaceId, `${workspaceId}-number`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, $4, now())`,
     [`${workspaceId}-flow`, workspace.organization_id, workspaceId, JSON.stringify(graph)],
   );
@@ -181,12 +178,12 @@ const recordingStates = {
 async function seedCall(input: SeedCall): Promise<void> {
   seeded += 1;
   const sequence = String(seeded).padStart(32, "0");
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
   const state = input.state ?? "Completed";
   const outcome = state === "In Progress" ? null : (input.outcome ?? "Answered");
   const answered = outcome === "Answered";
   const startedAt = input.startedAt ?? new Date(Date.now() - (input.minutesAgo ?? 0) * 60_000).toISOString();
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, started_at, answered_at, ended_at, duration_seconds, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, '+14155550000', $7, $8, $9, $10,
@@ -198,7 +195,7 @@ async function seedCall(input: SeedCall): Promise<void> {
   );
   if (input.recording) {
     const [transfer, waveform] = recordingStates[input.recording];
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               waveform_state, waveform_object_key, waveform_generated_at, transcript_state, transcript_skip_reason, transcript_audio_ms, transcript_cost_usd,
                               transcript_completed_at, lead_assessment_state, created_at, updated_at)
@@ -211,14 +208,14 @@ async function seedCall(input: SeedCall): Promise<void> {
     );
   }
   if (input.assessment) {
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, $5, $6, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
       [`${input.id}-assessment`, workspace.organization_id, input.id, `${input.id}-recording`, input.assessment.classification, input.assessment.score],
     );
   }
   if (input.review) {
-    await pool!.query(
+    await database!.query(
       "insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, $3, now())",
       [input.id, workspace.organization_id, input.review],
     );
@@ -227,11 +224,11 @@ async function seedCall(input: SeedCall): Promise<void> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  ({ organizationId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" }));
-  await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
-  await pool.query(
+  ({ organizationId } = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" }));
+  await database.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
      values ('granted-active', $1, 'Acme Plumbing', 'America/Los_Angeles', 'Active', true, now(), now()),
             ('granted-quiet', $1, 'Quiet Dental', 'UTC', 'Active', true, now(), now()),
@@ -247,8 +244,8 @@ beforeAll(async () => {
   }));
   expect(provisioned.status).toBe(201);
   const clientId = ((await provisioned.json()) as { user: { id: string } }).user.id;
-  await pool.query(`update "user" set timezone = 'America/Denver' where id = $1`, [clientId]);
-  await pool.query(
+  await database.query(`update "user" set timezone = 'America/Denver' where id = $1`, [clientId]);
+  await database.query(
     `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
      values ('cross-organization-grant', 'other-organization-id', 'other-organization-workspace', $1, now())`,
     [clientId],
@@ -263,7 +260,7 @@ beforeAll(async () => {
   await seedCall({ id: "other-organization-call", workspaceId: "other-organization-workspace", minutesAgo: 5 });
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("global Calls authorization", () => {
   it("lists every Organization Call for an Operator, Started descending, and nothing from another Organization", async () => {
@@ -282,13 +279,13 @@ describe.sequential("global Calls authorization", () => {
   });
 
   it("stops listing a Workspace's Calls once its Access Grant is removed", async () => {
-    await pool!.query(`delete from access_grant where workspace_id = 'granted-quiet' and user_id = (select id from "user" where email = 'client@example.com')`);
+    await database!.query(`delete from access_grant where workspace_id = 'granted-quiet' and user_id = (select id from "user" where email = 'client@example.com')`);
     try {
       const { body } = await listCalls(clientCookie);
       expect(body.calls.map((call) => call.id)).toEqual(["assessed-call", "reviewed-call"]);
       expect(body.total).toBe(2);
     } finally {
-      await pool!.query(
+      await database!.query(
         `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
          select 'restored-grant', $1, 'granted-quiet', id, now() from "user" where email = 'client@example.com'`,
         [organizationId],
@@ -346,22 +343,22 @@ describe.sequential("Calls rows", () => {
   });
 
   it("offers the MP3 download by Recording id whenever its MP3 is Stored and media is retained, whatever the waveform state", async () => {
-    await pool!.query(
+    await database!.query(
       "update recording set mp3_state = 'Stored', mp3_object_key = 'recordings/' || id || '.mp3', mp3_size_bytes = 512, mp3_generated_at = now() where id in ('reviewed-call-recording', 'expired-call-recording', 'assessed-call-recording')",
     );
-    await pool!.query("update recording set waveform_state = 'Failed', waveform_object_key = null, waveform_generated_at = null where id = 'assessed-call-recording'");
+    await database!.query("update recording set waveform_state = 'Failed', waveform_object_key = null, waveform_generated_at = null where id = 'assessed-call-recording'");
     const { body } = await listCalls(operatorCookie);
     const byId = new Map(body.calls.map((call) => [call.id, call]));
     expect(byId.get("reviewed-call")).toMatchObject({ recording: "Ready", mp3RecordingId: "reviewed-call-recording" });
     expect(byId.get("assessed-call")).toMatchObject({ mp3RecordingId: "assessed-call-recording" });
     expect(byId.get("expired-call")).toMatchObject({ recording: "Expired", mp3RecordingId: null });
     expect(byId.get("ungranted-call")).toMatchObject({ recording: "Unavailable", mp3RecordingId: null });
-    await pool!.query("update recording set waveform_state = 'Pending' where id = 'assessed-call-recording'");
+    await database!.query("update recording set waveform_state = 'Pending' where id = 'assessed-call-recording'");
     const pending = (await listCalls(operatorCookie)).body.calls.find((call) => call.id === "assessed-call");
     expect(pending).toMatchObject({ recording: "Processing", mp3RecordingId: "assessed-call-recording" });
-    await pool!.query("update recording set mp3_state = 'Failed', mp3_object_key = null, mp3_size_bytes = null where id = 'assessed-call-recording'");
+    await database!.query("update recording set mp3_state = 'Failed', mp3_object_key = null, mp3_size_bytes = null where id = 'assessed-call-recording'");
     expect((await listCalls(operatorCookie)).body.calls.find((call) => call.id === "assessed-call")).toMatchObject({ mp3RecordingId: null });
-    await pool!.query("update recording set waveform_state = 'Stored', waveform_object_key = 'recordings/assessed-call.wav.peaks.json', waveform_generated_at = now(), mp3_state = 'Pending' where id = 'assessed-call-recording'");
+    await database!.query("update recording set waveform_state = 'Stored', waveform_object_key = 'recordings/assessed-call.wav.peaks.json', waveform_generated_at = now(), mp3_state = 'Pending' where id = 'assessed-call-recording'");
   });
 });
 
@@ -386,7 +383,7 @@ describe.sequential("Calls pagination and sorting", () => {
     const { response, body } = await listCalls(clientCookie, `?sort=${encodeURIComponent("c.id; drop table call")}&order=sideways`);
     expect(response.status).toBe(200);
     expect(body.calls.map((call) => call.id)).toEqual(["in-progress-call", "assessed-call", "reviewed-call", "voicemail-call"]);
-    expect((await pool!.query("select count(*)::int as count from call")).rows[0].count).toBeGreaterThan(0);
+    expect((await database!.query("select count(*)::int as count from call")).rows[0].count).toBeGreaterThan(0);
   });
 
   it("pages 25 Calls at a time on the server", async () => {
@@ -476,7 +473,7 @@ describe.sequential("Calls filters", () => {
   });
 
   it("reads the Started date range in the user's timezone globally and the Workspace reporting timezone in Workspace Calls, including the whole last day", async () => {
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
        values ('tokyo-office', $1, 'Tokyo Office', 'Asia/Tokyo', 'Active', true, now(), now())`,
       [organizationId],
@@ -498,7 +495,7 @@ describe.sequential("Calls filters", () => {
   });
 
   it("searches Workspace names case-insensitively and treats LIKE wildcards literally", async () => {
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
        values ('roofing', $1, 'Roof_100% Co', 'UTC', 'Active', true, now(), now())`,
       [organizationId],
@@ -518,7 +515,7 @@ describe.sequential("Calls filters", () => {
   });
 
   it("says whether the unfiltered scope has any Calls so no matches differs from no Calls", async () => {
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
        values ('empty-office', $1, 'Empty Office', 'UTC', 'Active', true, now(), now())`,
       [organizationId],
@@ -530,13 +527,13 @@ describe.sequential("Calls filters", () => {
   });
 
   it("offers only readable Workspaces as Workspace filter options, by name", async () => {
-    const options = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), pool!, new Headers({ cookie }))).workspaceOptions();
+    const options = async (cookie: string) => createCallList(database!, await requireActiveActor(auth(), database!, new Headers({ cookie }))).workspaceOptions();
     expect(await options(clientCookie)).toEqual([{ id: "granted-active", name: "Acme Plumbing" }, { id: "granted-quiet", name: "Quiet Dental" }]);
     expect((await options(operatorCookie)).map((option) => option.name)).toEqual(["Acme Plumbing", "Empty Office", "Gamma HVAC", "Quiet Dental", "Roof_100% Co", "Tokyo Office"]);
   });
 
   it("labels and narrows Recording media an Operator purged as Purged, before Expired, without the MP3 download", async () => {
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
        values ('purge-office', $1, 'Purge Office', 'UTC', 'Active', true, now(), now())`,
       [organizationId],
@@ -545,7 +542,7 @@ describe.sequential("Calls filters", () => {
     await seedCall({ id: "purged-recording-call", workspaceId: "purge-office", minutesAgo: 58, recording: "Stored" });
     await seedCall({ id: "purged-expired-call", workspaceId: "purge-office", minutesAgo: 60 * 24 * 401, recording: "Stored" });
     await seedCall({ id: "unpurged-expired-call", workspaceId: "purge-office", minutesAgo: 60 * 24 * 402, recording: "Stored" });
-    await pool!.query(
+    await database!.query(
       "update recording set mp3_state = 'Stored', mp3_object_key = 'recordings/' || id || '.mp3', mp3_size_bytes = 512, mp3_generated_at = now(), media_purged_at = now() where id in ('purged-recording-call-recording', 'purged-expired-call-recording')",
     );
     const scoped = (filter: string) => listCalls(operatorCookie, `?workspaceId=purge-office${filter}`);
@@ -562,7 +559,7 @@ describe.sequential("Calls condition groups", () => {
   const grouped = (cookie: string, adv: unknown, query = "") => listCalls(cookie, `?adv=${encodeURIComponent(JSON.stringify(adv))}${query}`);
 
   beforeAll(async () => {
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
        values ('grouped-office', $1, 'Grouped Office', 'UTC', 'Active', true, now(), now())`,
       [organizationId],
@@ -613,7 +610,7 @@ describe.sequential("Calls condition groups", () => {
 });
 
 describe.sequential("Call Detail previous and next Call", () => {
-  const callList = async (cookie: string) => createCallList(pool!, await requireActiveActor(auth(), pool!, new Headers({ cookie })));
+  const callList = async (cookie: string) => createCallList(database!, await requireActiveActor(auth(), database!, new Headers({ cookie })));
   const query = (search = "") => callListQueryFromSearchParams(new URLSearchParams(search));
   const neighborIds = (neighbors: { previous: { id: string } | null; next: { id: string } | null } | null) => [neighbors?.previous?.id ?? null, neighbors?.next?.id ?? null];
 

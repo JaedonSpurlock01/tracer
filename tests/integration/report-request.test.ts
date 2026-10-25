@@ -24,18 +24,18 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { migrateDatabase } from "@/data/migrate";
 import { ReportRequestError, resolveReportScope, type ReportScopeRequest } from "@/data/report-request";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 function actor(input: { userId: string; role: Actor["role"]; timezone: string }): Actor {
   return { ...input, organizationId: "fleet", name: input.userId, email: `${input.userId}@example.com`, state: "Active" };
@@ -44,10 +44,10 @@ function actor(input: { userId: string; role: Actor["role"]; timezone: string })
 const operator = actor({ userId: "fleet-operator", role: "Operator", timezone: "America/Chicago" });
 const viewer = actor({ userId: "fleet-viewer", role: "Client Viewer", timezone: "Europe/Berlin" });
 
-const scope = (who: Actor, request: ReportScopeRequest) => resolveReportScope(createReadableWorkspaces(pool!, who), who, request);
+const scope = (who: Actor, request: ReportScopeRequest) => resolveReportScope(createReadableWorkspaces(database!, who), who, request);
 
 async function seedWorkspace(id: string, name: string, timezone: string): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ($1, 'fleet', $2, $3, 'Active', now(), now())`,
     [id, name, timezone],
   );
@@ -55,22 +55,22 @@ async function seedWorkspace(id: string, name: string, timezone: string): Promis
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
+  await database.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York");
   await seedWorkspace("south", "South Roofing", "Asia/Tokyo");
   await seedWorkspace("west", "West Electric", "America/Los_Angeles");
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-viewer', 'fleet-viewer', 'fleet-viewer@example.com', true, 'Active', 'Europe/Berlin', now(), now())`,
   );
   for (const workspaceId of ["north", "south"]) {
-    await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, 'fleet-viewer', now())", [`grant-${workspaceId}`, workspaceId]);
+    await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, 'fleet-viewer', now())", [`grant-${workspaceId}`, workspaceId]);
   }
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 

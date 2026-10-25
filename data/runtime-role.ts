@@ -16,12 +16,12 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Client, Pool } from "pg";
+import type { Queryable } from "@/data/database";
 
 export const runtimeRole = "tracer_app";
 
 export async function provisionRuntimeRole(
-  connection: Client | Pool,
+  connection: Queryable,
   password: string,
 ): Promise<void> {
   if (!/^[A-F0-9]{64}$/.test(password)) {

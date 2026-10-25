@@ -46,7 +46,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool, PoolClient } from "pg";
+import type { Database, Transaction } from "@/data/database";
 
 import { analysisEligibility } from "@/data/analysis-eligibility";
 import { appendCallEvent } from "@/data/call-events";
@@ -59,7 +59,7 @@ import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { TwilioClientError, type TwilioCredential, type TwilioRecordingMedia } from "@/data/twilio-client";
 
 export interface RecordingTransferDependencies {
-  pool: Pool;
+  database: Database;
   masterKey: string;
   twilio: TwilioRecordingMedia;
   objects: RecordingObjects;
@@ -104,7 +104,7 @@ function matches(stored: StoredObject | null, object: StoredObject): boolean {
   return stored?.sizeBytes === object.sizeBytes && stored.sha256 === object.sha256;
 }
 
-async function lockRecording(client: PoolClient, recordingId: string, now: Date): Promise<RecordingRow | undefined> {
+async function lockRecording(client: Transaction, recordingId: string, now: Date): Promise<RecordingRow | undefined> {
   const result = await client.query<RecordingRow>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state, r.transcript_state,
             ${recordingMediaRetainedSql("r", "k.started_at", "$2")} as media_retained,
@@ -123,7 +123,7 @@ async function credential(deps: RecordingTransferDependencies, row: RecordingRow
   return { accountSid: row.account_sid!, apiKeySid: row.api_key_sid!, apiKeySecret: await openSecret(deps.masterKey, { ciphertext: row.api_key_secret_ciphertext!, fingerprint: row.master_key_fingerprint ?? null }) };
 }
 
-async function transcriptDecision(client: PoolClient, row: RecordingRow): Promise<{ state: "Pending" | "Skipped"; skipReason: string | null }> {
+async function transcriptDecision(client: Transaction, row: RecordingRow): Promise<{ state: "Pending" | "Skipped"; skipReason: string | null }> {
   const facts = await client.query<{ analysis_enabled: boolean; source: RecordingSource; duration_seconds: number | null; connected_seconds: number | null; outcome: OutcomeKind | null; graph: unknown }>(
     `select w.analysis_enabled, r.source, r.duration_seconds, ${connectedSecondsSql} as connected_seconds, c.outcome, f.graph
        from recording r
@@ -150,7 +150,7 @@ async function transcriptDecision(client: PoolClient, row: RecordingRow): Promis
   return eligibility.eligible ? { state: "Pending", skipReason: null } : { state: "Skipped", skipReason: eligibility.reason };
 }
 
-async function store(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, progress: Progress): Promise<string> {
+async function store(deps: RecordingTransferDependencies, client: Transaction, row: RecordingRow, progress: Progress): Promise<string> {
   progress.stage = "download";
   const bytes = await deps.twilio.downloadRecording(await credential(deps, row), row.twilio_recording_sid);
   const object = { sizeBytes: bytes.byteLength, sha256: await sha256Hex(bytes) };
@@ -180,7 +180,7 @@ async function store(deps: RecordingTransferDependencies, client: PoolClient, ro
   return transcript.state;
 }
 
-async function cleanUp(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, progress: Progress): Promise<void> {
+async function cleanUp(deps: RecordingTransferDependencies, client: Transaction, row: RecordingRow, progress: Progress): Promise<void> {
   progress.stage = "cleanup";
   await deps.twilio.deleteRecording(await credential(deps, row), row.twilio_recording_sid);
   await client.query(
@@ -195,7 +195,7 @@ function failureReason(error: unknown, stage: FailureStage): string {
   return error instanceof TwilioClientError || error instanceof R2ObjectError || error instanceof RecordingTransferError ? error.message : `Recording ${stage} failed`;
 }
 
-async function recordFailure(deps: RecordingTransferDependencies, client: PoolClient, row: RecordingRow, stage: FailureStage, error: unknown): Promise<void> {
+async function recordFailure(deps: RecordingTransferDependencies, client: Transaction, row: RecordingRow, stage: FailureStage, error: unknown): Promise<void> {
   const now = deps.now();
   await client.query(
     stage === "cleanup"
@@ -211,32 +211,24 @@ async function recordFailure(deps: RecordingTransferDependencies, client: PoolCl
 async function withLockedRecording(
   deps: RecordingTransferDependencies,
   recordingId: string,
-  work: (client: PoolClient, row: RecordingRow, progress: Progress) => Promise<void>,
+  work: (client: Transaction, row: RecordingRow, progress: Progress) => Promise<void>,
 ): Promise<void> {
-  const client = await deps.pool.connect();
   const progress: Progress = { stage: null };
-  try {
-    await client.query("begin");
+  const failure = await deps.database.transaction(async (client) => {
     const row = await lockRecording(client, recordingId, deps.now());
-    if (row) {
-      await client.query("savepoint stage");
-      try {
-        await work(client, row, progress);
-      } catch (error) {
-        if (!progress.stage) throw error;
-        await client.query("rollback to savepoint stage");
-        await recordFailure(deps, client, row, progress.stage, error);
-        await client.query("commit");
-        throw error;
-      }
+    if (!row) return null;
+    await client.query("savepoint stage");
+    try {
+      await work(client, row, progress);
+      return null;
+    } catch (error) {
+      if (!progress.stage) throw error;
+      await client.query("rollback to savepoint stage");
+      await recordFailure(deps, client, row, progress.stage, error);
+      return { error };
     }
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
+  if (failure) throw failure.error;
 }
 
 export async function transferRecording(deps: RecordingTransferDependencies, recordingId: string): Promise<void> {

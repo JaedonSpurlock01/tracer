@@ -26,7 +26,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
 
 import type { Database } from "@/data/database";
 import { createActivity } from "@/data/activity";
@@ -53,7 +52,6 @@ import { createWorkspaces, type WorkspaceListQuery, type WorkspaceRecord } from 
 
 export interface PageRuntime {
   database: Database;
-  pool: Pool;
   masterKey: string | undefined;
   baseURL: string;
   providerConfiguration: ProviderConfiguration;
@@ -80,9 +78,9 @@ export type HomePageData =
       money: HomeMoneyData | null | undefined;
     };
 
-async function homeMoney(pool: Pool, actor: Actor, workspaceIds: string[]): Promise<HomeMoneyData> {
+async function homeMoney(database: Database, actor: Actor, workspaceIds: string[]): Promise<HomeMoneyData> {
   const month = calendarMonth(new Date(), actor.timezone);
-  const monthly = await createCostRevenue(pool, actor).monthly(workspaceIds, month);
+  const monthly = await createCostRevenue(database, actor).monthly(workspaceIds, month);
   const rows = Object.values(monthly);
   return {
     month: monthLabel(month),
@@ -94,15 +92,15 @@ async function homeMoney(pool: Pool, actor: Actor, workspaceIds: string[]): Prom
 /** Home: the readable Workspaces decide the redirect, then analytics, recent Calls, and money load together. */
 export async function loadHomePage(runtime: PageRuntime, actor: Actor, range: AnalyticsRange): Promise<HomePageData> {
   const operator = canManageWorkspaces(actor);
-  const calls = createCallList(runtime.pool, actor);
+  const calls = createCallList(runtime.database, actor);
   const workspaces = await calls.workspaceOptions();
   if (!operator && workspaces.length === 1) return { onlyWorkspaceId: workspaces[0].id };
   if (!operator && workspaces.length === 0) return { noWorkspaces: true };
   if (workspaces.length === 0) return { workspaceCount: 0, summary: null, recentCalls: null, workspaces: [], money: undefined };
   const [summary, recentCalls, money] = await Promise.all([
-    orNull(createAnalytics(runtime.pool, actor).summary({ range })),
+    orNull(createAnalytics(runtime.database, actor).summary({ range })),
     orNull(calls.list({ page: 1, sort: defaultCallSort, filters: emptyCallFilters })),
-    operator ? orNull(homeMoney(runtime.pool, actor, workspaces.map((workspace) => workspace.id))) : undefined,
+    operator ? orNull(homeMoney(runtime.database, actor, workspaces.map((workspace) => workspace.id))) : undefined,
   ]);
   return { workspaceCount: workspaces.length, summary, recentCalls, workspaces, money };
 }
@@ -116,7 +114,7 @@ export interface WorkspacesPageData {
 export async function loadWorkspacesPage(runtime: PageRuntime, actor: Actor, query: WorkspaceListQuery, cloudflare: CloudflareClient): Promise<WorkspacesPageData> {
   const operator = canManageWorkspaces(actor);
   const [initialResult, connection] = await Promise.all([
-    createReadableWorkspaces(runtime.database, actor).list(query).then((result) => withWorkspaceListStats(createAnalytics(runtime.pool, actor), result)),
+    createReadableWorkspaces(runtime.database, actor).list(query).then((result) => withWorkspaceListStats(createAnalytics(runtime.database, actor), result)),
     operator
       ? createCloudflareConnection({ database: runtime.database, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey })
           .getCloudflareConnection()
@@ -158,13 +156,13 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
     integrations: createIntegrations({ database: runtime.database, organizationId, twilio, masterKey: runtime.masterKey }),
     baseURL: runtime.baseURL,
   });
-  const analytics = createAnalytics(runtime.pool, actor);
-  const sites = createSites(runtime.pool, actor);
+  const analytics = createAnalytics(runtime.database, actor);
+  const sites = createSites(runtime.database, actor);
   const operator = canManageWorkspaces(actor);
   const month = calendarMonth(new Date(), workspace.reportingTimezone);
   const [flow, recentCalls, summary, routingHealth, site, money] = await Promise.all([
     routing.getFlow(workspace.id),
-    orNull(createCallDetails(runtime.pool, actor).listRecent(workspace.id).then((calls) => calls ?? [])),
+    orNull(createCallDetails(runtime.database, actor).listRecent(workspace.id).then((calls) => calls ?? [])),
     orNull(analytics.summary({ workspaceId: workspace.id, range })),
     orNull(analytics.routingHealth(workspace.id)),
     orNull(
@@ -172,7 +170,7 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
         if (!linked) return { record: null, summary: null, searchScore: null };
         const [traffic, search] = await Promise.all([
           orNull(sites.summary(linked.id, range, workspace.reportingTimezone)),
-          orNull(siteSearch(runtime.pool, linked.id, workspace.reportingTimezone)),
+          orNull(siteSearch(runtime.database, linked.id, workspace.reportingTimezone)),
         ]);
         return {
           record: siteResponseForActor(actor, linked),
@@ -182,7 +180,7 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
       }),
     ),
     operator
-      ? orNull(createCostRevenue(runtime.pool, actor).monthly([workspace.id], month).then((monthly) => {
+      ? orNull(createCostRevenue(runtime.database, actor).monthly([workspace.id], month).then((monthly) => {
           const row = monthly[workspace.id];
           return row ? { month: monthLabel(month), costCents: row.costCents, profitCents: row.profitCents, deal: row.deal } : null;
         }))
@@ -202,18 +200,18 @@ export interface SitePageData {
 
 /** Site: the Site Link, analytics, connection, and money together, then the Site's traffic and Search together. */
 export async function loadSitePage(runtime: PageRuntime, actor: Actor, workspace: WorkspaceRecord, range: AnalyticsRange, cloudflare: CloudflareClient): Promise<SitePageData> {
-  const sites = createSites(runtime.pool, actor);
+  const sites = createSites(runtime.database, actor);
   const connection = createCloudflareConnection({ database: runtime.database, organizationId: actor.organizationId, cloudflare, masterKey: runtime.masterKey });
   const operator = canManageWorkspaces(actor);
   const month = calendarMonth(new Date(), workspace.reportingTimezone);
   const [site, analytics, cloudflareRecord, money] = await Promise.all([
     sites.findLinked(workspace.id).catch(() => undefined),
-    orNull(createAnalytics(runtime.pool, actor).summary({ workspaceId: workspace.id, range })),
+    orNull(createAnalytics(runtime.database, actor).summary({ workspaceId: workspace.id, range })),
     orNull(connection.getCloudflareConnection()),
-    operator ? orNull(createCostRevenue(runtime.pool, actor).monthly([workspace.id], month).then((monthly) => (monthly[workspace.id] ? { ...monthly[workspace.id], month: monthLabel(month) } : null))) : undefined,
+    operator ? orNull(createCostRevenue(runtime.database, actor).monthly([workspace.id], month).then((monthly) => (monthly[workspace.id] ? { ...monthly[workspace.id], month: monthLabel(month) } : null))) : undefined,
   ]);
   const [summary, search] = site
-    ? await Promise.all([orNull(sites.summary(site.id, range, workspace.reportingTimezone)), orNull(siteSearch(runtime.pool, site.id, workspace.reportingTimezone))])
+    ? await Promise.all([orNull(sites.summary(site.id, range, workspace.reportingTimezone)), orNull(siteSearch(runtime.database, site.id, workspace.reportingTimezone))])
     : [null, undefined];
   return {
     site: site ? siteResponseForActor(actor, site) : site,
@@ -241,7 +239,7 @@ export async function loadIntegrationsPage(runtime: PageRuntime, actor: Actor, c
     dataforseo: clients.dataforseo,
     masterKey: runtime.masterKey,
   });
-  return loadIntegrationsOverview(integrations, runtime.providerConfiguration, createFormsKey(runtime.pool, actor));
+  return loadIntegrationsOverview(integrations, runtime.providerConfiguration, createFormsKey(runtime.database, actor));
 }
 
 export interface CallsPageData {
@@ -251,14 +249,14 @@ export interface CallsPageData {
 
 /** Calls: the page of Calls and the Workspace filter options together. */
 export async function loadCallsPage(runtime: PageRuntime, actor: Actor, query: CallListQuery): Promise<CallsPageData> {
-  const calls = createCallList(runtime.pool, actor);
+  const calls = createCallList(runtime.database, actor);
   const [initialResult, workspaceOptions] = await Promise.all([calls.list(query), calls.workspaceOptions()]);
   return { initialResult, workspaceOptions };
 }
 
 /** Workspace Calls: one page of Calls fixed to the Workspace. */
 export async function loadWorkspaceCallsPage(runtime: PageRuntime, actor: Actor, workspaceId: string, query: CallListQuery): Promise<CallListResult | null> {
-  return createCallList(runtime.pool, actor).list({ ...query, workspaceId });
+  return createCallList(runtime.database, actor).list({ ...query, workspaceId });
 }
 
 export interface ActivityPageData {
@@ -269,8 +267,8 @@ export interface ActivityPageData {
 /** Activity: the first window of entries and the Workspace filter options together. */
 export async function loadActivityPage(runtime: PageRuntime, actor: Actor, filters: CallFilters): Promise<ActivityPageData> {
   const [initialResult, workspaceOptions] = await Promise.all([
-    createActivity(runtime.pool, actor).list({ filters }),
-    createCallList(runtime.pool, actor).workspaceOptions(),
+    createActivity(runtime.database, actor).list({ filters }),
+    createCallList(runtime.database, actor).workspaceOptions(),
   ]);
   return { initialResult, workspaceOptions };
 }

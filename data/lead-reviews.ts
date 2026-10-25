@@ -30,7 +30,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { Actor } from "@/data/authorization";
 import type { LeadClassification, LeadReviewInput } from "@/data/lead-classification";
@@ -55,15 +55,15 @@ function toLeadReview(row: LeadReviewRow): LeadReview {
   return { classification: row.classification, note: row.note, reviewerName: row.reviewer_name, reviewedAt: row.reviewed_at.toISOString() };
 }
 
-export async function findLeadReview(pool: Pool, organizationId: string, callId: string): Promise<LeadReview | null> {
-  const row = (await pool.query<LeadReviewRow>(reviewQuery, [callId, organizationId])).rows[0];
+export async function findLeadReview(database: Database, organizationId: string, callId: string): Promise<LeadReview | null> {
+  const row = (await database.query<LeadReviewRow>(reviewQuery, [callId, organizationId])).rows[0];
   return row ? toLeadReview(row) : null;
 }
 
-export async function saveLeadReview(pool: Pool, actor: Actor, workspaceId: string, callId: string, input: LeadReviewInput): Promise<LeadReview> {
-  const workspace = await createReadableWorkspaces(pool, actor).find(workspaceId);
+export async function saveLeadReview(database: Database, actor: Actor, workspaceId: string, callId: string, input: LeadReviewInput): Promise<LeadReview> {
+  const workspace = await createReadableWorkspaces(database, actor).find(workspaceId);
   if (!workspace) throw new WorkspacesError("not_found");
-  const saved = await pool.query(
+  const saved = await database.query(
     `with saved as (
        insert into lead_review (call_id, organization_id, classification, note, reviewer_user_id, reviewed_at)
        select c.id, c.organization_id, $4, $5, $6, $7 from call c
@@ -79,7 +79,7 @@ export async function saveLeadReview(pool: Pool, actor: Actor, workspaceId: stri
     [callId, actor.organizationId, workspace.id, input.classification, input.note, actor.userId, new Date(), `lead_review_added:${callId}:${randomUUID()}`],
   );
   if (!saved.rowCount) throw new WorkspacesError("not_found");
-  const review = await findLeadReview(pool, actor.organizationId, callId);
+  const review = await findLeadReview(database, actor.organizationId, callId);
   if (!review) throw new WorkspacesError("not_found");
   return review;
 }

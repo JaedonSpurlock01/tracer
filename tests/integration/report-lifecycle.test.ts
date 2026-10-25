@@ -29,11 +29,11 @@
 import { randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { migrateDatabase } from "@/data/migrate";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { sweepReportJobs } from "@/data/report-lifecycle";
@@ -45,8 +45,8 @@ const hourMs = 60 * 60 * 1000;
 const dayMs = 24 * hourMs;
 
 let container: StartedPostgreSqlContainer | undefined;
-let owner: Pool | undefined;
-let runtime: Pool | undefined;
+let owner: OpenedDatabase | undefined;
+let runtime: OpenedDatabase | undefined;
 
 interface FakeR2 extends Pick<ArtifactObjects, "delete" | "abortMultipartUploads"> {
   deletes: string[];
@@ -120,13 +120,13 @@ async function job(id: string): Promise<{ status: string; failure_reason: string
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = createTestPool(container.getConnectionUri());
+  owner = createTestDatabase(container.getConnectionUri());
   const password = "B".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = createTestPool(runtimeUrl.toString());
+  runtime = createTestDatabase(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('report-viewer', 'Report Viewer', 'report-viewer@example.com', true, 'Active', 'America/Chicago', now(), now())`);
 }, 120_000);
@@ -136,8 +136,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await runtime?.end();
-  await owner?.end();
+  await runtime?.close();
+  await owner?.close();
   await container?.stop();
 });
 
@@ -150,7 +150,7 @@ describe("Report job lifecycle sweep", () => {
     const completed = await seedJob({ status: "Completed", requestedAt: before(2 * dayMs + 3_571) });
     const failed = await seedJob({ status: "Failed", requestedAt: before(3 * dayMs + 8_093) });
 
-    const result = await sweepReportJobs({ pool: runtime!, objects: fakeR2() }, now);
+    const result = await sweepReportJobs({ database: runtime!, objects: fakeR2() }, now);
 
     expect(result.failed).toBe(2);
     await expect(job(youngQueued)).resolves.toEqual({ status: "Queued", failure_reason: null });
@@ -160,7 +160,7 @@ describe("Report job lifecycle sweep", () => {
     await expect(job(completed)).resolves.toEqual({ status: "Completed", failure_reason: null });
     await expect(job(failed)).resolves.toEqual({ status: "Failed", failure_reason: "Report generation failed" });
 
-    await expect(sweepReportJobs({ pool: runtime!, objects: fakeR2() }, now)).resolves.toMatchObject({ failed: 0 });
+    await expect(sweepReportJobs({ database: runtime!, objects: fakeR2() }, now)).resolves.toMatchObject({ failed: 0 });
   });
 
   it("deletes jobs whose metadata retention has ended with their artifacts, after deleting their R2 objects and aborting a stale Recording ZIP upload", async () => {
@@ -169,7 +169,7 @@ describe("Report job lifecycle sweep", () => {
     const retained = await seedJob({ status: "Completed", files: ["csv"], requestedAt: before(89 * dayMs + 86_398_100), metadataExpireAt: new Date(now.getTime() + 1_900) });
     const r2 = fakeR2();
 
-    const result = await sweepReportJobs({ pool: runtime!, objects: r2 }, now);
+    const result = await sweepReportJobs({ database: runtime!, objects: r2 }, now);
 
     expect(result).toMatchObject({ purged: 2, objectFailures: 0 });
     await expect(job(report)).resolves.toBeUndefined();
@@ -188,7 +188,7 @@ describe("Report job lifecycle sweep", () => {
     r2.failingKeys.add(`reports/${exportJob}/recordings.zip`);
     r2.failingKeys.add(`reports/${report}/report.pdf`);
 
-    const result = await sweepReportJobs({ pool: runtime!, objects: r2 }, now);
+    const result = await sweepReportJobs({ database: runtime!, objects: r2 }, now);
 
     expect(result).toMatchObject({ purged: 2, objectFailures: 3 });
     expect(r2.deletes).toContain(`reports/${report}/calls.csv`);
@@ -204,12 +204,12 @@ describe("Report job lifecycle sweep", () => {
     }
     const r2 = fakeR2();
 
-    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toMatchObject({ purged: 100 });
+    await expect(sweepReportJobs({ database: runtime!, objects: r2 }, now)).resolves.toMatchObject({ purged: 100 });
     const remaining = await owner!.query<{ id: string }>("select id from report_job order by metadata_expire_at");
     expect(remaining.rows.map(({ id }) => id)).toEqual(ids.slice(100));
     expect(r2.deletes).toHaveLength(100);
 
-    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toMatchObject({ purged: 3 });
+    await expect(sweepReportJobs({ database: runtime!, objects: r2 }, now)).resolves.toMatchObject({ purged: 3 });
     await expect(owner!.query("select id from report_job")).resolves.toMatchObject({ rows: [] });
   });
 
@@ -224,12 +224,12 @@ describe("Report job lifecycle sweep", () => {
     const r2 = fakeR2();
     r2.failingKeys.add(`reports/${failingZip}/recordings.zip`);
 
-    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 1 });
+    await expect(sweepReportJobs({ database: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 1 });
 
     expect(r2.deletes.sort()).toEqual([`reports/${purgedZip}/recordings.zip`, `reports/${failingZip}/recordings.zip`].sort());
     r2.failingKeys.clear();
     r2.deletes.length = 0;
-    await expect(sweepReportJobs({ pool: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 0 });
+    await expect(sweepReportJobs({ database: runtime!, objects: r2 }, now)).resolves.toEqual({ failed: 0, purged: 0, objectFailures: 0 });
     expect(r2.deletes.sort()).toEqual([`reports/${purgedZip}/recordings.zip`, `reports/${failingZip}/recordings.zip`].sort());
     for (const id of [purgedZip, failingZip, oldPurgedZip, naturallyExpired, unexpired]) await expect(job(id)).resolves.toEqual({ status: "Completed", failure_reason: null });
   });

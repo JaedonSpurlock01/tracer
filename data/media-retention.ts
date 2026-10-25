@@ -52,7 +52,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable } from "@/data/database";
 
 import { openSecret } from "@/data/provider-credential";
 import type { ArtifactObjects } from "@/data/r2-objects";
@@ -62,7 +62,7 @@ import type { TwilioRecordingMedia } from "@/data/twilio-client";
 export const mediaRetentionBatchSize = 100;
 
 export interface MediaRemovalDeps {
-  pool: Pool;
+  database: Database;
   objects: Pick<ArtifactObjects, "delete">;
   twilio: Pick<TwilioRecordingMedia, "deleteRecording">;
   masterKey: string;
@@ -80,17 +80,17 @@ type RecordingCopies = {
   master_key_fingerprint: string | null;
 };
 
-export async function deleteRecordingContent(client: Pick<PoolClient, "query">, recordingId: string): Promise<void> {
+export async function deleteRecordingContent(client: Queryable, recordingId: string): Promise<void> {
   await client.query("delete from transcript where recording_id = $1", [recordingId]);
   await client.query("delete from lead_assessment_evidence where lead_assessment_id in (select id from lead_assessment where recording_id = $1)", [recordingId]);
   await client.query("update lead_assessment set rationale = null where recording_id = $1 and rationale is not null", [recordingId]);
 }
 
-async function deleteTwilioCopy(deps: Pick<MediaRemovalDeps, "pool" | "twilio" | "masterKey">, recordingId: string, copies: RecordingCopies, now: Date): Promise<void> {
+async function deleteTwilioCopy(deps: Pick<MediaRemovalDeps, "database" | "twilio" | "masterKey">, recordingId: string, copies: RecordingCopies, now: Date): Promise<void> {
   if (!copies.account_sid || !copies.api_key_sid || !copies.api_key_secret_ciphertext) throw new Error("Twilio is not connected");
   const credential = { accountSid: copies.account_sid, apiKeySid: copies.api_key_sid, apiKeySecret: await openSecret(deps.masterKey, { ciphertext: copies.api_key_secret_ciphertext, fingerprint: copies.master_key_fingerprint ?? null }) };
   await deps.twilio.deleteRecording(credential, copies.twilio_recording_sid);
-  await deps.pool.query(
+  await deps.database.query(
     `update recording
         set twilio_cleanup_state = 'Deleted', twilio_deleted_at = $2, updated_at = $2,
             failure_stage = case when failure_stage = 'cleanup' then null else failure_stage end,
@@ -101,11 +101,11 @@ async function deleteTwilioCopy(deps: Pick<MediaRemovalDeps, "pool" | "twilio" |
 }
 
 export async function deleteRecordingCopies(
-  deps: Pick<MediaRemovalDeps, "pool" | "objects"> & Partial<Pick<MediaRemovalDeps, "twilio" | "masterKey">>,
+  deps: Pick<MediaRemovalDeps, "database" | "objects"> & Partial<Pick<MediaRemovalDeps, "twilio" | "masterKey">>,
   recordingId: string,
   now: Date,
 ): Promise<void> {
-  const copies = (await deps.pool.query<RecordingCopies>(
+  const copies = (await deps.database.query<RecordingCopies>(
     `select r.r2_object_key, r.waveform_object_key, r.mp3_object_key, r.twilio_recording_sid, r.twilio_cleanup_state,
             t.account_sid, t.api_key_sid, t.api_key_secret_ciphertext, t.master_key_fingerprint
        from recording r
@@ -120,28 +120,20 @@ export async function deleteRecordingCopies(
   }
   if (copies.twilio_cleanup_state !== "Deleted") {
     if (!deps.twilio || !deps.masterKey) return;
-    await deleteTwilioCopy({ pool: deps.pool, twilio: deps.twilio, masterKey: deps.masterKey }, recordingId, copies, now);
+    await deleteTwilioCopy({ database: deps.database, twilio: deps.twilio, masterKey: deps.masterKey }, recordingId, copies, now);
   }
-  await deps.pool.query("update recording set media_deleted_at = $2 where id = $1 and media_deleted_at is null", [recordingId, now]);
+  await deps.database.query("update recording set media_deleted_at = $2 where id = $1 and media_deleted_at is null", [recordingId, now]);
 }
 
 async function removeRecordingMedia(deps: MediaRemovalDeps, recordingId: string, now: Date): Promise<void> {
-  const client = await deps.pool.connect();
-  try {
-    await client.query("begin");
+  await deps.database.transaction(async (client) => {
     await deleteRecordingContent(client, recordingId);
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
   await deleteRecordingCopies(deps, recordingId, now);
 }
 
 export async function sweepRecordingMedia(deps: MediaRemovalDeps, now: Date): Promise<{ selected: number; completed: number; failed: number }> {
-  const due = await deps.pool.query<{ id: string }>(
+  const due = await deps.database.query<{ id: string }>(
     `select r.id
        from recording r
        join call c on c.id = r.call_id

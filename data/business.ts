@@ -28,7 +28,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { canManageWorkspaces } from "@/data/workspace-authorization";
@@ -140,19 +140,19 @@ function parsePoint(value: unknown): { latitude: number; longitude: number } | n
   return { latitude, longitude };
 }
 
-export function createBusinesses(pool: Pool, actor: Actor): Businesses {
+export function createBusinesses(database: Database, actor: Actor): Businesses {
   if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   const organizationId = actor.organizationId;
 
   async function requireWorkspace(workspaceId: string): Promise<void> {
-    const workspace = await pool.query("select 1 from workspace where organization_id = $1 and id = $2", [organizationId, workspaceId]);
+    const workspace = await database.query("select 1 from workspace where organization_id = $1 and id = $2", [organizationId, workspaceId]);
     if (!workspace.rowCount) throw new BusinessError("not_found");
   }
 
   return {
     async find(workspaceId) {
       await requireWorkspace(workspaceId);
-      const result = await pool.query<BusinessRow>(`select ${columns} from business where workspace_id = $1 and organization_id = $2`, [workspaceId, organizationId]);
+      const result = await database.query<BusinessRow>(`select ${columns} from business where workspace_id = $1 and organization_id = $2`, [workspaceId, organizationId]);
       return result.rows[0] ? toBusiness(result.rows[0]) : null;
     },
 
@@ -166,7 +166,7 @@ export function createBusinesses(pool: Pool, actor: Actor): Businesses {
       const city = parseText(input.city, 160);
       const point = city === null ? null : parsePoint(input.cityPoint);
       await requireWorkspace(workspaceId);
-      const result = await pool.query<BusinessRow>(
+      const result = await database.query<BusinessRow>(
         `insert into business (id, organization_id, workspace_id, name, first_name, last_name, email, niche, website, city, city_latitude, city_longitude, created_at, updated_at)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
          on conflict (workspace_id) do update set

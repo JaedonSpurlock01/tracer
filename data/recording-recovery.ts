@@ -41,7 +41,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { RecordingProcessing } from "@/data/recording";
 import { recordingMediaRetainedSql } from "@/data/recording-media";
@@ -63,7 +63,7 @@ type StalledRecording = {
 
 export async function sweepStuckRecordings(
   deps: {
-    pool: Pool;
+    database: Database;
     recordingProcessing: RecordingProcessing;
     recordingWaveform: RecordingProcessing;
     recordingTranscription: RecordingProcessing;
@@ -72,7 +72,7 @@ export async function sweepStuckRecordings(
   },
   now: Date,
 ): Promise<{ requested: number; failed: number }> {
-  const result = await deps.pool.query<StalledRecording>(
+  const result = await deps.database.query<StalledRecording>(
     `select r.id, r.organization_id,
             ${recentSql} and r.twilio_cleanup_state <> 'Deleted' as transfer_unfinished,
             ${recentSql} and r.waveform_state <> 'Stored' as waveform_unfinished,

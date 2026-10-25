@@ -44,11 +44,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { createAnalytics, describeWorkspaceAttention, reportAnalyticsSummary, withWorkspaceListStats, type Analytics, type ReportAnalyticsScope } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
@@ -58,7 +58,7 @@ import { createCallList } from "@/data/calls";
 import { migrateDatabase } from "@/data/migrate";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 const now = new Date("2026-10-18T17:00:00Z");
 const sevenDays: AnalyticsRange = { kind: "days", days: 7 };
@@ -81,33 +81,33 @@ const multiViewer = actor({ organizationId: "fleet", userId: "multi-viewer", rol
 const singleViewer = actor({ organizationId: "fleet", userId: "single-viewer", role: "Client Viewer", timezone: "UTC" });
 const dstOperator = actor({ organizationId: "dst", userId: "dst-operator", role: "Operator", timezone: "UTC" });
 
-const analytics = (who: Actor) => createAnalytics(pool!, who, { now: () => now });
+const analytics = (who: Actor) => createAnalytics(database!, who, { now: () => now });
 
 let sequence = 0;
 
 async function seedOrganization(id: string): Promise<void> {
-  await pool!.query("insert into organization (id, name, slug, created_at) values ($1, $1, $1, now())", [id]);
+  await database!.query("insert into organization (id, name, slug, created_at) values ($1, $1, $1, now())", [id]);
 }
 
 async function seedUser(organizationId: string, userId: string, grants: string[]): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ($1, $1, $1 || '@example.com', true, 'Active', 'UTC', now(), now())`,
     [userId],
   );
   for (const workspaceId of grants) {
-    await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, $2, $3, $4, now())", [`${userId}-${workspaceId}`, organizationId, workspaceId, userId]);
+    await database!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, $2, $3, $4, now())", [`${userId}-${workspaceId}`, organizationId, workspaceId, userId]);
   }
 }
 
 async function seedWorkspace(input: { organizationId: string; id: string; name: string; timezone: string; state?: string; trackingNumber?: string }): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
      values ($1, $2, $3, $4, $5, true, now(), now())`,
     [input.id, input.organizationId, input.name, input.timezone, input.state ?? "Active"],
   );
   if (!input.trackingNumber) return;
   await seedAssignment(input.organizationId, input.id, `${input.id}-assignment`, input.trackingNumber, null);
-  await pool!.query(
+  await database!.query(
     "insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, $4, now())",
     [`${input.id}-flow`, input.organizationId, input.id, JSON.stringify(graph)],
   );
@@ -115,12 +115,12 @@ async function seedWorkspace(input: { organizationId: string; id: string; name: 
 
 async function seedAssignment(organizationId: string, workspaceId: string, id: string, phoneNumber: string, endedReason: string | null): Promise<void> {
   sequence += 1;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Tracking Number', true, now(), now(), now(), now())`,
     [`${id}-number`, organizationId, `PN${String(sequence).padStart(32, "0")}`, phoneNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ($1, $2, $3, $4, $5, now() - interval '60 days', case when $6::text is not null then now() - interval '30 days' end, $6, now())`,
     [id, organizationId, workspaceId, `${id}-number`, phoneNumber, endedReason],
@@ -129,7 +129,7 @@ async function seedAssignment(organizationId: string, workspaceId: string, id: s
 
 async function seedVoiceWebhook(organizationId: string, assignmentId: string, receivedAt: string): Promise<void> {
   sequence += 1;
-  await pool!.query(
+  await database!.query(
     `insert into provider_event (id, organization_id, number_assignment_id, idempotency_key, kind, disposition, payload, received_at)
      values ($1, $2, $3, $1, 'voice', 'accepted', '{}', $4)`,
     [`voice-${sequence}`, organizationId, assignmentId, receivedAt],
@@ -152,11 +152,11 @@ interface SeedCall {
 
 async function seedCall(input: SeedCall): Promise<void> {
   sequence += 1;
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
   const inProgress = input.outcome === "In Progress";
   const answered = input.outcome === "Answered";
   const connected = input.connectedSeconds ?? 0;
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, started_at, answered_at, ended_at, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, '+14155550000', '+13125550142', $7, $8, $9, $10::timestamptz,
@@ -166,27 +166,27 @@ async function seedCall(input: SeedCall): Promise<void> {
       inProgress ? "In Progress" : "Completed", inProgress ? null : input.outcome, inProgress ? null : "flow_outcome", input.startedAt, answered, inProgress, connected],
   );
   if (input.forwarded) {
-    await pool!.query(
+    await database!.query(
       `insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, detail, idempotency_key)
        values ($1, $2, $3, 'forwarding_attempted', $4::timestamptz + interval '2 seconds', '{}', 'forwarding_attempted:' || $3)`,
       [workspace.organization_id, input.workspaceId, input.id, input.startedAt],
     );
   }
   if (input.assessment) {
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               waveform_state, transcript_state, transcript_audio_ms, transcript_cost_usd, transcript_completed_at, lead_assessment_state, created_at, updated_at)
        values ($1, $2, $3, $4, $5, $6, $7, 60, 'Stored', $1 || '.wav', 1024, 'checksum', now(), 'Pending', 'Completed', 60000, 0.006, now(), 'Completed', now(), now())`,
       [`${input.id}-recording`, workspace.organization_id, input.workspaceId, input.id, `RE${String(sequence).padStart(32, "0")}`, answered ? "connected" : "voicemail", answered ? 2 : 1],
     );
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, $5, $6, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
       [`${input.id}-assessment`, workspace.organization_id, input.id, `${input.id}-recording`, input.assessment, input.score ?? 61],
     );
   }
   if (input.review) {
-    await pool!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, $3, now())", [input.id, workspace.organization_id, input.review]);
+    await database!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, $3, now())", [input.id, workspace.organization_id, input.review]);
   }
 }
 
@@ -247,7 +247,7 @@ const dstCalls: SeedCall[] = [
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   for (const id of ["fleet", "other", "dst"]) await seedOrganization(id);
   await seedWorkspace({ organizationId: "fleet", id: "north", name: "North Plumbing", timezone: "America/Chicago", trackingNumber: "+14155550101" });
@@ -258,7 +258,7 @@ beforeAll(async () => {
   await seedWorkspace({ organizationId: "dst", id: "dst-chicago", name: "DST Chicago", timezone: "America/Chicago", trackingNumber: "+14155550110" });
   await seedUser("fleet", "multi-viewer", ["north", "south"]);
   await seedUser("fleet", "single-viewer", ["north"]);
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('cross-org', 'other', 'other-workspace', 'multi-viewer', now())");
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('cross-org', 'other', 'other-workspace', 'multi-viewer', now())");
   await seedAssignment("fleet", "south", "south-replaced-assignment", "+14155550199", "replaced");
   await seedVoiceWebhook("fleet", "north-assignment", "2026-10-18T16:55:00Z");
   await seedVoiceWebhook("fleet", "south-replaced-assignment", "2026-09-01T10:00:00Z");
@@ -269,7 +269,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -421,7 +421,7 @@ describe("Workspace performance", () => {
 
 describe("Consistency with Calls", () => {
   const callsFor = async (who: Actor, workspaceId: string | undefined, filters: Partial<CallFilters>) =>
-    (await createCallList(pool!, who).list({ page: 1, sort: defaultCallSort, filters: { ...emptyCallFilters, ...filters }, workspaceId }))!.total;
+    (await createCallList(database!, who).list({ page: 1, sort: defaultCallSort, filters: { ...emptyCallFilters, ...filters }, workspaceId }))!.total;
 
   it("matches the Calls list Total Calls and Good Leads for the same scope and Started dates", async () => {
     const cases: [Actor, string | undefined, AnalyticsRange][] = [
@@ -501,7 +501,7 @@ describe("Workspaces list stats and routing health", () => {
 
 describe("Report analytics", () => {
   const northWeek: ReportAnalyticsScope = { organizationId: "fleet", workspaceIds: ["north"], timeZone: "America/Chicago", window: { from: "2026-10-12", to: "2026-10-18" } };
-  const report = (scope: ReportAnalyticsScope, notableGoodLeadLimit = 10) => reportAnalyticsSummary(pool!, scope, { now, notableGoodLeadLimit });
+  const report = (scope: ReportAnalyticsScope, notableGoodLeadLimit = 10) => reportAnalyticsSummary(database!, scope, { now, notableGoodLeadLimit });
 
   it("compute the dashboard KPIs and Lead Rate over the job's Workspaces, window, and timezone with equal prior comparisons", async () => {
     const summary = await report(northWeek);

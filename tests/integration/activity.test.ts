@@ -30,24 +30,22 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { createActivityHandler } from "@/data/activity-handler";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorCookie = "";
 let clientCookie = "";
@@ -56,9 +54,8 @@ const backgroundTasks: Promise<unknown>[] = [];
 const recipients = new Set(["operator@example.com", "client@example.com"]);
 const email = { async send(message: (typeof messages)[number]) { messages.push(message); return { messageId: `email-${messages.length}` }; } };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -69,7 +66,7 @@ const auth = () => createTracerAuth({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -121,7 +118,7 @@ interface ListedActivity {
 }
 
 async function listActivity(cookie: string, query = "") {
-  const response = await createActivityHandler({ auth: auth(), pool: pool! })(new Request(`http://localhost:3000/api/activity${query}`, { headers: { cookie } }));
+  const response = await createActivityHandler({ auth: auth(), database: database! })(new Request(`http://localhost:3000/api/activity${query}`, { headers: { cookie } }));
   return { response, body: (await response.json()) as ListedActivity & { error?: string } };
 }
 
@@ -141,19 +138,19 @@ let seeded = 0;
 
 async function seedWorkspaceRouting(workspaceId: string): Promise<void> {
   seeded += 1;
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
   const trackingNumber = `+1415555${String(seeded).padStart(4, "0")}`;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Call Number', true, now(), now(), now(), now())`,
     [`${workspaceId}-number`, workspace.organization_id, `PN${String(seeded).padStart(32, "0")}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ($1, $2, $3, $4, $5, now(), now())`,
     [`${workspaceId}-assignment`, workspace.organization_id, workspaceId, `${workspaceId}-number`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, $4, now())`,
     [`${workspaceId}-flow`, workspace.organization_id, workspaceId, JSON.stringify(graph)],
   );
@@ -185,12 +182,12 @@ const recordingStates = {
 async function seedCall(input: SeedCall): Promise<void> {
   seeded += 1;
   const sequence = String(seeded).padStart(32, "0");
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [input.workspaceId])).rows[0];
   const state = input.state ?? "Completed";
   const outcome = state === "In Progress" ? null : (input.outcome ?? "Answered");
   const answered = outcome === "Answered";
   const startedAt = input.startedAt ?? new Date(Date.now() - (input.minutesAgo ?? 0) * 60_000).toISOString();
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, started_at, answered_at, ended_at, duration_seconds, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, '+14155550000', $7, $8, $9, $10,
@@ -202,7 +199,7 @@ async function seedCall(input: SeedCall): Promise<void> {
   );
   if (input.recording) {
     const [transfer, waveform] = recordingStates[input.recording];
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               waveform_state, waveform_object_key, waveform_generated_at, transcript_state, transcript_skip_reason, transcript_audio_ms, transcript_cost_usd,
                               transcript_completed_at, lead_assessment_state, created_at, updated_at)
@@ -215,14 +212,14 @@ async function seedCall(input: SeedCall): Promise<void> {
     );
   }
   if (input.assessment) {
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, $5, $6, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
       [`${input.id}-assessment`, workspace.organization_id, input.id, `${input.id}-recording`, input.assessment.classification, input.assessment.score],
     );
   }
   if (input.review) {
-    await pool!.query(
+    await database!.query(
       "insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, $3, now())",
       [input.id, workspace.organization_id, input.review],
     );
@@ -234,7 +231,7 @@ let operatorId = "";
 
 async function seedEvent(callId: string, kind: string, occurredAt: string, detail: Record<string, string | number> = {}, actorUserId: string | null = null): Promise<void> {
   seeded += 1;
-  await pool!.query(
+  await database!.query(
     `insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, detail, actor_user_id, idempotency_key)
      select organization_id, workspace_id, id, $2, $3, $4, $5, $6 from call where id = $1`,
     [callId, kind, occurredAt, JSON.stringify(detail), actorUserId, `seed:${seeded}`],
@@ -245,7 +242,7 @@ const ago = (minutes: number, plusSeconds = 0) => new Date(Date.now() - minutes 
 
 async function localMidnight(timeZone: string, daysBack: number): Promise<Date> {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
-  const row = await pool!.query<{ at: Date }>("select (($1::date - $2::int)::timestamp at time zone $3) as at", [today, daysBack, timeZone]);
+  const row = await database!.query<{ at: Date }>("select (($1::date - $2::int)::timestamp at time zone $3) as at", [today, daysBack, timeZone]);
   return row.rows[0].at;
 }
 
@@ -265,12 +262,12 @@ async function boundaryCallsInWindow(timeZone: string): Promise<string[]> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  ({ organizationId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" }));
-  operatorId = (await pool.query<{ id: string }>(`select id from "user" where email = 'operator@example.com'`)).rows[0].id;
-  await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
-  await pool.query(
+  ({ organizationId } = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" }));
+  operatorId = (await database.query<{ id: string }>(`select id from "user" where email = 'operator@example.com'`)).rows[0].id;
+  await database.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
      values ('granted-active', $1, 'Acme Plumbing', 'America/Los_Angeles', 'Active', true, now(), now()),
             ('granted-quiet', $1, 'Quiet Dental', 'UTC', 'Active', true, now(), now()),
@@ -286,8 +283,8 @@ beforeAll(async () => {
   }));
   expect(provisioned.status).toBe(201);
   const clientId = ((await provisioned.json()) as { user: { id: string } }).user.id;
-  await pool.query(`update "user" set timezone = 'America/Denver' where id = $1`, [clientId]);
-  await pool.query(
+  await database.query(`update "user" set timezone = 'America/Denver' where id = $1`, [clientId]);
+  await database.query(
     `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
      values ('cross-organization-grant', 'other-organization-id', 'other-organization-workspace', $1, now())`,
     [clientId],
@@ -336,7 +333,7 @@ beforeAll(async () => {
   await seedCall({ id: "after-midnight-call", workspaceId: "granted-active", startedAt: "2025-03-01T06:30:00.000Z" });
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Activity authorization", () => {
   it("lists every Organization Call in the window for an Operator as private, uncached data, and nothing from another Organization", async () => {
@@ -453,7 +450,7 @@ describe.sequential("Activity window and Load more", () => {
       expect(ids(refreshed.body)).toEqual(["new-call", ...ids(first.body)]);
       expect(refreshed.body.hasMore).toBe(true);
     } finally {
-      await pool!.query("delete from call where id = 'new-call'");
+      await database!.query("delete from call where id = 'new-call'");
     }
   });
 

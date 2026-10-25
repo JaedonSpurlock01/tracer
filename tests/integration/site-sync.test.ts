@@ -23,12 +23,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase, createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { CloudflareClientError, type CloudflareClient, type CloudflareDailyTraffic, type CloudflareDeployment, type CloudflareSite } from "@/data/cloudflare-client";
@@ -48,9 +47,8 @@ const fleetToken = "fleet-synthetic-cloudflare-token";
 const soloToken = "solo-synthetic-cloudflare-token";
 
 let container: StartedPostgreSqlContainer | undefined;
-let owner: Pool | undefined;
-let runtime: Pool | undefined;
-let runtimeDatabase: Database | undefined;
+let owner: OpenedDatabase | undefined;
+let runtime: OpenedDatabase | undefined;
 
 function site(scriptName: string, apex: string, siteTag: string): CloudflareSite {
   return {
@@ -153,7 +151,7 @@ function operator(): Actor {
 }
 
 async function sync(now: Date, organizationId?: string) {
-  return syncSites({ database: runtimeDatabase!, cloudflare, objects, masterKey, fetch: uptimeFetch, now, organizationId });
+  return syncSites({ database: runtime!, cloudflare, objects, masterKey, fetch: uptimeFetch, now, organizationId });
 }
 
 async function count(table: string, siteId: string): Promise<number> {
@@ -182,14 +180,13 @@ const thirdRun = new Date(firstRun.getTime() + 2 * 60 * 60 * 1000);
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = createTestPool(container.getConnectionUri());
+  owner = createTestDatabase(container.getConnectionUri());
   const password = "C".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtimeDatabase = createTestDatabase(runtimeUrl.toString());
-  runtime = runtimeDatabase.pool;
+  runtime = createTestDatabase(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now()), ('solo', 'solo', 'solo', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await owner.query("insert into member (id, organization_id, user_id, role, created_at) values ('fleet-operator-membership', 'fleet', 'fleet-operator', 'owner', now())");
@@ -208,8 +205,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await runtime?.end();
-  await owner?.end();
+  await runtime?.close();
+  await owner?.close();
   await container?.stop();
 });
 
@@ -325,7 +322,7 @@ describe.sequential("Site sync", () => {
 
     const picker = await sites.listForPicker({ search: "paving" });
     expect(picker.sites).toEqual([expect.objectContaining({ id: siteIds.paving, health: "Warning", healthReason: "No visits for 48 hours" })]);
-    const listed = await createCloudflareConnection({ database: runtimeDatabase!, organizationId: "fleet", cloudflare, masterKey }).listCloudflareSites();
+    const listed = await createCloudflareConnection({ database: runtime!, organizationId: "fleet", cloudflare, masterKey }).listCloudflareSites();
     expect(listed.map((entry) => [entry.scriptName, entry.health, entry.healthReason])).toEqual([["paving", "Warning", "No visits for 48 hours"], ["roofing", "Down", "Two consecutive checks failed"]]);
     const stats = await analytics.workspaceListStats(["north", "south"]);
     expect(stats.north.siteHealth).toBe("Warning");

@@ -28,7 +28,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { describeSiteHealth, type SiteHealth, type SiteHealthDescription, type SiteHealthInput } from "@/data/site-health";
 
@@ -63,9 +63,9 @@ export function siteHealthFromRow(row: SiteHealthRow): SiteHealthDescription {
   });
 }
 
-export async function siteHealthForWorkspaces(pool: Pool, organizationId: string, workspaceIds: string[]): Promise<Record<string, SiteHealth>> {
+export async function siteHealthForWorkspaces(database: Database, organizationId: string, workspaceIds: string[]): Promise<Record<string, SiteHealth>> {
   if (workspaceIds.length === 0) return {};
-  const result = await pool.query<SiteHealthRow & { workspace_id: string }>(
+  const result = await database.query<SiteHealthRow & { workspace_id: string }>(
     `select l.workspace_id, c.last_synced_at, ${siteHealthInputJsonSql("s")} as health_input
        from site_link l
        join site s on s.id = l.site_id

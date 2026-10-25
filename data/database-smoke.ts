@@ -18,28 +18,29 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { createOrganizationRepository } from "@/data/organization-repository";
 
-export async function smokeDatabase(pool: Pool): Promise<void> {
-  const client = await pool.connect();
+/** Thrown inside the smoke transaction so the module rolls its write back. */
+class SmokeRollback extends Error {}
 
-  try {
-    await client.query("begin");
+export async function smokeDatabase(database: Database): Promise<void> {
+  await database
+    .transaction(async (client) => {
+      const repository = createOrganizationRepository(client);
+      const created = await repository.create({
+        name: "Tracer Staging Smoke",
+        slug: `tracer-staging-smoke-${randomUUID()}`,
+      });
+      const found = await repository.findById(created.id);
 
-    const repository = createOrganizationRepository(client);
-    const created = await repository.create({
-      name: "Tracer Staging Smoke",
-      slug: `tracer-staging-smoke-${randomUUID()}`,
+      if (!found) {
+        throw new Error("Organization smoke read did not return the created record");
+      }
+      throw new SmokeRollback();
+    })
+    .catch((error: unknown) => {
+      if (!(error instanceof SmokeRollback)) throw error;
     });
-    const found = await repository.findById(created.id);
-
-    if (!found) {
-      throw new Error("Organization smoke read did not return the created record");
-    }
-  } finally {
-    await client.query("rollback");
-    client.release();
-  }
 }

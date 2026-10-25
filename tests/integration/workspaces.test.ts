@@ -17,12 +17,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
@@ -34,8 +33,7 @@ import { createWorkspaces } from "@/data/workspaces";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let firstOrganizationId = "";
 let firstOperatorId = "";
 let secondOrganizationId = "";
@@ -63,7 +61,7 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     integrations: (organizationId) => createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
@@ -91,35 +89,34 @@ async function json(request: Request): Promise<{ response: Response; body: Recor
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const first = await bootstrapInitialOperator(pool, { email: "first@example.com", name: "First Operator", timezone: "America/Chicago" });
+  const first = await bootstrapInitialOperator(database, { email: "first@example.com", name: "First Operator", timezone: "America/Chicago" });
   firstOrganizationId = first.organizationId;
   firstOperatorId = first.userId;
   secondOrganizationId = "second-organization-id";
-  await pool.query(
+  await database.query(
     `insert into organization (id, name, slug, created_at) values ($1, 'Second Organization', 'second-organization', now())`,
     [secondOrganizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ('second-operator-id', 'Second Operator', 'second@example.com', false, 'Active', 'UTC', now(), now())`,
   );
-  await pool.query(
+  await database.query(
     `insert into member (id, organization_id, user_id, role, created_at) values ('second-membership-id', $1, 'second-operator-id', 'owner', now())`,
     [secondOrganizationId],
   );
   viewerId = "viewer-user-id";
-  await pool!.query(
+  await database!.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool!.query(
+  await database!.query(
     `insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())`,
     [firstOrganizationId, viewerId],
   );
-  await pool!.query(
+  await database!.query(
     `insert into twilio_connection
        (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext,
         connected_by_user_id, connected_at, created_at, updated_at)
@@ -127,8 +124,8 @@ beforeAll(async () => {
              'SK11111111111111111111111111111111', 'v1:placeholder-ciphertext', $2, now(), now(), now())`,
     [firstOrganizationId, firstOperatorId],
   );
-  await pool!.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
-  await pool!.query(
+  await database!.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database!.query(
     `insert into twilio_number
        (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable,
         first_seen_at, last_seen_at, created_at, updated_at)
@@ -139,7 +136,7 @@ beforeAll(async () => {
   );
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Workspaces", () => {
   it("requires authentication and limits ungranted Client Viewers to an empty read scope", async () => {
@@ -169,13 +166,13 @@ describe.sequential("Workspaces", () => {
     const id = (created.body.workspace as { id: string }).id;
     const startedAt = "2026-01-02T03:04:05.000Z";
     const publishedAt = "2026-01-03T04:05:06.000Z";
-    await pool!.query(
+    await database!.query(
       `insert into number_assignment
          (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
        values ('metadata-assignment-id', $1, $2, 'first-number-1', '+14155550101', $3, $3)`,
       [firstOrganizationId, id, startedAt],
     );
-    await pool!.query(
+    await database!.query(
       `insert into flow_version
          (id, organization_id, workspace_id, version, graph, published_at)
        values
@@ -183,7 +180,7 @@ describe.sequential("Workspaces", () => {
          ('metadata-flow-v2', $1, $2, 2, '{"version":1,"nodes":[],"edges":[]}', $4)`,
       [firstOrganizationId, id, publishedAt, "2026-01-04T05:06:07.000Z"],
     );
-    await pool!.query(
+    await database!.query(
       `insert into call_flow_draft
          (id, organization_id, workspace_id, graph, created_at, updated_at)
        values ('metadata-draft-id', $1, $2, '{"version":1,"nodes":[],"edges":[]}', now(), now())`,
@@ -236,19 +233,19 @@ describe.sequential("Workspaces", () => {
     const id = (listed.body.workspaces as Array<{ id: string }>)[0].id;
     const updated = await json(new Request(`http://localhost:3000/api/workspaces/${id}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Alpha Updated", reportingTimezone: "UTC" }) }));
     expect(updated.body.workspace).toMatchObject({ name: "Alpha Updated", reportingTimezone: "UTC" });
-    const beforeConnection = await pool!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId]);
-    const beforeNumbers = await pool!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId]);
+    const beforeConnection = await database!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId]);
+    const beforeNumbers = await database!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId]);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const archived = await json(new Request(`http://localhost:3000/api/workspaces/${id}/archive`, { method: "POST", headers: { cookie } }));
     expect(archived.body.workspace).toMatchObject({ state: "Archived" });
     expect((archived.body.workspace as { archivedAt: string }).archivedAt).toEqual(expect.any(String));
-    expect((await pool!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId])).rows).toEqual(beforeConnection.rows);
-    expect((await pool!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId])).rows).toEqual(beforeNumbers.rows);
+    expect((await database!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId])).rows).toEqual(beforeConnection.rows);
+    expect((await database!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId])).rows).toEqual(beforeNumbers.rows);
     expect((await json(new Request(`http://localhost:3000/api/workspaces/${id}/archive`, { method: "POST", headers: { cookie } }))).response.status).toBe(409);
     const restored = await json(new Request(`http://localhost:3000/api/workspaces/${id}/restore`, { method: "POST", headers: { cookie } }));
     expect(restored.body.workspace).toMatchObject({ state: "Setup Required", archivedAt: null });
-    expect((await pool!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId])).rows).toEqual(beforeConnection.rows);
-    expect((await pool!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId])).rows).toEqual(beforeNumbers.rows);
+    expect((await database!.query("select * from twilio_connection where organization_id = $1", [firstOrganizationId])).rows).toEqual(beforeConnection.rows);
+    expect((await database!.query("select * from twilio_number where organization_id = $1 order by id", [firstOrganizationId])).rows).toEqual(beforeNumbers.rows);
     expect((await json(new Request(`http://localhost:3000/api/workspaces/${id}/restore`, { method: "POST", headers: { cookie } }))).response.status).toBe(409);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();

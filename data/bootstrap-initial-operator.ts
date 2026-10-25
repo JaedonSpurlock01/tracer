@@ -18,7 +18,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Transaction } from "@/data/database";
 
 import { isValidIanaTimezone, normalizeIdentityEmail } from "@/data/auth-policy";
 
@@ -54,7 +54,7 @@ function validateInput(input: BootstrapInitialOperatorInput): BootstrapInitialOp
   return { email, name, timezone };
 }
 
-async function findOrganization(client: PoolClient) {
+async function findOrganization(client: Transaction) {
   const result = await client.query<{
     id: string;
     name: string;
@@ -70,7 +70,7 @@ async function findOrganization(client: PoolClient) {
   return result.rows;
 }
 
-async function findUser(client: PoolClient, email: string) {
+async function findUser(client: Transaction, email: string) {
   const result = await client.query<{
     id: string;
     email: string;
@@ -88,17 +88,11 @@ async function findUser(client: PoolClient, email: string) {
 }
 
 export async function bootstrapInitialOperator(
-  connection: Pool,
+  connection: Database,
   input: BootstrapInitialOperatorInput,
 ): Promise<BootstrapInitialOperatorResult> {
   const validated = validateInput(input);
-  const client = await connection.connect();
-
-  try {
-    await client.query("begin");
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [
-      "tracer:bootstrap:spurlock-labs",
-    ]);
+  return await connection.transaction(async (client) => {
 
     const organizations = await findOrganization(client);
     const users = await findUser(client, validated.email);
@@ -131,7 +125,6 @@ export async function bootstrapInitialOperator(
       membership.rows[0].role === "owner";
 
     if (exactState) {
-      await client.query("commit");
       return { status: "existing", organizationId: organization.id, userId: user.id };
     }
 
@@ -158,12 +151,6 @@ export async function bootstrapInitialOperator(
        values ($1, $2, $3, 'owner', $4)`,
       [randomUUID(), organizationId, userId, now],
     );
-    await client.query("commit");
     return { status: "created", organizationId, userId };
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  }, { lock: "tracer:bootstrap:spurlock-labs" });
 }

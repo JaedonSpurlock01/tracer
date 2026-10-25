@@ -28,10 +28,10 @@
  */
 import { parseArgs } from "node:util";
 
-import pg from "pg";
 
 import { createR2RecordingObjects } from "../data/r2-objects";
 import { createRetentionFixtures } from "../data/retention-fixtures";
+import { openDatabase } from "../data/database";
 
 function requireEnvironment(name: string): string {
   const value = process.env[name];
@@ -54,13 +54,13 @@ if (values.verify && values.remove) throw new Error("Choose one of --verify or -
 
 const databaseUrl = requireEnvironment("DATABASE_MIGRATION_URL");
 const bucket = requireEnvironment("R2_BUCKET");
-const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+const database = openDatabase(databaseUrl, { max: 1 });
 
 try {
   const fixtures = createRetentionFixtures({
     databaseUrl,
     bucket,
-    pool,
+    database,
     objects: createR2RecordingObjects({
       accountId: requireEnvironment("R2_ACCOUNT_ID"),
       accessKeyId: requireEnvironment("R2_ACCESS_KEY_ID"),
@@ -86,5 +86,5 @@ try {
     }
   }
 } finally {
-  await pool.end();
+  await database.close();
 }

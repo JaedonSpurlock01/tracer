@@ -22,12 +22,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { upsertDiscoveredSites } from "@/data/cloudflare-connection";
@@ -42,8 +41,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -72,7 +70,7 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
     baseURL: "http://localhost:3000",
@@ -110,39 +108,38 @@ function operatorActor(): Actor {
 }
 
 async function openLinks(workspaceId: string): Promise<{ site_id: string; ended_at: Date | null }[]> {
-  const result = await pool!.query<{ site_id: string; ended_at: Date | null }>("select site_id, ended_at from site_link where workspace_id = $1 order by started_at", [workspaceId]);
+  const result = await database!.query<{ site_id: string; ended_at: Date | null }>("select site_id, ended_at from site_link where workspace_id = $1 order by started_at", [workspaceId]);
   return result.rows;
 }
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
        ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
        ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Setup Required', now(), now()),
        ('workspace-c', $1, 'Blackfoot Paving', 'America/Boise', 'Setup Required', now(), now())`,
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
-  await pool.query("insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other Org', 'other-org', now())");
-  await pool.query(
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query("insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other Org', 'other-org', now())");
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at)
      values ('other-site-id', 'other-organization-id', 'other-script', 'other.example', 'zone-other', now(), now(), now(), now())`,
   );
   const discovered = await createE2eCloudflareFake().listSites({ accountId: "0123456789abcdef0123456789abcdef", apiToken: "token" });
-  const client = await pool.connect();
+  const client = await database.pool.connect();
   try {
     await client.query("begin");
     await upsertDiscoveredSites(client, organizationId, discovered, new Date("2026-10-19T12:00:00.000Z"));
@@ -150,22 +147,22 @@ beforeAll(async () => {
   } finally {
     client.release();
   }
-  const rows = await pool.query<{ id: string; script_name: string }>("select id, script_name from site where organization_id = $1", [organizationId]);
+  const rows = await database.query<{ id: string; script_name: string }>("select id, script_name from site where organization_id = $1", [organizationId]);
   for (const row of rows.rows) siteIds[row.script_name] = row.id;
-  await pool.query(
+  await database.query(
     `insert into site_deployment (id, site_id, version_id, source, author_email, deployed_at)
      values ('deployment-1', $1, '9f8e7d6c-5b4a-4321-8765-4321fedcba98', 'wrangler', 'operator@example.com', '2026-10-11T23:12:59.000Z'),
             ('deployment-0', $1, '1a2b3c4d-0000-4000-8000-000000000000', 'dash', null, '2026-10-01T09:00:00.000Z')`,
     [siteIds["asphalt-paving-pocatello"]],
   );
-  await pool.query(
+  await database.query(
     `insert into site_deployment (id, site_id, version_id, source, author_email, deployed_at)
      select 'sg-deployment-' || n, $1, 'sg-version-' || lpad(n::text, 2, '0'), 'wrangler', null, timestamptz '2026-09-01T00:00:00Z' + make_interval(days => n)
        from generate_series(1, 11) as n`,
     [siteIds["asphalt-paving-st-george"]],
   );
-  await pool.query("update site set live_version_id = '9f8e7d6c-5b4a-4321-8765-4321fedcba98', last_deployed_at = '2026-10-11T23:12:59.000Z' where id = $1", [siteIds["asphalt-paving-pocatello"]]);
-  await pool.query(
+  await database.query("update site set live_version_id = '9f8e7d6c-5b4a-4321-8765-4321fedcba98', last_deployed_at = '2026-10-11T23:12:59.000Z' where id = $1", [siteIds["asphalt-paving-pocatello"]]);
+  await database.query(
     `insert into site_check (id, site_id, checked_at, status_code, response_ms, ok, error) values
        ('check-0', $1, now() - interval '40 days', null, null, false, 'timeout'),
        ('check-1', $1, now() - interval '3 hours', 503, 900, false, null),
@@ -173,11 +170,11 @@ beforeAll(async () => {
        ('check-3', $1, now() - interval '1 hour', 200, 210, true, null)`,
     [siteIds["asphalt-paving-pocatello"]],
   );
-  await pool.query(
+  await database.query(
     `insert into site_preview (id, site_id, version_id, object_key, captured_at, byte_size) values ('preview-1', $1, '9f8e7d6c-5b4a-4321-8765-4321fedcba98', 'sites/x/preview-9f8e7d6c.jpg', '2026-10-19T12:05:00.000Z', 1024)`,
     [siteIds["asphalt-paving-pocatello"]],
   );
-  await pool.query(
+  await database.query(
     `insert into site_metric_day (id, site_id, day, visits, page_views, requests, errors, top_paths, referrers, devices, lcp_ms, inp_ms, cls, synced_at) values
        ('m-1', $1, current_date, 10, 20, 40, 1, '[["/", 12], ["/services", 5], ["/contact", 3]]', '[["", 7], ["www.google.com", 3]]', '[["mobile", 7], ["desktop", 3]]', 1200, 90, 0.020, now()),
        ('m-2', $1, current_date - 1, 20, 40, 80, 0, '[["/", 25], ["/about", 9], ["/contact", 6]]', '[["", 14], ["www.google.com", 5], ["www.bing.com", 1]]', '[["mobile", 15], ["desktop", 5]]', 1400, 110, 0.040, now()),
@@ -187,13 +184,13 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
 describe.sequential("Sites", () => {
   it("lists the Organization Sites for the Operator picker with link state, search, and paging", async () => {
-    const sites = createSites(pool!, operatorActor());
+    const sites = createSites(database!, operatorActor());
     const firstPage = await sites.listForPicker({});
     expect(firstPage).toMatchObject({ total: 6, page: 1, pageSize: 5 });
     expect(firstPage.sites).toHaveLength(5);
@@ -241,7 +238,7 @@ describe.sequential("Sites", () => {
     const already = await json(post(cookie, "workspace-a/site/link", { siteId: siteIds["asphalt-paving-st-george"] }));
     expect(already.response.status).toBe(409);
     expect(already.body).toEqual({ error: "workspace_already_linked" });
-    const picker = await createSites(pool!, operatorActor()).listForPicker({ search: "pocatello" });
+    const picker = await createSites(database!, operatorActor()).listForPicker({ search: "pocatello" });
     expect(picker.sites[0].linkedWorkspace).toEqual({ id: "workspace-a", name: "Pocatello Paving" });
   });
 
@@ -338,7 +335,7 @@ describe.sequential("Sites", () => {
     await createWorkspaces(database!, organizationId).archive("workspace-c");
     expect((await openLinks("workspace-c")).map((link) => link.ended_at !== null)).toEqual([true, true]);
     expect((await json(post(cookie, "workspace-b/site/link", { siteId: blackfoot }))).response.status).toBe(409);
-    const picker = await createSites(pool!, operatorActor()).listForPicker({ search: "blackfoot" });
+    const picker = await createSites(database!, operatorActor()).listForPicker({ search: "blackfoot" });
     expect(picker.sites[0].linkedWorkspace).toBeNull();
   });
 });

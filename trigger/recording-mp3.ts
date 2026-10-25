@@ -31,17 +31,17 @@ import { createFfmpegMp3Encoder } from "@/data/ffmpeg";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { recordingMp3TaskId } from "@/data/recording-processing";
 import { generateRecordingMp3 } from "@/data/recording-mp3";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingMp3 = task({
   id: recordingMp3TaskId,
   concurrency: { total: 5 },
   run: async (payload: { recordingId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       await generateRecordingMp3(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -54,7 +54,7 @@ export const recordingMp3 = task({
         payload.recordingId,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

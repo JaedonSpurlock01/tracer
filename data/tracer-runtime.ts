@@ -42,7 +42,6 @@
  */
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
-import type { Pool } from "pg";
 import { openDatabase, type Database } from "@/data/database";
 
 import { logRequest } from "@/data/request-log";
@@ -81,8 +80,6 @@ interface AuthBindings {
 export interface TracerRuntime {
   auth: TracerAuth;
   database: Database;
-  /** The Database module's pool, for repositories that have not yet taken a Database. */
-  pool: Pool;
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
@@ -205,7 +202,6 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
     const runtime: TracerRuntime = {
       auth,
       database,
-      pool: database.pool,
       email,
       emailFrom,
       allowedRecipients: allowed,

@@ -20,12 +20,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
@@ -36,8 +35,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 const viewerId = "viewer-user-id";
 const messages: TransactionalEmailMessage[] = [];
@@ -74,7 +72,7 @@ const auth = () => createTracerAuth({
 function handler(places: PlacesClient | null) {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     places: places ?? undefined,
     integrations: (orgId) => createIntegrations({ database: database!, organizationId: orgId, twilio: fakeTwilio, masterKey }),
@@ -107,25 +105,24 @@ function send(cookie: string, method: string, route: string, body?: unknown): Re
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     "insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now())",
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -149,7 +146,7 @@ describe.sequential("Business", () => {
     const again = await json(send(cookie, "PUT", "workspace-a/business", { name: "Pocatello Paving Co", city: "Somewhere typed", cityPoint: null }));
     expect(again.response.status).toBe(200);
     expect(again.body.business).toMatchObject({ name: "Pocatello Paving Co", firstName: null, email: null, website: null, city: "Somewhere typed", cityPoint: null });
-    const rows = await pool!.query("select count(*)::int as count from business where workspace_id = 'workspace-a'");
+    const rows = await database!.query("select count(*)::int as count from business where workspace_id = 'workspace-a'");
     expect(rows.rows[0].count).toBe(1);
     const read = await json(send(cookie, "GET", "workspace-a/business"));
     expect(read.body.business).toMatchObject({ city: "Somewhere typed", cityPoint: null });

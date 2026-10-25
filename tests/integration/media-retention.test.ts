@@ -29,11 +29,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -50,8 +50,8 @@ const expiredStart = "2025-10-18T09:41:22.903Z";
 const unexpiredStart = "2025-10-18T09:41:23.921Z";
 
 let container: StartedPostgreSqlContainer | undefined;
-let owner: Pool | undefined;
-let runtime: Pool | undefined;
+let owner: OpenedDatabase | undefined;
+let runtime: OpenedDatabase | undefined;
 
 interface FakeR2 extends Pick<ArtifactObjects, "delete"> {
   objects: Set<string>;
@@ -96,7 +96,7 @@ function fakeTwilio(): FakeTwilio {
   return twilio;
 }
 
-const sweepDeps = (r2: FakeR2, twilio = fakeTwilio()): MediaRemovalDeps => ({ pool: runtime!, objects: r2, twilio: createTwilioRecordingMedia({ fetch: twilio.fetch }), masterKey });
+const sweepDeps = (r2: FakeR2, twilio = fakeTwilio()): MediaRemovalDeps => ({ database: runtime!, objects: r2, twilio: createTwilioRecordingMedia({ fetch: twilio.fetch }), masterKey });
 
 const objectKeys = (callId: string) => [`recordings/${callId}.wav`, `recordings/${callId}.peaks.json`, `recordings/${callId}.mp3`];
 
@@ -188,8 +188,8 @@ async function mediaState(callId: string): Promise<MediaState> {
   const recordingId = `${callId}-recording`;
   const transcript = await owner!.query("select 1 from transcript where recording_id = $1", [recordingId]);
   const evidence = await owner!.query("select 1 from lead_assessment_evidence where lead_assessment_id = $1", [`${callId}-assessment`]);
-  const assessment = await owner!.query("select classification, score, summary, rationale, input_tokens, output_tokens, cost_usd from lead_assessment where recording_id = $1", [recordingId]);
-  const recording = await owner!.query(
+  const assessment = await owner!.query<NonNullable<MediaState["assessment"]>>("select classification, score, summary, rationale, input_tokens, output_tokens, cost_usd from lead_assessment where recording_id = $1", [recordingId]);
+  const recording = await owner!.query<Record<string, unknown>>(
     `select transfer_state, r2_object_key, size_bytes, waveform_state, waveform_object_key, mp3_state, mp3_object_key, mp3_size_bytes,
             transcript_state, transcript_audio_ms, transcript_cost_usd, lead_assessment_state, media_deleted_at
        from recording where id = $1`,
@@ -201,13 +201,13 @@ async function mediaState(callId: string): Promise<MediaState> {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = createTestPool(container.getConnectionUri());
+  owner = createTestDatabase(container.getConnectionUri());
   const password = "C".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtime = createTestPool(runtimeUrl.toString());
+  runtime = createTestDatabase(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await owner.query(
@@ -237,8 +237,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await runtime?.end();
-  await owner?.end();
+  await runtime?.close();
+  await owner?.close();
   await container?.stop();
 });
 

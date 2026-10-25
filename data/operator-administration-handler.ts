@@ -16,7 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
 import {
@@ -30,7 +30,7 @@ import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface OperatorAdministrationHandlerOptions {
   auth: TracerAuth;
-  pool: Pool;
+  database: Database;
   email: TransactionalEmail;
   emailFrom: string;
   allowedRecipients: ReadonlySet<string>;
@@ -95,8 +95,8 @@ export function createOperatorAdministrationHandler(
   return async (request) => {
     let administration: OperatorAdministration | undefined;
     try {
-      const actor = await requireActiveOperator(options.auth, options.pool, request.headers);
-      administration = createOperatorAdministration(options.pool, actor.organizationId);
+      const actor = await requireActiveOperator(options.auth, options.database, request.headers);
+      administration = createOperatorAdministration(options.database, actor.organizationId);
       const route = new URL(request.url).pathname.replace(/^\/api\/users\/?/, "");
       if (request.method === "GET" && route === "") {
         return response({ users: await administration.list() });

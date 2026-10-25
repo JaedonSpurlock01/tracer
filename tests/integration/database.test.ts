@@ -18,10 +18,10 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { openDatabase, type Database } from "@/data/database";
+import { openDatabase, type OpenedDatabase } from "@/data/database";
 
 let container: StartedPostgreSqlContainer | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let terminator: Client | undefined;
 
 beforeAll(async () => {

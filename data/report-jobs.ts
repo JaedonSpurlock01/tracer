@@ -77,7 +77,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { calendarDateInTimeZone, type AnalyticsWindow } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
@@ -216,23 +216,20 @@ function enforceSelectionLimits(parameters: ReportJobParameters, preview: Report
 }
 
 export async function previewReportJob(
-  pool: Pool,
+  database: Database,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   request: ReportJobRequest,
   now: Date,
 ): Promise<ReportJobPreview> {
-  return previewReportSelection(pool, actor.organizationId, await resolveReportSelection(actor, readable, request, now));
+  return previewReportSelection(database, actor.organizationId, await resolveReportSelection(actor, readable, request, now));
 }
 
-async function insertReportJob(pool: Pool, actor: Actor, kind: ReportJob["kind"], selection: ReportSelection): Promise<{ job: ReportJob; created: boolean }> {
+async function insertReportJob(database: Database, actor: Actor, kind: ReportJob["kind"], selection: ReportSelection): Promise<{ job: ReportJob; created: boolean }> {
   const { workspaceIds, timeZone, parameters, requestedAt: now } = selection;
-  enforceSelectionLimits(parameters, await previewReportSelection(pool, actor.organizationId, selection));
+  enforceSelectionLimits(parameters, await previewReportSelection(database, actor.organizationId, selection));
   const fingerprint = await parametersFingerprint({ kind, workspaceIds, timeZone, parameters });
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`tracer:report-job:${actor.organizationId}:${actor.userId}:${fingerprint}`]);
+  return await database.transaction(async (client) => {
     const existing = (await client.query<ReportJobRow>(
       `select ${jobColumns} from report_job
         where organization_id = $1 and requester_user_id = $2 and fingerprint = $3
@@ -247,59 +244,53 @@ async function insertReportJob(pool: Pool, actor: Actor, kind: ReportJob["kind"]
        returning ${jobColumns}`,
       [randomUUID(), actor.organizationId, actor.userId, kind, workspaceIds, timeZone, JSON.stringify(parameters), fingerprint, now, new Date(now.getTime() + metadataRetentionMs)],
     )).rows[0];
-    await client.query("commit");
     return { job: toReportJob(row), created: !existing };
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  }, { lock: `tracer:report-job:${actor.organizationId}:${actor.userId}:${fingerprint}` });
 }
 
 export async function createReportJob(
-  pool: Pool,
+  database: Database,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   request: ReportJobRequest,
   now: Date,
 ): Promise<{ job: ReportJob; created: boolean }> {
   const selection = await resolveReportSelection(actor, readable, request, now);
-  const scoped = request.kind === "call_export" && request.scope.kind === "global" ? { ...selection, workspaceIds: await reportSelectionWorkspaceIds(pool, actor.organizationId, selection) } : selection;
-  return insertReportJob(pool, actor, request.kind, scoped);
+  const scoped = request.kind === "call_export" && request.scope.kind === "global" ? { ...selection, workspaceIds: await reportSelectionWorkspaceIds(database, actor.organizationId, selection) } : selection;
+  return insertReportJob(database, actor, request.kind, scoped);
 }
 
-async function startReportGeneration(pool: Pool, result: { job: ReportJob; created: boolean }, generation: ReportGeneration): Promise<{ job: ReportJob; created: boolean }> {
+async function startReportGeneration(database: Database, result: { job: ReportJob; created: boolean }, generation: ReportGeneration): Promise<{ job: ReportJob; created: boolean }> {
   if (!result.created) return result;
   try {
     await generation.request(result.job);
   } catch {
-    await failReportJob(pool, result.job.id, "Report generation could not be started");
+    await failReportJob(database, result.job.id, "Report generation could not be started");
     throw new ReportGenerationUnavailableError();
   }
   return result;
 }
 
 export async function requestReportJob(
-  pool: Pool,
+  database: Database,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   request: ReportJobRequest,
   now: Date,
   generation: ReportGeneration,
 ): Promise<{ job: ReportJob; created: boolean }> {
-  return startReportGeneration(pool, await createReportJob(pool, actor, readable, request, now), generation);
+  return startReportGeneration(database, await createReportJob(database, actor, readable, request, now), generation);
 }
 
 export async function regenerateReportJob(
-  pool: Pool,
+  database: Database,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   jobId: string,
   now: Date,
   generation: ReportGeneration,
 ): Promise<{ job: ReportJob; created: boolean } | "not_found" | "not_regenerable"> {
-  const row = (await pool.query<ReportJobRow>(
+  const row = (await database.query<ReportJobRow>(
     `select ${jobColumns} from report_job where id = $1 and organization_id = $2 and requester_user_id = $3 and metadata_expire_at > $4`,
     [jobId, actor.organizationId, actor.userId, now],
   )).rows[0];
@@ -310,7 +301,7 @@ export async function regenerateReportJob(
   const parameters: ReportJobParameters =
     "period" in source.parameters && source.parameters.window ? { ...source.parameters, period: { kind: "custom", ...source.parameters.window } } : source.parameters;
   const selection = { workspaceIds: source.workspaceIds, timeZone: source.timeZone, parameters, requestedAt: now };
-  return startReportGeneration(pool, await insertReportJob(pool, actor, source.kind, selection), generation);
+  return startReportGeneration(database, await insertReportJob(database, actor, source.kind, selection), generation);
 }
 
 export interface ReportArtifact {
@@ -328,19 +319,17 @@ export class ReportMediaRemovedError extends Error {
   }
 }
 
-export async function startReportJob(pool: Pool, jobId: string): Promise<{ job: ReportJob; organizationId: string } | null> {
-  const row = (await pool.query<ReportJobRow & { organization_id: string }>(
+export async function startReportJob(database: Database, jobId: string): Promise<{ job: ReportJob; organizationId: string } | null> {
+  const row = (await database.query<ReportJobRow & { organization_id: string }>(
     `update report_job set status = 'Generating' where id = $1 and status in ('Queued', 'Generating') returning ${jobColumns}, organization_id`,
     [jobId],
   )).rows[0];
   return row ? { job: toReportJob(row), organizationId: row.organization_id } : null;
 }
 
-export async function completeReportJob(pool: Pool, jobId: string, artifacts: readonly ReportArtifact[], now: Date): Promise<void> {
+export async function completeReportJob(database: Database, jobId: string, artifacts: readonly ReportArtifact[], now: Date): Promise<void> {
   const includedRecordingIds = artifacts.find(({ file }) => file === "zip")?.includedRecordingIds ?? null;
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
+  await database.transaction(async (client) => {
     if (includedRecordingIds?.length) {
       const removed = await client.query(
         `select r.id from recording r join call c on c.id = r.call_id
@@ -361,21 +350,15 @@ export async function completeReportJob(pool: Pool, jobId: string, artifacts: re
          from completed, unnest($4::text[], $5::text[], $6::bigint[], $7::text[]) as a(file_kind, r2_key, byte_size, content_type)`,
       [jobId, now, new Date(now.getTime() + artifactRetentionMs), artifacts.map(({ file }) => file), artifacts.map(({ r2Key }) => r2Key), artifacts.map(({ byteSize }) => byteSize), artifacts.map(({ contentType }) => contentType), includedRecordingIds],
     );
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
-export async function failReportJob(pool: Pool, jobId: string, reason: string): Promise<void> {
-  await pool.query("update report_job set status = 'Failed', failure_reason = $2 where id = $1 and status in ('Queued', 'Generating')", [jobId, reason]);
+export async function failReportJob(database: Database, jobId: string, reason: string): Promise<void> {
+  await database.query("update report_job set status = 'Failed', failure_reason = $2 where id = $1 and status in ('Queued', 'Generating')", [jobId, reason]);
 }
 
-export async function listReportJobs(pool: Pool, actor: Actor, now: Date): Promise<ReportJob[]> {
-  const result = await pool.query<ReportJobRow>(
+export async function listReportJobs(database: Database, actor: Actor, now: Date): Promise<ReportJob[]> {
+  const result = await database.query<ReportJobRow>(
     `select ${jobColumns} from report_job
       where organization_id = $1 and requester_user_id = $2 and metadata_expire_at > $3
       order by requested_at desc, id`,
@@ -395,14 +378,14 @@ export interface ReportDownload {
 }
 
 export async function authorizeReportDownload(
-  pool: Pool,
+  database: Database,
   actor: Actor,
   readable: Pick<ReadableWorkspaces, "find">,
   jobId: string,
   file: ReportFileKind,
   now: Date,
 ): Promise<ReportDownload | null> {
-  const row = (await pool.query<{ kind: ReportJob["kind"]; workspace_ids: string[]; time_zone: string; requested_at: Date; r2_key: string; content_type: string }>(
+  const row = (await database.query<{ kind: ReportJob["kind"]; workspace_ids: string[]; time_zone: string; requested_at: Date; r2_key: string; content_type: string }>(
     `select j.kind, j.workspace_ids, j.time_zone, j.requested_at, a.r2_key, a.content_type
        from report_job j
        join report_artifact a on a.job_id = j.id and a.file_kind = $3

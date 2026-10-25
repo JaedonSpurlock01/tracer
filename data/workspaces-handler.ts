@@ -39,7 +39,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
 
 import type { Database } from "@/data/database";
 import { createAnalytics, withWorkspaceListStats } from "@/data/analytics";
@@ -83,7 +82,6 @@ const serviceAreaCountryIso = "us";
 export interface WorkspacesHandlerOptions {
   auth: TracerAuth;
   database: Database;
-  pool: Pool;
   /** Forwards Form Submissions; without it every forward records Forward failed with Resend. */
   email?: TransactionalEmail;
   /** Looks up cities for the Business form; without it the lookup answers 503. */
@@ -185,13 +183,13 @@ function routingInput(body: Record<string, unknown>): RoutingSettingsInput {
 export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
+      const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/workspaces\/?/, "");
       const mediaMatch = route.match(/^([^/]+)\/recordings\/([^/]+)\/(audio|peaks|mp3)$/);
       if (request.method === "GET" && mediaMatch) {
-        const workspace = await createReadableWorkspaces(options.pool, actor).find(mediaMatch[1]);
+        const workspace = await createReadableWorkspaces(options.database, actor).find(mediaMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
-        const media = await findAvailableRecordingMedia(options.pool, { organizationId: actor.organizationId, workspaceId: workspace.id, recordingId: mediaMatch[2] });
+        const media = await findAvailableRecordingMedia(options.database, { organizationId: actor.organizationId, workspaceId: workspace.id, recordingId: mediaMatch[2] });
         const bucket = options.recordingBucket;
         const served =
           !media || !bucket
@@ -210,48 +208,48 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       }
       const recentCallsMatch = route.match(/^([^/]+)\/calls$/);
       if (request.method === "GET" && recentCallsMatch) {
-        const calls = await createCallDetails(options.pool, actor).listRecent(recentCallsMatch[1]);
+        const calls = await createCallDetails(options.database, actor).listRecent(recentCallsMatch[1]);
         if (!calls) throw new WorkspacesError("not_found");
         return Response.json({ calls }, { headers: { "cache-control": "private, no-store" } });
       }
       const callMatch = route.match(/^([^/]+)\/calls\/([^/]+)$/);
       if (request.method === "GET" && callMatch) {
-        const call = await createCallDetails(options.pool, actor).find(callMatch[1], callMatch[2]);
+        const call = await createCallDetails(options.database, actor).find(callMatch[1], callMatch[2]);
         if (!call) throw new WorkspacesError("not_found");
         return Response.json({ call }, { headers: { "cache-control": "private, no-store" } });
       }
       const previewMatch = route.match(/^([^/]+)\/site\/preview$/);
       if (request.method === "GET" && previewMatch) {
-        const workspace = await createReadableWorkspaces(options.pool, actor).find(previewMatch[1]);
+        const workspace = await createReadableWorkspaces(options.database, actor).find(previewMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
-        const site = await createSites(options.pool, actor).findLinked(workspace.id);
+        const site = await createSites(options.database, actor).findLinked(workspace.id);
         const served = site?.latestPreview && options.sitePreviews ? await sitePreviewResponse(options.sitePreviews, site.latestPreview.objectKey) : null;
         if (!served) throw new WorkspacesError("not_found");
         return served;
       }
       const siteReadMatch = route.match(/^([^/]+)\/site\/(keywords|search)$/);
       if (request.method === "GET" && siteReadMatch) {
-        const workspace = await createReadableWorkspaces(options.pool, actor).find(siteReadMatch[1]);
+        const workspace = await createReadableWorkspaces(options.database, actor).find(siteReadMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
-        const site = await createSites(options.pool, actor).findLinked(workspace.id);
+        const site = await createSites(options.database, actor).findLinked(workspace.id);
         if (!site) throw new WorkspacesError("not_found");
-        if (siteReadMatch[2] === "keywords") return response(await createSiteKeywords(options.pool, actor).list(site.id));
-        const search = await siteSearch(options.pool, site.id, workspace.reportingTimezone);
+        if (siteReadMatch[2] === "keywords") return response(await createSiteKeywords(options.database, actor).list(site.id));
+        const search = await siteSearch(options.database, site.id, workspace.reportingTimezone);
         if (!search) throw new WorkspacesError("not_found");
         return response(search);
       }
       const siteMatch = route.match(/^([^/]+)\/site$/);
       if (request.method === "GET" && siteMatch) {
-        const workspace = await createReadableWorkspaces(options.pool, actor).find(siteMatch[1]);
+        const workspace = await createReadableWorkspaces(options.database, actor).find(siteMatch[1]);
         if (!workspace) throw new WorkspacesError("not_found");
-        const sites = createSites(options.pool, actor);
+        const sites = createSites(options.database, actor);
         const site = await sites.findLinked(workspace.id);
         if (!site) return response({ site: null, summary: null });
         const summary = await sites.summary(site.id, analyticsRangeFromSearchParams(new URL(request.url).searchParams), workspace.reportingTimezone);
         return response({ site: siteResponseForActor(actor, site), summary: summaryResponseForActor(actor, summary) });
       }
       if (request.method === "GET" && (route === "" || (route !== "numbers" && route !== "sites" && route !== "places" && /^[^/]+$/.test(route)))) {
-        const readable = createReadableWorkspaces(options.pool, actor);
+        const readable = createReadableWorkspaces(options.database, actor);
         if (route !== "") {
           const workspace = await readable.find(route);
           if (!workspace) throw new WorkspacesError("not_found");
@@ -266,11 +264,11 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
           page: parsePositiveInteger(url.searchParams.get("page")),
           pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
         });
-        return response(await withWorkspaceListStats(createAnalytics(options.pool, actor), listed));
+        return response(await withWorkspaceListStats(createAnalytics(options.database, actor), listed));
       }
       const formsListMatch = route.match(/^([^/]+)\/forms$/);
       if (request.method === "GET" && formsListMatch) {
-        const list = await createFormSubmissions(options.pool, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } }).list(formsListMatch[1]);
+        const list = await createFormSubmissions(options.database, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } }).list(formsListMatch[1]);
         if (!list) throw new WorkspacesError("not_found");
         return response(list);
       }
@@ -279,11 +277,11 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       if (request.method === "PUT" && leadReviewMatch) {
         const input = parseLeadReviewInput(await readBody(request));
         if (!input) throw new WorkspacesError("invalid_input");
-        return response({ leadReview: await saveLeadReview(options.pool, actor, leadReviewMatch[1], leadReviewMatch[2], input) });
+        return response({ leadReview: await saveLeadReview(options.database, actor, leadReviewMatch[1], leadReviewMatch[2], input) });
       }
       const retryMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/analysis\/retry$/);
       if (request.method === "POST" && retryMatch) {
-        const retried = await retryCallAnalysis(options.pool, actor, retryMatch[1], retryMatch[2], {
+        const retried = await retryCallAnalysis(options.database, actor, retryMatch[1], retryMatch[2], {
           transcription: options.recordingTranscription,
           leadAssessment: options.recordingLeadAssessment,
         });
@@ -293,7 +291,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       }
       const purgeMatch = route.match(/^([^/]+)\/calls\/([^/]+)\/media\/purge$/);
       if (request.method === "POST" && purgeMatch) {
-        const purged = await purgeCallMedia({ pool: options.pool, objects: options.recordingBucket, twilio: options.twilioMedia, masterKey: options.masterKey }, actor, purgeMatch[1], purgeMatch[2], new Date());
+        const purged = await purgeCallMedia({ database: options.database, objects: options.recordingBucket, twilio: options.twilioMedia, masterKey: options.masterKey }, actor, purgeMatch[1], purgeMatch[2], new Date());
         if (purged === "not_found") throw new WorkspacesError("not_found");
         if (typeof purged === "string") return response({ error: purged }, 409);
         return response({ purge: purged });
@@ -322,7 +320,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       }
       if (request.method === "GET" && route === "sites") {
         const url = new URL(request.url);
-        return response(await createSites(options.pool, actor).listForPicker({
+        return response(await createSites(options.database, actor).listForPicker({
           search: url.searchParams.get("search") ?? undefined,
           page: parsePositiveInteger(url.searchParams.get("page")),
           pageSize: parsePositiveInteger(url.searchParams.get("pageSize")),
@@ -375,17 +373,17 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       if (request.method === "POST" && (subroute === "site/link" || subroute === "site/replace")) {
         const body = await readBody(request);
         if (typeof body.siteId !== "string") throw new SitesError("invalid_input");
-        const sites = createSites(options.pool, actor);
+        const sites = createSites(options.database, actor);
         const site = subroute === "site/link" ? await sites.link(id, body.siteId, actor.userId) : await sites.replace(id, body.siteId, actor.userId);
         return response({ site: siteResponseForActor(actor, site) });
       }
       if (request.method === "POST" && subroute === "site/detach") {
-        await createSites(options.pool, actor).detach(id);
+        await createSites(options.database, actor).detach(id);
         return response({ detached: true });
       }
       if (request.method === "GET" && subroute === "site/locations") {
         if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
-        const linked = await createSites(options.pool, actor).findLinked(id);
+        const linked = await createSites(options.database, actor).findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
         if (!options.dataforseo) return response({ error: "provider_unavailable" }, 503);
         const query = new URL(request.url).searchParams.get("q") ?? "";
@@ -396,9 +394,9 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         return response({ locations: await locations.search(serviceAreaCountryIso, query) });
       }
       if (subroute === "site/keywords" || subroute === "site/service-area" || subroute.startsWith("site/keywords/")) {
-        const linked = await createSites(options.pool, actor).findLinked(id);
+        const linked = await createSites(options.database, actor).findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
-        const keywords = createSiteKeywords(options.pool, actor);
+        const keywords = createSiteKeywords(options.database, actor);
         if (request.method === "POST" && subroute === "site/keywords/suggest") {
           if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
           if (!options.openai || !options.dataforseo) return response({ error: "provider_unavailable" }, 503);
@@ -426,10 +424,10 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
       }
       if (request.method === "PUT" && subroute === "site/domain") {
         const body = await readBody(request);
-        return response({ domain: await createSites(options.pool, actor).setDomainRenewal(id, { registrar: body.registrar, renewalCents: body.renewalCents, renewsOn: body.renewsOn }) });
+        return response({ domain: await createSites(options.database, actor).setDomainRenewal(id, { registrar: body.registrar, renewalCents: body.renewalCents, renewsOn: body.renewsOn }) });
       }
       if (subroute === "forms" || subroute.startsWith("forms/")) {
-        const forms = createFormSubmissions(options.pool, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } });
+        const forms = createFormSubmissions(options.database, actor, options.email ?? { async send() { throw new Error("Email Service is not configured"); } });
         if (request.method === "PUT" && subroute === "forms/forwarding") {
           const body = await readBody(request);
           return response({ forwardTo: await forms.setForwarding(id, body.emails) });
@@ -448,7 +446,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         }
       }
       if (subroute === "business") {
-        const businesses = createBusinesses(options.pool, actor);
+        const businesses = createBusinesses(options.database, actor);
         if (request.method === "GET") return response({ business: await businesses.find(id) });
         if (request.method === "PUT") {
           const body = await readBody(request);
@@ -456,7 +454,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         }
       }
       if (subroute === "deal" || subroute.startsWith("deal/")) {
-        const deals = createDeals(options.pool, actor);
+        const deals = createDeals(options.database, actor);
         if (request.method === "GET" && subroute === "deal") {
           const [deal, history] = await Promise.all([deals.current(id), deals.history(id)]);
           return response({ deal, history });
@@ -476,7 +474,7 @@ export function createWorkspacesHandler(options: WorkspacesHandlerOptions): (req
         }
       }
       if (request.method === "POST" && subroute === "site/preview/refresh") {
-        const sites = createSites(options.pool, actor);
+        const sites = createSites(options.database, actor);
         const linked = await sites.findLinked(id);
         if (!linked) throw new WorkspacesError("not_found");
         if (!options.cloudflare || !options.sitePreviews) return response({ error: "preview_unavailable" }, 503);

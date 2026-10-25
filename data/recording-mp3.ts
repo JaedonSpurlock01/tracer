@@ -38,7 +38,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { FfmpegError, type Mp3Encoder } from "@/data/ffmpeg";
 import { R2ObjectError, sha256Hex, type ArtifactObjects, type RecordingObjects } from "@/data/r2-objects";
@@ -46,7 +46,7 @@ import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { recordingObjectKey } from "@/data/recording-transfer";
 
 export interface RecordingMp3Dependencies {
-  pool: Pool;
+  database: Database;
   objects: RecordingObjects & Pick<ArtifactObjects, "delete">;
   encoder: Mp3Encoder;
   now: () => Date;
@@ -90,7 +90,7 @@ async function storeMp3(deps: RecordingMp3Dependencies, row: Mp3Row, key: string
 }
 
 export async function generateRecordingMp3(deps: RecordingMp3Dependencies, recordingId: string): Promise<void> {
-  const result = await deps.pool.query<Mp3Row>(
+  const result = await deps.database.query<Mp3Row>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.r2_object_key, r.mp3_state, r.mp3_size_bytes,
             ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
@@ -106,7 +106,7 @@ export async function generateRecordingMp3(deps: RecordingMp3Dependencies, recor
   try {
     sizeBytes = await storeMp3(deps, row, key);
   } catch (error) {
-    const failed = await deps.pool.query(
+    const failed = await deps.database.query(
       `update recording r set mp3_state = 'Failed', mp3_failure_reason = $2, updated_at = $3
          from call c
         where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}`,
@@ -116,7 +116,7 @@ export async function generateRecordingMp3(deps: RecordingMp3Dependencies, recor
     throw error;
   }
   const now = deps.now();
-  const stored = await deps.pool.query(
+  const stored = await deps.database.query(
     `update recording r
         set mp3_state = 'Stored', mp3_object_key = $2, mp3_size_bytes = $3, mp3_generated_at = $4, mp3_failure_reason = null, updated_at = $4
        from call c

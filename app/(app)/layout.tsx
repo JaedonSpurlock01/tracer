@@ -50,10 +50,10 @@ export default async function AppLayout({ children }: AppLayoutProps) {
   if (!actor) {
     redirect("/sign-in");
   }
-  const [organization, avatarSeed] = await withRequestRuntime(({ pool }) =>
+  const [organization, avatarSeed] = await withRequestRuntime(({ database }) =>
     Promise.all([
-      createOrganizationRepository(pool).findById(actor.organizationId),
-      findUserAvatarSeed(pool, actor.userId).catch(() => undefined),
+      createOrganizationRepository(database).findById(actor.organizationId),
+      findUserAvatarSeed(database, actor.userId).catch(() => undefined),
     ]),
   );
 

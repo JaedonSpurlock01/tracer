@@ -37,7 +37,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { connectedSecondsSql, totalSecondsSql } from "@/data/call-details";
@@ -113,7 +113,7 @@ const localMonthStart = "($2::date)::timestamp at time zone w.reporting_timezone
 const localMonthEnd = "($3::date)::timestamp at time zone w.reporting_timezone";
 const callInMonth = `c.started_at >= ${localMonthStart} and c.started_at < ${localMonthEnd}`;
 
-export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
+export function createCostRevenue(database: Database, actor: Actor): CostRevenue {
   if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   const organizationId = actor.organizationId;
 
@@ -123,8 +123,8 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
       const bounds = monthBounds(month);
       const values = [organizationId, bounds.from, bounds.to, workspaceIds];
       const [workspaces, telephony, processing, leads, search, deals, hosting] = await Promise.all([
-        pool.query<WorkspaceRow>("select w.id, w.state from workspace w where w.organization_id = $1 and w.id = any($2::text[])", [organizationId, workspaceIds]),
-        pool.query<TelephonyRow>(
+        database.query<WorkspaceRow>("select w.id, w.state from workspace w where w.organization_id = $1 and w.id = any($2::text[])", [organizationId, workspaceIds]),
+        database.query<TelephonyRow>(
           `select w.id as workspace_id,
                   coalesce((select sum(least($5::int, greatest(0,
                              ((least(coalesce(na.ended_at, ${localMonthEnd}), ${localMonthEnd}) - interval '1 second') at time zone w.reporting_timezone)::date
@@ -140,7 +140,7 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
             where w.organization_id = $1 and w.id = any($4::text[])`,
           [...values, bounds.days],
         ),
-        pool.query<ProcessingRow>(
+        database.query<ProcessingRow>(
           `select w.id as workspace_id,
                   coalesce(sum(case when r.transcript_state = 'Completed' then coalesce(r.transcript_cost_usd, coalesce(r.transcript_audio_ms, 0) / 60000.0 * $5::numeric) else 0 end), 0)
                   + coalesce(sum(coalesce(la.cost_usd, (la.input_tokens * $6::numeric + la.output_tokens * $7::numeric) / 1000000.0)), 0) as processing_usd
@@ -152,7 +152,7 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
             group by w.id`,
           [...values, rates.openaiWhisperPerMinuteUsd, rates.openaiGpt5MiniInputPerMillionTokensUsd, rates.openaiGpt5MiniOutputPerMillionTokensUsd],
         ),
-        pool.query<LeadRow>(
+        database.query<LeadRow>(
           `select workspace_id, sum(good_leads)::int as good_leads from (
              select c.workspace_id, count(*)::int as good_leads
                from ${callSource}
@@ -167,7 +167,7 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
            ) leads group by workspace_id`,
           values,
         ),
-        pool.query<SearchRow>(
+        database.query<SearchRow>(
           `select l.workspace_id, s.domain_renewal_cents,
                   (select count(*) from keyword_rank_day d join site_keyword k on k.id = d.site_keyword_id where k.site_id = s.id and d.day >= $2::date and d.day < $3::date)::int as lookups
              from site_link l
@@ -175,11 +175,11 @@ export function createCostRevenue(pool: Pool, actor: Actor): CostRevenue {
             where l.organization_id = $1 and l.workspace_id = any($4::text[]) and l.ended_at is null`,
           values,
         ),
-        pool.query<DealRow>(
+        database.query<DealRow>(
           "select id, workspace_id, kind, amount_cents, started_on::text as started_on, ended_on::text as ended_on, created_at, updated_at from deal where organization_id = $1 and workspace_id = any($2::text[]) and ended_on is null",
           [organizationId, workspaceIds],
         ),
-        pool.query<{ active_workspaces: number; stored_bytes: string }>(
+        database.query<{ active_workspaces: number; stored_bytes: string }>(
           `select (select count(*) from workspace where organization_id = $1 and state = 'Active')::int as active_workspaces,
                   coalesce((select sum(coalesce(size_bytes, 0) + coalesce(mp3_size_bytes, 0)) from recording where organization_id = $1 and media_deleted_at is null and media_purged_at is null), 0)::text as stored_bytes`,
           [organizationId],

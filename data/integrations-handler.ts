@@ -24,7 +24,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
 
 import type { Database } from "@/data/database";
 import { AuthorizationError, requireActiveOperator } from "@/data/authorization";
@@ -44,7 +43,6 @@ import type { TwilioClient } from "@/data/twilio-client";
 export interface IntegrationsHandlerOptions {
   auth: TracerAuth;
   database: Database;
-  pool: Pool;
   twilio: TwilioClient;
   cloudflare: CloudflareClient;
   dataforseo?: DataForSeoClient;
@@ -143,7 +141,7 @@ export async function loadIntegrationsOverview(integrations: Integrations, confi
 export function createIntegrationsHandler(options: IntegrationsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveOperator(options.auth, options.pool, request.headers);
+      const actor = await requireActiveOperator(options.auth, options.database, request.headers);
       const integrations: Integrations = createIntegrations({
         database: options.database,
         organizationId: actor.organizationId,
@@ -154,11 +152,11 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
       });
       const route = new URL(request.url).pathname.replace(/^\/api\/integrations\/?/, "");
       if (request.method === "GET" && route === "") {
-        return response(await loadIntegrationsOverview(integrations, options.configuration, createFormsKey(options.pool, actor)));
+        return response(await loadIntegrationsOverview(integrations, options.configuration, createFormsKey(options.database, actor)));
       }
-      if (request.method === "POST" && route === "forms-key") return response(await createFormsKey(options.pool, actor).generate(), 201);
+      if (request.method === "POST" && route === "forms-key") return response(await createFormsKey(options.database, actor).generate(), 201);
       if (request.method === "DELETE" && route === "forms-key") {
-        await createFormsKey(options.pool, actor).revoke();
+        await createFormsKey(options.database, actor).revoke();
         return new Response(null, { status: 204 });
       }
       if (request.method === "POST" && route === "dataforseo/connect") {
@@ -246,7 +244,7 @@ export function createIntegrationsHandler(options: IntegrationsHandlerOptions): 
       }
       if (request.method === "POST" && route === "hyperdrive/test") {
         try {
-          await options.pool.query("select 1");
+          await options.database.query("select 1");
           return response({ status: "ok", checkedAt: new Date().toISOString() });
         } catch {
           return response({ error: "provider_unavailable" }, 502);

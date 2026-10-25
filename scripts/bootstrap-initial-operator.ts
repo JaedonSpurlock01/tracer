@@ -16,7 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { Pool } from "pg";
+import { openDatabase } from "../data/database";
 
 import { bootstrapInitialOperator } from "../data/bootstrap-initial-operator";
 
@@ -47,15 +47,15 @@ if (!connectionString) {
 }
 
 const flags = parseArguments(process.argv.slice(2));
-const pool = new Pool({ connectionString, max: 1 });
+const database = openDatabase(connectionString, { max: 1 });
 
 try {
-  const result = await bootstrapInitialOperator(pool, {
+  const result = await bootstrapInitialOperator(database, {
     email: requiredFlag(flags, "email"),
     name: requiredFlag(flags, "name"),
     timezone: requiredFlag(flags, "timezone"),
   });
   console.log(`status=${result.status} organizationId=${result.organizationId} userId=${result.userId}`);
 } finally {
-  await pool.end();
+  await database.close();
 }

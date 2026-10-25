@@ -68,7 +68,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { reportAnalyticsSummary } from "@/data/analytics";
 import { callExportDocuments } from "@/data/call-export-documents";
@@ -83,7 +83,7 @@ import { reportJobCalls, type ReportSelectionCall } from "@/data/report-selectio
 import { createZipWriter, type ZipWriter } from "@/data/zip-writer";
 
 export interface ReportGenerationDependencies {
-  pool: Pool;
+  database: Database;
   objects: ArtifactObjects;
   now: () => Date;
   pageSize?: number;
@@ -109,7 +109,7 @@ const omittedOutcomes: Readonly<Record<Exclude<ReportSelectionCall["recordingExp
 };
 
 async function removedMedia(deps: ReportGenerationDependencies, recordingId: string): Promise<"Purged" | "Expired" | null> {
-  const row = (await deps.pool.query<{ purged: boolean; expired: boolean }>(
+  const row = (await deps.database.query<{ purged: boolean; expired: boolean }>(
     `select r.media_purged_at is not null as purged, ${recordingMediaExpiredSql("c.started_at", "$2::timestamptz")} as expired
        from recording r
        join call c on c.id = r.call_id
@@ -141,7 +141,7 @@ async function storeRecordingZip(deps: ReportGenerationDependencies, job: Report
     const singleCall = "selection" in job.parameters && job.parameters.selection.kind === "call";
     let exportCall: { id: string; recordingId: string } | undefined;
     const includedRecordingIds: string[] = [];
-    for await (const calls of reportJobCalls(deps.pool, organizationId, job, deps.pageSize)) {
+    for await (const calls of reportJobCalls(deps.database, organizationId, job, deps.pageSize)) {
       const rows: ReportManifestCall[] = [];
       for (const call of calls) {
         const row = await addRecording(deps, zip, call, job.timeZone, modifiedAt);
@@ -152,7 +152,7 @@ async function storeRecordingZip(deps: ReportGenerationDependencies, job: Report
       manifest.push(reportManifestRows(rows, job.timeZone));
     }
     if (exportCall) {
-      for (const document of await callExportDocuments(deps.pool, organizationId, exportCall)) await zip.addFile(document.name, document.bytes, modifiedAt);
+      for (const document of await callExportDocuments(deps.database, organizationId, exportCall)) await zip.addFile(document.name, document.bytes, modifiedAt);
     }
     await zip.addFile("manifest.csv", new TextEncoder().encode(manifest.join("")), modifiedAt);
     await zip.finish();
@@ -167,7 +167,7 @@ async function storeRecordingZip(deps: ReportGenerationDependencies, job: Report
 async function storeCallsCsv(deps: ReportGenerationDependencies, job: ReportJob, organizationId: string): Promise<ReportArtifact> {
   const encoder = new TextEncoder();
   const chunks = [encoder.encode(reportCsvHeader())];
-  for await (const calls of reportJobCalls(deps.pool, organizationId, job, deps.pageSize)) chunks.push(encoder.encode(reportCsvRows(calls, job.timeZone)));
+  for await (const calls of reportJobCalls(deps.database, organizationId, job, deps.pageSize)) chunks.push(encoder.encode(reportCsvRows(calls, job.timeZone)));
   const body = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
   chunks.reduce((offset, chunk) => (body.set(chunk, offset), offset + chunk.byteLength), 0);
   const key = reportCsvObjectKey(job.id);
@@ -177,17 +177,17 @@ async function storeCallsCsv(deps: ReportGenerationDependencies, job: ReportJob,
 
 async function storeReportPdf(deps: ReportGenerationDependencies, job: ReportJob, organizationId: string): Promise<ReportArtifact> {
   if (!("period" in job.parameters)) throw new Error("Only a report job has a PDF");
-  const workspaces = (await deps.pool.query<{ id: string; name: string }>(
+  const workspaces = (await deps.database.query<{ id: string; name: string }>(
     "select id, name from workspace where organization_id = $1 and id = any($2::text[]) order by name, id",
     [organizationId, job.workspaceIds],
   )).rows;
   const generatedAt = deps.now();
   const scope = { organizationId, workspaceIds: job.workspaceIds, timeZone: job.timeZone, window: job.parameters.window };
   const options = { now: generatedAt, notableGoodLeadLimit: reportNotableGoodLeadLimit };
-  const combined = await reportAnalyticsSummary(deps.pool, scope, options);
+  const combined = await reportAnalyticsSummary(deps.database, scope, options);
   const sections = [];
   if (workspaces.length > 1) {
-    for (const workspace of workspaces) sections.push({ workspace, summary: await reportAnalyticsSummary(deps.pool, { ...scope, workspaceIds: [workspace.id] }, options) });
+    for (const workspace of workspaces) sections.push({ workspace, summary: await reportAnalyticsSummary(deps.database, { ...scope, workspaceIds: [workspace.id] }, options) });
   }
   const body = await renderReportPdf(buildReportDocument({ generatedAt, timeZone: job.timeZone, period: job.parameters.period, workspaces, combined, sections }));
   const key = reportPdfObjectKey(job.id);
@@ -196,7 +196,7 @@ async function storeReportPdf(deps: ReportGenerationDependencies, job: ReportJob
 }
 
 export async function generateReportJob(deps: ReportGenerationDependencies, jobId: string): Promise<void> {
-  const started = await startReportJob(deps.pool, jobId);
+  const started = await startReportJob(deps.database, jobId);
   if (!started) return;
   const { job, organizationId } = started;
   const files: readonly ReportFileKind[] = job.parameters.files;
@@ -204,9 +204,9 @@ export async function generateReportJob(deps: ReportGenerationDependencies, jobI
   if (files.includes("pdf")) artifacts.push(await storeReportPdf(deps, job, organizationId));
   if (files.includes("csv")) artifacts.push(await storeCallsCsv(deps, job, organizationId));
   if (files.includes("zip")) artifacts.push(await storeRecordingZip(deps, job, organizationId));
-  await completeReportJob(deps.pool, job.id, artifacts, deps.now());
+  await completeReportJob(deps.database, job.id, artifacts, deps.now());
 }
 
-export async function recordReportGenerationFailure(pool: Pool, jobId: string, error: unknown): Promise<void> {
-  await failReportJob(pool, jobId, error instanceof R2ObjectError ? error.message : "Report generation failed");
+export async function recordReportGenerationFailure(database: Database, jobId: string, error: unknown): Promise<void> {
+  await failReportJob(database, jobId, error instanceof R2ObjectError ? error.message : "Report generation failed");
 }

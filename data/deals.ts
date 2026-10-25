@@ -30,7 +30,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable } from "@/data/database";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { dealKinds, type DealKind } from "@/data/pricing";
@@ -98,31 +98,16 @@ function parseAmount(value: unknown): number {
   return value;
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export function createDeals(pool: Pool, actor: Actor): Deals {
+export function createDeals(database: Database, actor: Actor): Deals {
   if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   const organizationId = actor.organizationId;
 
-  async function requireWorkspace(client: Pool | PoolClient, workspaceId: string): Promise<void> {
+  async function requireWorkspace(client: Queryable, workspaceId: string): Promise<void> {
     const workspace = await client.query("select 1 from workspace where organization_id = $1 and id = $2", [organizationId, workspaceId]);
     if (!workspace.rowCount) throw new DealsError("not_found");
   }
 
-  async function findOpen(client: Pool | PoolClient, dealId: string, workspaceId: string): Promise<DealRow> {
+  async function findOpen(client: Queryable, dealId: string, workspaceId: string): Promise<DealRow> {
     const result = await client.query<DealRow>(`select ${dealColumns} from deal where id = $1 and workspace_id = $2 and organization_id = $3`, [dealId, workspaceId, organizationId]);
     const row = result.rows[0];
     if (!row) throw new DealsError("not_found");
@@ -132,14 +117,14 @@ export function createDeals(pool: Pool, actor: Actor): Deals {
 
   return {
     async current(workspaceId) {
-      await requireWorkspace(pool, workspaceId);
-      const result = await pool.query<DealRow>(`select ${dealColumns} from deal where workspace_id = $1 and organization_id = $2 and ended_on is null`, [workspaceId, organizationId]);
+      await requireWorkspace(database, workspaceId);
+      const result = await database.query<DealRow>(`select ${dealColumns} from deal where workspace_id = $1 and organization_id = $2 and ended_on is null`, [workspaceId, organizationId]);
       return result.rows[0] ? toDeal(result.rows[0]) : null;
     },
 
     async history(workspaceId) {
-      await requireWorkspace(pool, workspaceId);
-      const result = await pool.query<DealRow>(`select ${dealColumns} from deal where workspace_id = $1 and organization_id = $2 order by started_on desc, created_at desc`, [workspaceId, organizationId]);
+      await requireWorkspace(database, workspaceId);
+      const result = await database.query<DealRow>(`select ${dealColumns} from deal where workspace_id = $1 and organization_id = $2 order by started_on desc, created_at desc`, [workspaceId, organizationId]);
       return result.rows.map(toDeal);
     },
 
@@ -147,8 +132,7 @@ export function createDeals(pool: Pool, actor: Actor): Deals {
       const kind = parseKind(input.kind);
       const amountCents = parseAmount(input.amountCents);
       const startedOn = parseCalendarDate(input.startedOn);
-      return withTransaction(pool, async (client) => {
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`tracer:deals:${input.workspaceId}`]);
+      return database.transaction(async (client) => {
         await requireWorkspace(client, input.workspaceId);
         const now = new Date();
         await client.query(
@@ -161,15 +145,15 @@ export function createDeals(pool: Pool, actor: Actor): Deals {
           [randomUUID(), organizationId, input.workspaceId, kind, amountCents, startedOn, actor.userId, now],
         );
         return toDeal(inserted.rows[0]);
-      });
+      }, { lock: `tracer:deals:${input.workspaceId}` });
     },
 
     async update(dealId, input) {
       const kind = input.kind === undefined ? undefined : parseKind(input.kind);
       const amountCents = input.amountCents === undefined ? undefined : parseAmount(input.amountCents);
       const startedOn = input.startedOn === undefined ? undefined : parseCalendarDate(input.startedOn);
-      const current = await findOpen(pool, dealId, input.workspaceId);
-      const updated = await pool.query<DealRow>(
+      const current = await findOpen(database, dealId, input.workspaceId);
+      const updated = await database.query<DealRow>(
         `update deal set kind = $2, amount_cents = $3, started_on = $4::date, updated_at = $5 where id = $1 and ended_on is null returning ${dealColumns}`,
         [dealId, kind ?? current.kind, amountCents ?? current.amount_cents, startedOn ?? current.started_on, new Date()],
       );
@@ -179,9 +163,9 @@ export function createDeals(pool: Pool, actor: Actor): Deals {
 
     async end(dealId, input) {
       const endedOn = parseCalendarDate(input.endedOn);
-      const current = await findOpen(pool, dealId, input.workspaceId);
+      const current = await findOpen(database, dealId, input.workspaceId);
       if (endedOn < current.started_on) throw new DealsError("invalid_input");
-      const ended = await pool.query<DealRow>(`update deal set ended_on = $2::date, updated_at = $3 where id = $1 and ended_on is null returning ${dealColumns}`, [dealId, endedOn, new Date()]);
+      const ended = await database.query<DealRow>(`update deal set ended_on = $2::date, updated_at = $3 where id = $1 and ended_on is null returning ${dealColumns}`, [dealId, endedOn, new Date()]);
       if (!ended.rows[0]) throw new DealsError("not_found");
       return toDeal(ended.rows[0]);
     },

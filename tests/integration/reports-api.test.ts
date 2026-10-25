@@ -28,34 +28,31 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { migrateDatabase } from "@/data/migrate";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import type { Actor } from "@/data/authorization";
 import { completeReportJob, createReportJob, failReportJob, type ReportGeneration } from "@/data/report-jobs";
 import { createReportsHandler } from "@/data/reports-handler";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 const recipients = new Set(["operator@example.com", "client@example.com"]);
 const email = { async send(message: (typeof messages)[number]) { messages.push(message); return { messageId: `email-${messages.length}` }; } };
 
-const database = () => drizzle(pool!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -81,14 +78,14 @@ const reportGeneration: ReportGeneration = {
 
 const reportsHandler = (options: { reportGeneration?: ReportGeneration | null } = {}) => createReportsHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   reportBucket,
   reportGeneration: options.reportGeneration === null ? undefined : options.reportGeneration ?? reportGeneration,
 });
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -125,11 +122,11 @@ async function completeWithArtifacts(jobId: string, files: Array<"pdf" | "csv">)
     storedObjects.set(`reports/${jobId}/report.${file}`, bytes);
     return { file, r2Key: `reports/${jobId}/report.${file}`, byteSize: bytes.byteLength, contentType: file === "pdf" ? "application/pdf" : "text/csv; charset=utf-8" };
   });
-  await completeReportJob(pool!, jobId, artifacts, new Date());
+  await completeReportJob(database!, jobId, artifacts, new Date());
 }
 
 async function clientActor(): Promise<Actor> {
-  const user = (await pool!.query<{ id: string; name: string; email: string; timezone: string }>(`select id, name, email, timezone from "user" where email = 'client@example.com'`)).rows[0];
+  const user = (await database!.query<{ id: string; name: string; email: string; timezone: string }>(`select id, name, email, timezone from "user" where email = 'client@example.com'`)).rows[0];
   return { userId: user.id, organizationId, name: user.name, email: user.email, timezone: user.timezone, state: "Active", role: "Client Viewer" };
 }
 
@@ -138,7 +135,7 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 }
 
 async function seedWorkspace(id: string, name: string, timezone: string): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ($1, $2, $3, $4, 'Active', now(), now())`,
     [id, organizationId, name, timezone],
   );
@@ -146,16 +143,16 @@ async function seedWorkspace(id: string, name: string, timezone: string): Promis
 
 async function seedCalls(): Promise<void> {
   for (const workspaceId of ["north", "south", "west"]) {
-    await pool!.query(
+    await database!.query(
       `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
        values ($1, $2, $3, $4, 'Call Number', true, now(), now(), now(), now())`,
       [`${workspaceId}-number`, organizationId, `PN${workspaceId.padEnd(32, "0")}`, { north: "+14155550113", south: "+14155550127", west: "+14155550139" }[workspaceId]],
     );
-    await pool!.query(
+    await database!.query(
       "insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) select $1, $2, $3, $4, phone_number, now(), now() from twilio_number where id = $4",
       [`${workspaceId}-assignment`, organizationId, workspaceId, `${workspaceId}-number`],
     );
-    await pool!.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, '{}'::jsonb, now())", [`${workspaceId}-flow`, organizationId, workspaceId]);
+    await database!.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, '{}'::jsonb, now())", [`${workspaceId}-flow`, organizationId, workspaceId]);
   }
   const calls: Array<[string, string, string, string]> = [
     ["call-1", "north", "2026-10-06T15:47:31.204Z", "Answered"],
@@ -164,12 +161,12 @@ async function seedCalls(): Promise<void> {
     ["call-4", "west", "2026-10-07T11:02:13.448Z", "Answered"],
   ];
   for (const [index, [id, workspaceId, startedAt, outcome]] of calls.entries()) {
-    await pool!.query(
+    await database!.query(
       `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number, state, outcome, outcome_reason, started_at, created_at, updated_at)
        select $1, $2, $3, $3 || '-assignment', $3 || '-flow', $4, phone_number, '+12125550164', 'Completed', $5, 'flow_outcome', $6, now(), now() from number_assignment where id = $3 || '-assignment'`,
       [id, organizationId, workspaceId, `CA${String(index + 1).padStart(32, "0")}`, outcome, startedAt],
     );
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               mp3_state, mp3_object_key, mp3_size_bytes, mp3_generated_at, created_at, updated_at)
        values ($1 || '-recording', $2, $3, $1, $4, 'connected', 2, 'Stored', $1 || '.wav', 41_873, 'checksum', now(), 'Stored', $1 || '.mp3', 6_917, now(), now(), now())`,
@@ -180,9 +177,9 @@ async function seedCalls(): Promise<void> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  organizationId = (await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
+  organizationId = (await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
   await seedWorkspace("north", "North Plumbing", "America/New_York");
   await seedWorkspace("south", "South Roofing", "Asia/Tokyo");
   await seedWorkspace("west", "West Electric", "America/Los_Angeles");
@@ -196,7 +193,7 @@ beforeAll(async () => {
   expect(provisioned.status).toBe(201);
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Reports API", () => {
   let clientCookie = "";
@@ -276,14 +273,14 @@ describe.sequential("Reports API", () => {
   });
 
   it("refuses a request while Trigger.dev is not configured and records no job", async () => {
-    const before = (await pool!.query("select count(*)::int as count from report_job")).rows[0].count;
+    const before = (await database!.query("select count(*)::int as count from report_job")).rows[0].count;
     const refused = await reports("", clientCookie, {
       method: "POST",
       body: { kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "all" }, files: ["pdf"] },
       reportGeneration: null,
     });
     expect([refused.status, await json(refused)]).toEqual([503, { error: "generation_unavailable" }]);
-    expect((await pool!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(before);
+    expect((await database!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(before);
   });
 
   it("lists only the requester's own jobs, shaped for Report history and View Parameters", async () => {
@@ -291,7 +288,7 @@ describe.sequential("Reports API", () => {
     const operatorJob = await reports("", operatorCookie, { method: "POST", body: { kind: "call_export", scope: { kind: "global" }, query: "outcome=Answered", file: "csv" } });
     expect(operatorJob.status).toBe(201);
     const operatorJobId = ((await json(operatorJob)).job as { id: string }).id;
-    const clientName = (await pool!.query<{ name: string }>(`select name from "user" where email = 'client@example.com'`)).rows[0].name;
+    const clientName = (await database!.query<{ name: string }>(`select name from "user" where email = 'client@example.com'`)).rows[0].name;
 
     const history = await reports("", clientCookie);
     expect(history.status).toBe(200);
@@ -341,7 +338,7 @@ describe.sequential("Reports API", () => {
       expect([refused.status, await json(refused)]).toEqual([404, { error: "not_found" }]);
     }
 
-    await pool!.query("update report_job set artifacts_expire_at = now() - interval '1 second' where id = $1", [jobId]);
+    await database!.query("update report_job set artifacts_expire_at = now() - interval '1 second' where id = $1", [jobId]);
     expect((await reports(`/${jobId}/files/pdf`, clientCookie)).status).toBe(404);
     const expired = (await json(await reports("", clientCookie))).jobs as Array<{ id: string }>;
     expect(expired.find(({ id }) => id === jobId)).toMatchObject({ files: [{ file: "pdf", downloadable: false, href: null }, { file: "csv", downloadable: false, href: null }], canRegenerate: true });
@@ -349,9 +346,9 @@ describe.sequential("Reports API", () => {
 
   it("regenerates a Failed or expired job over its stored window rather than re-resolving the period now", async () => {
     const actor = await clientActor();
-    const { job: failed } = await createReportJob(pool!, actor, createReadableWorkspaces(pool!, actor), { kind: "report", scope: { kind: "workspace", workspaceId: "north" }, period: { kind: "previousWeek" }, files: ["pdf"] }, new Date("2026-10-14T15:37:12.418Z"));
+    const { job: failed } = await createReportJob(database!, actor, createReadableWorkspaces(database!, actor), { kind: "report", scope: { kind: "workspace", workspaceId: "north" }, period: { kind: "previousWeek" }, files: ["pdf"] }, new Date("2026-10-14T15:37:12.418Z"));
     expect(failed.parameters).toMatchObject({ window: { from: "2026-10-05", to: "2026-10-11" } });
-    await failReportJob(pool!, failed.id, "Report generation failed");
+    await failReportJob(database!, failed.id, "Report generation failed");
 
     const regenerated = await reports(`/${failed.id}/regenerate`, clientCookie, { method: "POST" });
     expect(regenerated.status).toBe(201);
@@ -400,7 +397,7 @@ describe.sequential("Reports API", () => {
       files: [{ file: "pdf", downloadable: false, href: null }],
       canRegenerate: false,
     });
-    await pool!.query("update report_job set artifacts_expire_at = now() - interval '1 second' where id = $1", [jobId]);
+    await database!.query("update report_job set artifacts_expire_at = now() - interval '1 second' where id = $1", [jobId]);
     expect((await reports(`/${jobId}/regenerate`, clientCookie, { method: "POST" })).status).toBe(404);
   });
 

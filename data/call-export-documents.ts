@@ -28,7 +28,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { effectiveLeadClassification, type LeadClassification } from "@/data/lead-classification";
 import { findLeadReview } from "@/data/lead-reviews";
@@ -48,21 +48,21 @@ function transcriptText(turns: readonly TranscriptTurn[]): string {
   return turns.map((turn) => `[${timestamp(turn.startMs)}] ${turn.speaker}: ${turn.text}\n`).join("");
 }
 
-export async function callExportDocuments(pool: Pool, organizationId: string, call: { id: string; recordingId: string }): Promise<CallExportDocument[]> {
+export async function callExportDocuments(database: Database, organizationId: string, call: { id: string; recordingId: string }): Promise<CallExportDocument[]> {
   const encoder = new TextEncoder();
   const documents: CallExportDocument[] = [];
-  const turns = (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [call.recordingId, organizationId])).rows[0]?.turns;
+  const turns = (await database.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [call.recordingId, organizationId])).rows[0]?.turns;
   if (turns !== undefined) documents.push({ name: "transcript.txt", bytes: encoder.encode(transcriptText(parseTranscriptTurns(turns))) });
   const assessment = (
-    await pool.query<{ id: string; classification: LeadClassification; score: number; summary: string; rationale: string | null; processed_at: Date }>(
+    await database.query<{ id: string; classification: LeadClassification; score: number; summary: string; rationale: string | null; processed_at: Date }>(
       "select id, classification, score, summary, rationale, processed_at from lead_assessment where recording_id = $1 and organization_id = $2",
       [call.recordingId, organizationId],
     )
   ).rows[0];
-  const leadReview = await findLeadReview(pool, organizationId, call.id);
+  const leadReview = await findLeadReview(database, organizationId, call.id);
   if (!assessment && !leadReview) return documents;
   const evidence = assessment
-    ? (await pool.query<{ turn_index: number; start_ms: number; quote: string }>("select turn_index, start_ms, quote from lead_assessment_evidence where lead_assessment_id = $1 order by position", [assessment.id])).rows
+    ? (await database.query<{ turn_index: number; start_ms: number; quote: string }>("select turn_index, start_ms, quote from lead_assessment_evidence where lead_assessment_id = $1 order by position", [assessment.id])).rows
     : [];
   const document = {
     callId: call.id,

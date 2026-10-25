@@ -40,7 +40,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { ActivityCursor } from "@/data/activity-query";
 import type { Actor } from "@/data/authorization";
@@ -118,7 +118,7 @@ function callSteps(row: ActivityRow, events: EventRow[]): ActivityStep[] {
 
 type Bind = (value: unknown) => string;
 
-export function createActivity(pool: Pool, actor: Actor) {
+export function createActivity(database: Database, actor: Actor) {
   const timeZone = actor.timezone;
 
   function scoped(filters: CallFilters | null) {
@@ -135,7 +135,7 @@ export function createActivity(pool: Pool, actor: Actor) {
   const olderThan = (bind: Bind, cursor: ActivityCursor) => `(c.started_at, c.id) < (${bind(cursor.startedAt)}::timestamptz, ${bind(cursor.id)})`;
 
   async function exists(where: string, values: unknown[]): Promise<boolean> {
-    return (await pool.query<{ exists: boolean }>(`select exists (select 1 from ${callSource} where ${where}) as exists`, values)).rows[0].exists;
+    return (await database.query<{ exists: boolean }>(`select exists (select 1 from ${callSource} where ${where}) as exists`, values)).rows[0].exists;
   }
 
   return {
@@ -145,7 +145,7 @@ export function createActivity(pool: Pool, actor: Actor) {
       if (query.before) page.conditions.push(olderThan(page.bind, query.before));
       else if (query.through) page.conditions.push(`(c.started_at, c.id) >= (${page.bind(query.through.startedAt)}::timestamptz, ${page.bind(query.through.id)})`);
       else if (!dated) page.conditions.push(`c.started_at >= ${windowStart(page.bind)}`);
-      const rows = await pool.query<ActivityRow>(
+      const rows = await database.query<ActivityRow>(
         `select ${callListColumns},
                 to_char(c.started_at at time zone ${page.bind(timeZone)}, 'YYYY-MM-DD') as day,
                 to_char(c.started_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_at,
@@ -167,7 +167,7 @@ export function createActivity(pool: Pool, actor: Actor) {
       const events = rows.rows.length === 0
         ? []
         : (
-            await pool.query<EventRow>(
+            await database.query<EventRow>(
               `select e.id::text as id, e.call_id, e.kind, e.occurred_at, e.detail->>'outcome' as outcome, e.detail->>'classification' as classification, u.name as reviewer_name
                  from call_event e
                  left join "user" u on u.id = e.actor_user_id

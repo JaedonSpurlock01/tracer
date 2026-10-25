@@ -22,7 +22,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { createActivity } from "@/data/activity";
 import { activityFiltersFromSearchParams, parseActivityCursor } from "@/data/activity-query";
@@ -31,7 +31,7 @@ import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface ActivityHandlerOptions {
   auth: TracerAuth;
-  pool: Pool;
+  database: Database;
 }
 
 const privateHeaders = { "cache-control": "private, no-store" };
@@ -39,9 +39,9 @@ const privateHeaders = { "cache-control": "private, no-store" };
 export function createActivityHandler(options: ActivityHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
+      const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const params = new URL(request.url).searchParams;
-      const result = await createActivity(options.pool, actor).list({
+      const result = await createActivity(options.database, actor).list({
         filters: activityFiltersFromSearchParams(params),
         before: parseActivityCursor(params.get("before")),
         through: parseActivityCursor(params.get("through")),

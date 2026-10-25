@@ -62,7 +62,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { Actor } from "@/data/authorization";
 import { connectedSecondsSql, downloadableMp3RecordingId, recordingAvailability, type CallDetail, type RecordingAvailability, type RecordingAvailabilityRow } from "@/data/call-details";
@@ -269,8 +269,8 @@ export function filterConditions(filters: CallFilters, values: unknown[], scope:
   return flat ? [...conditions, flat] : conditions;
 }
 
-export function createCallList(pool: Pool, actor: Actor): CallList {
-  const workspaces = createReadableWorkspaces(pool, actor);
+export function createCallList(database: Database, actor: Actor): CallList {
+  const workspaces = createReadableWorkspaces(database, actor);
 
   async function scopedQuery(query: ScopedCallListQuery) {
     const workspace = query.workspaceId === undefined ? null : await workspaces.find(query.workspaceId);
@@ -299,8 +299,8 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
       const countValues = [...values];
       values.push((query.page - 1) * callPageSize, callPageSize);
       const [count, rows] = await Promise.all([
-        pool.query<{ count: number }>(`select count(*)::int as count from ${callSource} where ${where}`, countValues),
-        pool.query<CallListRow>(
+        database.query<{ count: number }>(`select count(*)::int as count from ${callSource} where ${where}`, countValues),
+        database.query<CallListRow>(
           `select ${callListColumns}
              from ${callSource}
             where ${where}
@@ -310,7 +310,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
         ),
       ]);
       const total = count.rows[0]?.count ?? 0;
-      const hasCalls = total > 0 || (filters.length > 0 && (await pool.query<{ exists: boolean }>(
+      const hasCalls = total > 0 || (filters.length > 0 && (await database.query<{ exists: boolean }>(
         `select exists (select 1 from call c join workspace w on w.id = c.workspace_id and w.organization_id = c.organization_id where ${scopeWhere}) as exists`,
         scopeValues,
       )).rows[0].exists);
@@ -330,7 +330,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
       const { values, where, orderBy } = scoped;
       values.push(callId);
       type NeighborRow = { id: string | null; workspace_id: string | null; caller_number: string | null; started_at: Date | null };
-      const rows = await pool.query<{ previous: NeighborRow; next: NeighborRow }>(
+      const rows = await database.query<{ previous: NeighborRow; next: NeighborRow }>(
         `select json_build_object('id', previous_id, 'workspace_id', previous_workspace_id, 'caller_number', previous_caller_number, 'started_at', previous_started_at) as previous,
                 json_build_object('id', next_id, 'workspace_id', next_workspace_id, 'caller_number', next_caller_number, 'started_at', next_started_at) as next
            from (select c.id,
@@ -351,7 +351,7 @@ export function createCallList(pool: Pool, actor: Actor): CallList {
     },
     async workspaceOptions() {
       const values: unknown[] = [];
-      const rows = await pool.query<{ id: string; name: string }>(`select w.id, w.name from workspace w where ${readableWorkspaceSql(actor, values)} order by w.name, w.id`, values);
+      const rows = await database.query<{ id: string; name: string }>(`select w.id, w.name from workspace w where ${readableWorkspaceSql(actor, values)} order by w.name, w.id`, values);
       return rows.rows;
     },
   };

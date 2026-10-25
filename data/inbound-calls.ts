@@ -49,7 +49,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Transaction } from "@/data/database";
 
 import { appendCallEvent } from "@/data/call-events";
 import { parseCallFlowGraph, type CallFlowGraph } from "@/data/call-flow";
@@ -135,22 +135,7 @@ function eventPayload(params: Readonly<Record<string, string>>): Record<string, 
   return Object.fromEntries(payloadFields.filter((field) => field in params).map((field) => [field, params[field]]));
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function findAssignment(client: PoolClient, assignmentId: string): Promise<AssignmentRow | undefined> {
+async function findAssignment(client: Transaction, assignmentId: string): Promise<AssignmentRow | undefined> {
   const result = await client.query<AssignmentRow>(
     `select a.organization_id, a.workspace_id, a.phone_number, w.reporting_timezone, w.recording_enabled, a.ended_at is null and w.state = 'Active' as active
        from number_assignment a
@@ -161,7 +146,7 @@ async function findAssignment(client: PoolClient, assignmentId: string): Promise
   return result.rows[0];
 }
 
-async function findCall(client: PoolClient, organizationId: string, callSid: string | undefined): Promise<CallRow | undefined> {
+async function findCall(client: Transaction, organizationId: string, callSid: string | undefined): Promise<CallRow | undefined> {
   if (!callSid) return undefined;
   const result = await client.query<CallRow>(
     "select id, flow_version_id, outcome, outcome_reason, forward_started_at, started_at, pending_outcome, pending_outcome_reason from call where organization_id = $1 and twilio_call_sid = $2 for update",
@@ -170,13 +155,13 @@ async function findCall(client: PoolClient, organizationId: string, callSid: str
   return result.rows[0];
 }
 
-async function pinnedGraph(client: PoolClient, call: CallRow): Promise<CallFlowGraph | null> {
+async function pinnedGraph(client: Transaction, call: CallRow): Promise<CallFlowGraph | null> {
   const result = await client.query<{ graph: unknown }>("select graph from flow_version where id = $1", [call.flow_version_id]);
   return parseCallFlowGraph(result.rows[0]?.graph);
 }
 
 async function recordEvent(
-  client: PoolClient,
+  client: Transaction,
   event: { organizationId: string; assignmentId: string; callId: string | null; key: string; kind: EventKind; disposition?: "accepted" | "rejected"; detail?: string; params: Readonly<Record<string, string>> },
 ): Promise<boolean> {
   const result = await client.query(
@@ -189,7 +174,7 @@ async function recordEvent(
   return result.rowCount === 1;
 }
 
-async function insertRecording(client: PoolClient, callId: string, recording: CompletedRecording | null): Promise<StoredRecording | null> {
+async function insertRecording(client: Transaction, callId: string, recording: CompletedRecording | null): Promise<StoredRecording | null> {
   if (!recording) return null;
   const result = await client.query<{ id: string; organization_id: string }>(
     `insert into recording
@@ -212,7 +197,7 @@ async function requestProcessing(processing: RecordingProcessing, received: Rece
   return received.result;
 }
 
-async function finalize(client: PoolClient, callId: string): Promise<void> {
+async function finalize(client: Transaction, callId: string): Promise<void> {
   await client.query(
     "update call set state = 'Completed', updated_at = now() where id = $1 and state <> 'Completed' and ended_at is not null and outcome is not null",
     [callId],
@@ -231,7 +216,7 @@ function voiceContext(assignment: AssignmentRow, call: CallRow, urls: VoiceUrls)
   return { urls, at: call.started_at, timeZone: assignment.reporting_timezone, recordingEnabled: assignment.recording_enabled };
 }
 
-async function applyStep(client: PoolClient, callId: string, step: VoiceStep): Promise<void> {
+async function applyStep(client: Transaction, callId: string, step: VoiceStep): Promise<void> {
   await client.query(
     `update call
         set forward_node_id = coalesce(forward_node_id, $2),
@@ -249,10 +234,10 @@ const unreadableFlow: VoiceStep = { twiml: hangup, forwardNodeId: null, outcome:
 
 const recorded: CallbackResult = { kind: "recorded" };
 
-export function createInboundCalls(options: { pool: Pool; recordingProcessing: RecordingProcessing }): InboundCalls {
+export function createInboundCalls(options: { database: Database; recordingProcessing: RecordingProcessing }): InboundCalls {
   return {
     async receiveVoiceWebhook(assignmentId, params, urls) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         if (!assignment.active) {
@@ -283,7 +268,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveGatherAction(assignmentId, gateNodeId, attempt, params, urls) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
@@ -301,7 +286,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveWhisper(assignmentId, whisperNodeId, params) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.ParentCallSid);
@@ -311,7 +296,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveForwardAction(assignmentId, forwardNodeId, params, urls) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
@@ -325,7 +310,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveForwardStatus(assignmentId, forwardNodeId, params, urls) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.ParentCallSid);
@@ -363,7 +348,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveVoicemailAction(assignmentId, voicemailNodeId, params) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
@@ -373,7 +358,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveVoicemailStatus(assignmentId, voicemailNodeId, params) {
-      return requestProcessing(options.recordingProcessing, await withTransaction(options.pool, async (client): Promise<Received> => {
+      return requestProcessing(options.recordingProcessing, await options.database.transaction(async (client): Promise<Received> => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { result: { kind: "unknown_assignment" }, recording: null };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
@@ -403,7 +388,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveRecordingStatus(assignmentId, forwardNodeId, params) {
-      return requestProcessing(options.recordingProcessing, await withTransaction(options.pool, async (client): Promise<Received> => {
+      return requestProcessing(options.recordingProcessing, await options.database.transaction(async (client): Promise<Received> => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { result: { kind: "unknown_assignment" }, recording: null };
         const call = await findCall(client, assignment.organization_id, params.CallSid);
@@ -418,7 +403,7 @@ export function createInboundCalls(options: { pool: Pool; recordingProcessing: R
     },
 
     async receiveCallStatus(assignmentId, params) {
-      return withTransaction(options.pool, async (client) => {
+      return options.database.transaction(async (client) => {
         const assignment = await findAssignment(client, assignmentId);
         if (!assignment) return { kind: "unknown_assignment" };
         const call = await findCall(client, assignment.organization_id, params.CallSid);

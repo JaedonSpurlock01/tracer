@@ -25,7 +25,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Queryable } from "@/data/database";
 
 import { signTwilioRequest } from "@/data/twilio-signature";
 
@@ -91,8 +91,8 @@ type RecordingRow = {
   failure_stage: string | null;
 };
 
-async function callRecordings(pool: Pool, callIds: string[]): Promise<RecordingRow[]> {
-  const result = await pool.query<RecordingRow>(
+async function callRecordings(database: Queryable, callIds: string[]): Promise<RecordingRow[]> {
+  const result = await database.query<RecordingRow>(
     `select call_id, source, channels, transfer_state, twilio_cleanup_state, failure_stage
        from recording where call_id = any($1::text[])
       order by created_at, id`,
@@ -101,8 +101,8 @@ async function callRecordings(pool: Pool, callIds: string[]): Promise<RecordingR
   return result.rows;
 }
 
-async function callEvents(pool: Pool, callIds: string[]): Promise<EventRow[]> {
-  const result = await pool.query<EventRow>(
+async function callEvents(database: Queryable, callIds: string[]): Promise<EventRow[]> {
+  const result = await database.query<EventRow>(
     `select call_id, number_assignment_id, idempotency_key, kind, disposition, payload, received_at
        from provider_event where call_id = any($1::text[])
       order by received_at, id`,
@@ -111,16 +111,16 @@ async function callEvents(pool: Pool, callIds: string[]): Promise<EventRow[]> {
   return result.rows;
 }
 
-export async function reportTrackingNumberCalls(pool: Pool, trackingNumber: string, limit: number): Promise<SmokeCall[]> {
-  const calls = await pool.query<CallRow>(
+export async function reportTrackingNumberCalls(database: Queryable, trackingNumber: string, limit: number): Promise<SmokeCall[]> {
+  const calls = await database.query<CallRow>(
     `select id, twilio_call_sid, state, outcome, outcome_reason, forward_status, duration_seconds, voicemail_duration_seconds, started_at, ended_at
        from call where tracking_number = $1
       order by started_at desc, id desc
       limit $2`,
     [trackingNumber, limit],
   );
-  const events = await callEvents(pool, calls.rows.map((call) => call.id));
-  const recordings = await callRecordings(pool, calls.rows.map((call) => call.id));
+  const events = await callEvents(database, calls.rows.map((call) => call.id));
+  const recordings = await callRecordings(database, calls.rows.map((call) => call.id));
   return calls.rows.map((call) => ({
     id: call.id,
     twilioCallSid: call.twilio_call_sid,
@@ -147,9 +147,9 @@ export async function reportTrackingNumberCalls(pool: Pool, trackingNumber: stri
   }));
 }
 
-async function callSnapshot(pool: Pool, callId: string): Promise<string> {
-  const call = await pool.query("select * from call where id = $1", [callId]);
-  const events = await pool.query<{ count: number }>("select count(*)::int as count from provider_event where call_id = $1", [callId]);
+async function callSnapshot(database: Queryable, callId: string): Promise<string> {
+  const call = await database.query("select * from call where id = $1", [callId]);
+  const events = await database.query<{ count: number }>("select count(*)::int as count from provider_event where call_id = $1", [callId]);
   return JSON.stringify({ call: call.rows[0], events: events.rows[0].count });
 }
 
@@ -168,15 +168,15 @@ function replayPath(event: EventRow): string | null {
 }
 
 export async function replayCallCallbacks(options: {
-  pool: Pool;
+  database: Queryable;
   callId: string;
   baseURL: string;
   authToken: string;
   send: (request: Request) => Promise<Response>;
 }): Promise<{ replayed: number; rejected: number; unchanged: boolean }> {
   const baseURL = options.baseURL.replace(/\/$/, "");
-  const before = await callSnapshot(options.pool, options.callId);
-  const events = (await callEvents(options.pool, [options.callId])).filter((event) => event.disposition === "accepted");
+  const before = await callSnapshot(options.database, options.callId);
+  const events = (await callEvents(options.database, [options.callId])).filter((event) => event.disposition === "accepted");
   let replayed = 0;
   let rejected = 0;
   for (const event of events) {
@@ -194,5 +194,5 @@ export async function replayCallCallbacks(options: {
     if (response.ok) replayed += 1;
     else rejected += 1;
   }
-  return { replayed, rejected, unchanged: (await callSnapshot(options.pool, options.callId)) === before };
+  return { replayed, rejected, unchanged: (await callSnapshot(options.database, options.callId)) === before };
 }

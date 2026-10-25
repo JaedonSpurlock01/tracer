@@ -24,11 +24,11 @@
 import { randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -39,7 +39,7 @@ const now = new Date("2026-10-16T12:00:00.000Z");
 const days = (count: number) => new Date(now.getTime() - count * 24 * 60 * 60 * 1000);
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 
 const turns = [
@@ -83,7 +83,7 @@ function fakeResponder(output: unknown = goodLead): FakeResponder {
 }
 
 function dependencies(responder: FakeResponder): RecordingLeadAssessmentDependencies {
-  return { pool: pool!, responder, now: () => now };
+  return { database: database!, responder, now: () => now };
 }
 
 let sequence = 0;
@@ -97,12 +97,12 @@ async function transcribedRecording(
   const assessment = options.assessment === undefined ? (completed ? "Pending" : null) : options.assessment;
   const callId = `assessment-call-${sequence}`;
   const id = randomUUID();
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
      values ($1, $2, 'assessment-workspace', 'assessment-assignment', 'assessment-flow-version', $3, '+14155550115', $4, $4, $4)`,
     [callId, organizationId, `CA${String(sequence).padStart(32, "0")}`, options.callStartedAt ?? days(1)],
   );
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, twilio_cleanup_state,
                             r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at,
                             transcript_state, transcript_skip_reason, transcript_audio_ms, transcript_cost_usd, transcript_completed_at, lead_assessment_state, created_at, updated_at)
@@ -123,17 +123,17 @@ async function transcribedRecording(
     ],
   );
   if (completed) {
-    await pool!.query(
+    await database!.query(
       "insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, 'whisper-1', $5)",
       [id, organizationId, callId, JSON.stringify(options.storedTurns ?? turns), days(1)],
     );
   }
-  if (options.purgedAt) await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, options.purgedAt]);
+  if (options.purgedAt) await database!.query("update recording set media_purged_at = $2 where id = $1", [id, options.purgedAt]);
   return { id, callId };
 }
 
 async function recordingRow(id: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select transfer_state, r2_object_key, waveform_state, transcript_state, transcript_failure_reason, lead_assessment_state, lead_assessment_failure_reason
        from recording where id = $1`,
     [id],
@@ -142,12 +142,12 @@ async function recordingRow(id: string): Promise<Record<string, unknown>> {
 }
 
 async function assessmentRows(recordingId: string): Promise<{ assessment: Record<string, unknown> | undefined; evidence: Record<string, unknown>[] }> {
-  const assessment = await pool!.query(
+  const assessment = await database!.query(
     `select id, organization_id, call_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at
        from lead_assessment where recording_id = $1`,
     [recordingId],
   );
-  const evidence = await pool!.query(
+  const evidence = await database!.query(
     `select e.position, e.turn_index, e.start_ms, e.quote
        from lead_assessment_evidence e
        join lead_assessment a on a.id = e.lead_assessment_id
@@ -160,27 +160,27 @@ async function assessmentRows(recordingId: string): Promise<{ assessment: Record
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const operator = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Assessment Operator", timezone: "UTC" });
+  const operator = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Assessment Operator", timezone: "UTC" });
   organizationId = operator.organizationId;
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('assessment-number', $1, 'PNdddddddddddddddddddddddddddddddd', '+14155550115', 'Assessment Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, recording_enabled, analysis_enabled, created_at, updated_at)
      values ('assessment-workspace', $1, 'Example Plumbing', 'UTC', 'Active', '+14155550199', true, true, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('assessment-assignment', $1, 'assessment-workspace', 'assessment-number', '+14155550115', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('assessment-flow-version', $1, 'assessment-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), operator.userId],
@@ -188,7 +188,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -239,7 +239,7 @@ describe("Recording Lead Assessment", () => {
     await assessRecordingLead(dependencies(fakeResponder({ ...goodLead, classification: "Not Good Lead", score: 5 })), recording.id);
 
     expect(await assessmentRows(recording.id)).toEqual(before);
-    await expect(pool!.query("update lead_assessment set score = 1 where recording_id = $1", [recording.id])).rejects.toThrow("Lead Assessment is immutable");
+    await expect(database!.query("update lead_assessment set score = 1 where recording_id = $1", [recording.id])).rejects.toThrow("Lead Assessment is immutable");
   });
 
   it("fails invalid model output with a stable reason and persists no assessment while the Transcript and playback stay", async () => {
@@ -331,8 +331,8 @@ describe("Recording Lead Assessment", () => {
     const responder = fakeResponder();
     const recording = await transcribedRecording();
     responder.during = async () => {
-      await pool!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
-      await pool!.query("delete from transcript where recording_id = $1", [recording.id]);
+      await database!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
+      await database!.query("delete from transcript where recording_id = $1", [recording.id]);
     };
 
     await expect(assessRecordingLead(dependencies(responder), recording.id)).resolves.toBeUndefined();
@@ -346,20 +346,20 @@ describe("Recording Lead Assessment", () => {
     const recording = await transcribedRecording();
     responder.failure = new OpenAIError("OpenAI request failed (HTTP 500)");
     responder.during = async () => {
-      await pool!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
-      await pool!.query("delete from transcript where recording_id = $1", [recording.id]);
+      await database!.query("update recording set media_purged_at = $2 where id = $1", [recording.id, now]);
+      await database!.query("delete from transcript where recording_id = $1", [recording.id]);
     };
 
     await expect(assessRecordingLead(dependencies(responder), recording.id)).resolves.toBeUndefined();
 
     expect(await recordingRow(recording.id)).toMatchObject({ lead_assessment_state: "Pending", lead_assessment_failure_reason: null });
-    await expect(pool!.query("select 1 from call_event where call_id = $1 and kind = 'lead_assessment_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
+    await expect(database!.query("select 1 from call_event where call_id = $1 and kind = 'lead_assessment_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
   });
 });
 
 describe("Recording Lead Assessment Call events", () => {
   async function callEvents(callId: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
-    const result = await pool!.query("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+    const result = await database!.query<{ kind: string; detail: Record<string, unknown> }>("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
     return result.rows;
   }
 

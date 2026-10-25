@@ -20,12 +20,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { CloudflareClientError, type CloudflareClient, type CloudflareSite } from "@/data/cloudflare-client";
 import { createE2eCloudflareFake } from "@/data/e2e-cloudflare-fake";
@@ -41,8 +40,7 @@ const firstToken = "first-synthetic-cloudflare-token";
 const secondToken = "second-synthetic-cloudflare-token";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const messages: TransactionalEmailMessage[] = [];
@@ -94,7 +92,7 @@ const auth = () => createTracerAuth({
 function handler(overrides: { masterKey?: string } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     cloudflare: fakeCloudflare,
     masterKey: overrides.masterKey ?? masterKey,
@@ -134,21 +132,20 @@ function post(cookie: string, route: string, body?: unknown): Request {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
   sites = await fakeSites.listSites({ accountId, apiToken: firstToken });
-  await pool.query("insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other Org', 'other-org', now())");
-  await pool.query(
+  await database.query("insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other Org', 'other-org', now())");
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at)
      values ('other-site-id', 'other-organization-id', 'other-script', 'other.example', 'zone-other', now(), now(), now(), now())`,
   );
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -159,7 +156,7 @@ describe.sequential("Organization Cloudflare connection", () => {
     expect(malformed.response.status).toBe(400);
     const rejected = await json(post(cookie, "cloudflare/connect", { accountId, apiToken: "rejected-token" }));
     expect(rejected.response.status).toBe(422);
-    await expect(pool!.query("select count(*) from cloudflare_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from cloudflare_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
     expect((await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }))).body.cloudflare).toBeNull();
   });
 
@@ -170,10 +167,10 @@ describe.sequential("Organization Cloudflare connection", () => {
     expect(connected.body.connection).toMatchObject({ accountId, connectedBy: { id: operatorId, name: "Example Operator" }, siteCount: 6, lastVerifiedAt: expect.any(String), lastSyncedAt: expect.any(String) });
     expect(JSON.stringify(connected.body)).not.toContain(firstToken);
     expect(JSON.stringify(connected.body)).not.toContain("iphertext");
-    const stored = await pool!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
+    const stored = await database!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
     expect(stored.rows[0]?.api_token_ciphertext).toMatch(/^v1:/);
     expect(stored.rows[0]?.api_token_ciphertext).not.toContain(firstToken);
-    const discovered = await pool!.query<{ script_name: string; primary_hostname: string; hostnames: string }>(
+    const discovered = await database!.query<{ script_name: string; primary_hostname: string; hostnames: string }>(
       `select s.script_name, s.primary_hostname, count(h.id)::text as hostnames
          from site s left join site_hostname h on h.site_id = s.id
         where s.organization_id = $1 group by s.id order by s.script_name`,
@@ -203,21 +200,21 @@ describe.sequential("Organization Cloudflare connection", () => {
 
   it("lists the Organization Sites with hostnames, link state, 30-day visits, and health", async () => {
     const cookie = await signIn("operator@example.com");
-    const pocatello = await pool!.query<{ id: string }>("select id from site where organization_id = $1 and script_name = 'asphalt-paving-pocatello'", [organizationId]);
+    const pocatello = await database!.query<{ id: string }>("select id from site where organization_id = $1 and script_name = 'asphalt-paving-pocatello'", [organizationId]);
     const siteId = pocatello.rows[0].id;
-    await pool!.query(
+    await database!.query(
       `insert into site_metric_day (id, site_id, day, visits, page_views, requests, errors, synced_at) values
          ('metric-today', $1, current_date, 10, 20, 40, 0, now()),
          ('metric-29', $1, current_date - 29, 5, 10, 20, 0, now()),
          ('metric-30', $1, current_date - 30, 100, 200, 400, 0, now())`,
       [siteId],
     );
-    await pool!.query(
+    await database!.query(
       `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
        values ('linked-workspace-id', $1, 'Pocatello Paving', 'America/Boise', 'Setup Required', now(), now())`,
       [organizationId],
     );
-    await pool!.query(
+    await database!.query(
       `insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values ('link-1', $1, $2, 'linked-workspace-id', now(), $3)`,
       [organizationId, siteId, operatorId],
     );
@@ -263,10 +260,10 @@ describe.sequential("Organization Cloudflare connection", () => {
     const cookie = await signIn("operator@example.com");
     const rejected = await json(post(cookie, "cloudflare/rotate", { apiToken: "rejected-token" }));
     expect(rejected.response.status).toBe(422);
-    const before = await pool!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
+    const before = await database!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
     const rotated = await json(post(cookie, "cloudflare/rotate", { apiToken: secondToken }));
     expect(rotated.response.status).toBe(200);
-    const after = await pool!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
+    const after = await database!.query<{ api_token_ciphertext: string }>("select api_token_ciphertext from cloudflare_connection where organization_id = $1", [organizationId]);
     expect(after.rows[0].api_token_ciphertext).not.toBe(before.rows[0].api_token_ciphertext);
     verifiedTokens.length = 0;
     await json(post(cookie, "cloudflare/test"));
@@ -298,13 +295,13 @@ describe.sequential("Organization Cloudflare connection", () => {
     const synced = await json(post(cookie, "cloudflare/sync"));
     expect(synced.response.status).toBe(200);
     expect(synced.body).toMatchObject({ siteCount: 5, syncedAt: expect.any(String) });
-    const removed = await pool!.query<{ removed_at: Date | null }>("select removed_at from site where organization_id = $1 and script_name = 'solar-panel-sites'", [organizationId]);
+    const removed = await database!.query<{ removed_at: Date | null }>("select removed_at from site where organization_id = $1 and script_name = 'solar-panel-sites'", [organizationId]);
     expect(removed.rows[0].removed_at).not.toBeNull();
     const listed = await json(new Request("http://localhost:3000/api/integrations/cloudflare/sites", { headers: { cookie } }));
     expect((listed.body.sites as Array<{ scriptName: string }>).map((site) => site.scriptName)).not.toContain("solar-panel-sites");
     sites = all;
     await json(post(cookie, "cloudflare/sync"));
-    const restored = await pool!.query<{ removed_at: Date | null; count: string }>("select removed_at, (select count(*) from site where organization_id = $1)::text as count from site where organization_id = $1 and script_name = 'solar-panel-sites'", [organizationId]);
+    const restored = await database!.query<{ removed_at: Date | null; count: string }>("select removed_at, (select count(*) from site where organization_id = $1)::text as count from site where organization_id = $1 and script_name = 'solar-panel-sites'", [organizationId]);
     expect(restored.rows[0]).toEqual({ removed_at: null, count: "6" });
     const overview = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
     expect(overview.body.cloudflare).toMatchObject({ lastSyncedAt: synced.body.syncedAt === undefined ? expect.any(String) : expect.any(String), siteCount: 6 });
@@ -315,11 +312,11 @@ describe.sequential("Organization Cloudflare connection", () => {
     const blocked = await json(post(cookie, "cloudflare/disconnect"));
     expect(blocked.response.status).toBe(409);
     expect(blocked.body).toEqual({ error: "active_site_links", activeSiteLinkCount: 1 });
-    await pool!.query("update site_link set ended_at = now() where id = 'link-1'");
+    await database!.query("update site_link set ended_at = now() where id = 'link-1'");
     const disconnected = await json(post(cookie, "cloudflare/disconnect"));
     expect(disconnected.response.status).toBe(200);
-    await expect(pool!.query("select count(*) from cloudflare_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
-    await expect(pool!.query("select count(*) from site where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "6" }] });
+    await expect(database!.query("select count(*) from cloudflare_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from site where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "6" }] });
     const overview = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
     expect(overview.body.cloudflare).toBeNull();
     const test = await json(post(cookie, "cloudflare/test"));
