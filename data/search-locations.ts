@@ -15,7 +15,11 @@
  *  Rows are shared across Organizations: a location is a fact about
  *  Google, not about a tenant. The import replaces the country's rows in
  *  one transaction and inserts in batches through unnest so the Worker
- *  issues a few statements rather than one per location. Matching is a
+ *  issues a few statements rather than one per location. DataForSEO's
+ *  United States list repeats some location codes, and a batch that
+ *  updates the same row twice is a PostgreSQL error, so codes are deduped
+ *  before the insert (the Production picker failed on this on
+ *  2026-10-25). Matching is a
  *  case-insensitive contains on the name with the shortest names first,
  *  so "poca" finds Pocatello before Pocatello Regional Airport.
  *
@@ -34,7 +38,7 @@ import { withTransaction } from "@/data/provider-credential";
 
 export const searchLocationLimit = 8;
 export const searchLocationMinimumQuery = 2;
-const importBatchSize = 5000;
+const importBatchSize = 1000;
 
 export interface SearchLocations {
   /** Imports the country's locations when none are stored yet, then returns how many rows the country has. */
@@ -53,7 +57,7 @@ export function createSearchLocations(pool: Pool): SearchLocations {
       const iso = countryIso.toLowerCase();
       const existing = await countFor(iso);
       if (existing > 0) return existing;
-      const locations = await dataforseo.listLocations(credential, iso);
+      const locations = [...new Map((await dataforseo.listLocations(credential, iso)).map((location) => [location.code, location])).values()];
       await withTransaction(pool, async (client) => {
         await client.query("delete from search_location where country_iso = $1", [iso]);
         for (let start = 0; start < locations.length; start += importBatchSize) {

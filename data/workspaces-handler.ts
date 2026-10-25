@@ -143,7 +143,9 @@ function errorResponse(error: unknown): Response {
     if (error.detail) body.detail = error.detail;
     return response(body, status);
   }
-  return response({ error: "invalid_input" }, 400);
+  if (error instanceof SyntaxError) return response({ error: "invalid_input" }, 400);
+  console.error("workspaces handler failed", error);
+  return response({ error: "internal_error" }, 500);
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
