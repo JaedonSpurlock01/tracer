@@ -69,6 +69,7 @@ Open `http://127.0.0.1:3000/sign-in`. Locally no email is sent; read your sign-i
 | `E2E_AUTH_FAKE` | Sign-in emails. The code is shown at `/api/test/auth-otp` instead. |
 | `E2E_CLOUDFLARE_FAKE` | The Cloudflare account. Six made-up Sites with traffic and a placeholder screenshot. |
 | `E2E_DATAFORSEO_FAKE` | Search rankings. Any login works and every Keyword gets a predictable position. |
+| `E2E_OPENAI_FAKE` | Keyword Discovery. Suggest Keywords answers with predictable phrases built from the niche and Service Area. |
 | `E2E_TWILIO_FAKE` | Twilio numbers and call webhooks (browser tests only). |
 | `E2E_TRIGGER_FAKE` | Trigger.dev, so reports finish without background jobs (browser tests only). |
 

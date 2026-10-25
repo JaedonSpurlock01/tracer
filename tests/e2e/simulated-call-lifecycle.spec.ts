@@ -229,6 +229,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await expect(table.getByText("No Calls match these filters.")).toBeHidden();
 
       await page.goto(filteredPath);
+      await page.waitForLoadState("networkidle");
       await expect(row).toHaveCount(1);
       await row.getByRole("link", { name: "Open Call" }).click();
       await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}/calls/${callId}\\?`));

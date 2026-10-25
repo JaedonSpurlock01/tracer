@@ -6,7 +6,8 @@
  * @description
  *  Every price Tracer uses to project a Workspace's cost lives here as a
  *  named rate: Twilio number rental, inbound, forwarded, and recording
- *  minutes, Workers Paid, R2 storage, DataForSEO lookups, whisper-1
+ *  minutes, Workers Paid, R2 storage, DataForSEO lookups and Labs
+ *  keyword suggestions, whisper-1
  *  minutes, and gpt-5-mini tokens. The file also prices Telephony in
  *  cents from prorated rental and billed minutes, falls back to the
  *  per-minute and per-token rates for a usage row without a stored cost,
@@ -29,6 +30,7 @@
  *  https://www.twilio.com/en-us/voice/pricing/us
  *  https://developers.cloudflare.com/workers/platform/pricing/
  *  https://openai.com/api/pricing/
+ *  https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -43,6 +45,8 @@ export const rates = {
   workersPaidMonthlyUsd: 5,
   r2StoragePerGbMonthUsd: 0.015,
   dataforseoPerLookupUsd: 0.002,
+  dataforseoLabsPerTaskUsd: 0.012,
+  dataforseoLabsPerPhraseUsd: 0.00012,
   openaiWhisperPerMinuteUsd: 0.006,
   openaiGpt5MiniInputPerMillionTokensUsd: 0.25,
   openaiGpt5MiniOutputPerMillionTokensUsd: 2,
@@ -66,6 +70,8 @@ export const pricingGuide: PricingGuideEntry[] = [
   { key: "workersPaidMonthlyUsd", label: "Workers Paid", rate: rates.workersPaidMonthlyUsd, unit: "per month, shared", explanation: "One Cloudflare Workers Paid plan hosts Tracer and every Site. Its cost is split evenly across Active Workspaces." },
   { key: "r2StoragePerGbMonthUsd", label: "R2 storage", rate: rates.r2StoragePerGbMonthUsd, unit: "per GB per month, shared", explanation: "Stored Recording WAV and MP3 bytes across the Organization, split evenly across Active Workspaces like Workers Paid." },
   { key: "dataforseoPerLookupUsd", label: "Rank lookups", rate: rates.dataforseoPerLookupUsd, unit: "per lookup", explanation: "The daily rank check runs one DataForSEO lookup per Keyword of the linked Site." },
+  { key: "dataforseoLabsPerTaskUsd", label: "Keyword suggestion run", rate: rates.dataforseoLabsPerTaskUsd, unit: "per run", explanation: "Suggest Keywords measures the proposed phrases with one DataForSEO Labs request. It runs only when an Operator asks; reopening the panel reads the stored set." },
+  { key: "dataforseoLabsPerPhraseUsd", label: "Keyword suggestion phrases", rate: rates.dataforseoLabsPerPhraseUsd, unit: "per measured phrase", explanation: "Each phrase DataForSEO returns volume for adds this to the run, so about 30 phrases cost half a cent on top of the run. The gpt-5-mini proposal costs well under a cent." },
   { key: "openaiWhisperPerMinuteUsd", label: "Transcription", rate: rates.openaiWhisperPerMinuteUsd, unit: "per channel minute", explanation: "whisper-1 transcribes the Caller and Business channels separately, so a connected Recording bills twice its length. The cost stored with each Transcript is used when present." },
   { key: "openaiGpt5MiniInputPerMillionTokensUsd", label: "Lead Assessment input", rate: rates.openaiGpt5MiniInputPerMillionTokensUsd, unit: "per million tokens", explanation: "gpt-5-mini reads the Transcript and the fixed prompt. The cost stored with each Lead Assessment is used when present." },
   { key: "openaiGpt5MiniOutputPerMillionTokensUsd", label: "Lead Assessment output", rate: rates.openaiGpt5MiniOutputPerMillionTokensUsd, unit: "per million tokens", explanation: "The structured classification, summary, rationale, and evidence the model writes back." },

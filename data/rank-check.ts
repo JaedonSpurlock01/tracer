@@ -40,7 +40,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 import type { DataForSeoClient, DataForSeoSerpItem } from "@/data/dataforseo-client";
-import { createDataForSeoConnection, type DataForSeoConnection } from "@/data/dataforseo-connection";
+import { createDataForSeoConnection, recordDataForSeoLookup, type DataForSeoConnection } from "@/data/dataforseo-connection";
 import { IntegrationsError } from "@/data/integrations-error";
 
 export interface RankCheckDeps {
@@ -72,10 +72,6 @@ type KeywordRow = {
 
 function utcDay(at: Date): string {
   return at.toISOString().slice(0, 10);
-}
-
-function utcMonth(at: Date): string {
-  return `${utcDay(at).slice(0, 7)}-01`;
 }
 
 function bareHostname(hostname: string): string {
@@ -120,13 +116,7 @@ async function recordFailedCheck(deps: RankCheckDeps, keyword: KeywordRow, error
 }
 
 async function countLookup(deps: RankCheckDeps, organizationId: string): Promise<void> {
-  await deps.pool.query(
-    `update dataforseo_connection
-        set lookups_this_month = case when lookups_month = $2::date then lookups_this_month + 1 else 1 end,
-            lookups_month = $2::date, updated_at = $3
-      where organization_id = $1`,
-    [organizationId, utcMonth(deps.now), deps.now],
-  );
+  await recordDataForSeoLookup(deps.pool, organizationId, deps.now);
 }
 
 async function checkOrganization(deps: RankCheckDeps, organizationId: string, result: RankCheckResult): Promise<void> {

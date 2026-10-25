@@ -75,6 +75,7 @@ const fakeDataForSeo: DataForSeoClient = {
   },
   async serp() { throw new Error("not implemented"); },
   async listLocations() { throw new Error("not implemented"); },
+  async keywordOverview() { throw new Error("not implemented"); },
 };
 
 const database = () => drizzle(pool!, { schema });

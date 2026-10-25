@@ -1,0 +1,1 @@
+ALTER TABLE "site" ADD COLUMN "keyword_suggestions" jsonb;

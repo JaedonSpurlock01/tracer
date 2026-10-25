@@ -1,0 +1,90 @@
+{
+  "version": "0.1.20251020",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.4121 sec.",
+  "cost": 0.0112,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "10251400-1535-0387-0000-5b0d2a1c9f41",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.3398 sec.",
+      "cost": 0.0112,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_overview", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_overview",
+        "se_type": "google",
+        "keywords": ["asphalt paving pocatello", "driveway paving pocatello idaho", "parking lot sealcoating pocatello", "pothole repair near me"],
+        "location_code": 1016141,
+        "language_code": "en"
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 1016141,
+          "language_code": "en",
+          "total_count": 3,
+          "items_count": 3,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "asphalt paving pocatello",
+              "location_code": 1016141,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-10-11 02:14:33 +00:00",
+                "competition": 0.41,
+                "competition_level": "MEDIUM",
+                "cpc": 9.87,
+                "search_volume": 210,
+                "monthly_searches": [{ "year": 2026, "month": 9, "search_volume": 260 }, { "year": 2026, "month": 8, "search_volume": 320 }]
+              },
+              "keyword_properties": { "se_type": "google", "core_keyword": "asphalt paving", "keyword_difficulty": 23, "detected_language": "en", "is_another_language": false },
+              "search_intent_info": { "se_type": "google", "main_intent": "commercial", "foreign_intent": ["transactional"], "last_updated_time": "2026-10-11 02:14:33 +00:00" }
+            },
+            {
+              "se_type": "google",
+              "keyword": "driveway paving pocatello idaho",
+              "location_code": 1016141,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-10-11 02:14:33 +00:00",
+                "competition": 0.37,
+                "competition_level": "MEDIUM",
+                "cpc": 11.2,
+                "search_volume": 480,
+                "monthly_searches": [{ "year": 2026, "month": 9, "search_volume": 590 }]
+              },
+              "keyword_properties": { "se_type": "google", "core_keyword": "driveway paving", "keyword_difficulty": 31, "detected_language": "en", "is_another_language": false },
+              "search_intent_info": { "se_type": "google", "main_intent": "transactional", "foreign_intent": null, "last_updated_time": "2026-10-11 02:14:33 +00:00" }
+            },
+            {
+              "se_type": "google",
+              "keyword": "parking lot sealcoating pocatello",
+              "location_code": 1016141,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-10-11 02:14:33 +00:00",
+                "competition": null,
+                "competition_level": null,
+                "cpc": null,
+                "search_volume": null,
+                "monthly_searches": null
+              },
+              "keyword_properties": { "se_type": "google", "core_keyword": null, "keyword_difficulty": null, "detected_language": "en", "is_another_language": false },
+              "search_intent_info": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

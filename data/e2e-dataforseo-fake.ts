@@ -51,6 +51,9 @@ export function createE2eDataForSeoFake(): DataForSeoClient {
     async listLocations() {
       return fakeLocations;
     },
+    async keywordOverview(_credential, query) {
+      return query.keywords.map((phrase) => ({ phrase, monthlyVolume: (phrase.length % 7) * 40, difficulty: phrase.length % 50, intent: "commercial" as const }));
+    },
     async verify(credential) {
       return { login: credential.login };
     },

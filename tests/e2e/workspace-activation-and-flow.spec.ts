@@ -70,7 +70,7 @@ test.describe.serial("Workspace activation and Flow publication", () => {
     expect(workspaceId).not.toBe("");
     await signInAsOperator(page, request);
     await page.goto(`/workspaces/${workspaceId}/flow`);
-    await expect(page.getByText("Published v1")).toBeVisible();
+    await expect(page.getByRole("main").getByText("Published v1")).toBeVisible();
     await page.getByRole("button", { name: "Edit Flow" }).click();
     await page.getByTestId("flow-node-forward").click();
     await page.getByRole("combobox", { name: "missed" }).selectOption("none");

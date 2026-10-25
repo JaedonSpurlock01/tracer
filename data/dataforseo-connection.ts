@@ -6,8 +6,9 @@
  * @description
  *  Stores the encrypted DataForSEO API password beside its login, verifies
  *  the credential on connect, Test, and rotate, counts the Organization's
- *  live Keywords and this month's lookups for the Integrations card, and
- *  removes the credential on disconnect. Keywords and stored positions
+ *  live Keywords and this month's lookups for the Integrations card (Rank
+ *  Check and Keyword Discovery each record theirs here), and removes the
+ *  credential on disconnect. Keywords and stored positions
  *  stay when the provider is disconnected.
  *
  * @remarks
@@ -101,6 +102,18 @@ function toConnectionRecord(row: ConnectionRow, credentialState: CredentialState
     lookupsThisMonth: Number(row.lookups_this_month),
     keywordCount: Number(row.keyword_count),
   };
+}
+
+/** Counts one billed DataForSEO request on the Organization's connection for the current UTC month; the counter resets when the month changes. */
+export async function recordDataForSeoLookup(client: Pool | PoolClient, organizationId: string, now: Date): Promise<void> {
+  const month = `${now.toISOString().slice(0, 7)}-01`;
+  await client.query(
+    `update dataforseo_connection
+        set lookups_this_month = case when lookups_month = $2::date then lookups_this_month + 1 else 1 end,
+            lookups_month = $2::date, updated_at = $3
+      where organization_id = $1`,
+    [organizationId, month, now],
+  );
 }
 
 function providerFailure(error: unknown): IntegrationsError {

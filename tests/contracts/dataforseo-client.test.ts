@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDataForSeoClient, DataForSeoClientError } from "@/data/dataforseo-client";
 
 import authenticationError from "./fixtures/dataforseo/authentication-error.json";
+import keywordOverview from "./fixtures/dataforseo/labs-keyword-overview.json";
 import locationsUs from "./fixtures/dataforseo/locations-us.json";
 import serpAdvanced from "./fixtures/dataforseo/serp-organic-live-advanced.json";
 import serpTaskError from "./fixtures/dataforseo/serp-task-error.json";
@@ -74,6 +75,28 @@ describe("DataForSEO client", () => {
         { position: 8, type: "organic", domain: "www.yelp.com", url: "https://www.yelp.com/search?find_desc=Asphalt+Paving&find_loc=Pocatello%2C+ID", title: "Top 10 Best Asphalt Paving in Pocatello, ID" },
       ],
     });
+  });
+
+  it("posts one Labs keyword overview task and maps each phrase's monthly volume, difficulty, and intent, leaving a phrase without data at zero", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(keywordOverview));
+    const client = createDataForSeoClient({ fetch, baseUrl });
+
+    const result = await client.keywordOverview(credential, {
+      keywords: ["asphalt paving pocatello", "driveway paving pocatello idaho", "parking lot sealcoating pocatello", "pothole repair near me"],
+      locationCode: 1016141,
+      languageCode: "en",
+    });
+
+    expect(fetch).toHaveBeenCalledWith(`${baseUrl}/dataforseo_labs/google/keyword_overview/live`, {
+      method: "POST",
+      headers: { Authorization: basic, "content-type": "application/json" },
+      body: JSON.stringify([{ keywords: ["asphalt paving pocatello", "driveway paving pocatello idaho", "parking lot sealcoating pocatello", "pothole repair near me"], location_code: 1016141, language_code: "en" }]),
+    });
+    expect(result).toEqual([
+      { phrase: "asphalt paving pocatello", monthlyVolume: 210, difficulty: 23, intent: "commercial" },
+      { phrase: "driveway paving pocatello idaho", monthlyVolume: 480, difficulty: 31, intent: "transactional" },
+      { phrase: "parking lot sealcoating pocatello", monthlyVolume: 0, difficulty: null, intent: null },
+    ]);
   });
 
   it("sends a location name when no code is known", async () => {

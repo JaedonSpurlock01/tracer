@@ -1,7 +1,7 @@
 /**
  * -------------------------------------------------------------------------
  * @file   site-search-settings.tsx
- * @brief  Edits a linked Site's Service Area and Keywords.
+ * @brief  Edits a linked Site's Service Area and Keywords and suggests new Keywords.
  *
  * @description
  *  Renders the Service Area picker (a location search over DataForSEO's
@@ -9,17 +9,23 @@
  *  does not know, with Save) and
  *  the Keywords editor (each live Keyword with a weight Select and
  *  Remove, an add row with a phrase and weight, the count against the
- *  25 Keyword limit, and inline validation) inside the Workspace
- *  Settings Site section.
+ *  25 Keyword limit, and inline validation) and the Suggested Keywords
+ *  panel (Suggest Keywords asks Tracer for phrases from the Business
+ *  niche and Service Area with their monthly volume, the Operator ticks
+ *  the ones to track, and Add selected adds them at weight 3) inside the
+ *  Workspace Settings Site section.
  *
  * @remarks
  *  Every change goes through the Workspace Site routes and then clears
  *  the Client Cache so the Site page's Search panel reads the new set.
  *  A duplicate phrase and the Keyword limit are reported inline from the
- *  route's conflict codes rather than guessed on the client.
+ *  route's conflict codes rather than guessed on the client. The last
+ *  suggestion set arrives with the page so reopening it bills nothing;
+ *  Suggest again asks both providers once more.
  *
  * @see
  *  data/site-keywords.ts
+ *  data/keyword-discovery.ts
  *  components/tracer/workspace-settings-view.tsx
  *
  * @author Jaedon Spurlock
@@ -27,19 +33,25 @@
  */
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import type { KeywordSuggestionSet } from "@/data/keyword-discovery";
 import { siteKeywordLimit, type ServiceArea, type SiteKeywordRecord } from "@/data/site-keywords";
 
 export interface SiteSearchSettingsData {
   serviceArea: ServiceArea;
   keywords: SiteKeywordRecord[];
+  suggestions: KeywordSuggestionSet | null;
 }
+
+const suggestedKeywordWeight = 3;
 
 const weights = ["1", "2", "3", "4", "5"];
 
@@ -79,6 +91,11 @@ export default function SiteSearchSettings({ workspaceId, initial, onMessage }: 
   const [addError, setAddError] = useState("");
   const [keywordError, setKeywordError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState(initial.suggestions);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [finding, setFinding] = useState(false);
+  const [suggestError, setSuggestError] = useState("");
+  const [nicheMissing, setNicheMissing] = useState(false);
   const base = `/api/workspaces/${workspaceId}/site`;
   const atLimit = keywords.length >= siteKeywordLimit;
 
@@ -198,6 +215,72 @@ export default function SiteSearchSettings({ workspaceId, initial, onMessage }: 
     setBusy(false);
   }
 
+  async function suggest() {
+    setFinding(true);
+    setSuggestError("");
+    setNicheMissing(false);
+    const response = await fetch(`${base}/keywords/suggest`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refresh: suggestions !== null }),
+    }).catch(() => null);
+    const body = response ? ((await response.json().catch(() => ({}))) as { suggestions?: KeywordSuggestionSet; error?: string }) : {};
+    if (response?.ok && body.suggestions) {
+      setSuggestions(body.suggestions);
+      setSelected(new Set());
+    } else if (body.error === "business_niche_missing") {
+      setNicheMissing(true);
+    } else if (body.error === "not_connected") {
+      setSuggestError("Connect DataForSEO on Integrations before suggesting Keywords.");
+    } else if (response?.status === 503) {
+      setSuggestError("OpenAI and DataForSEO must both be configured before Tracer can suggest Keywords.");
+    } else {
+      setSuggestError("Keywords could not be suggested right now.");
+    }
+    setFinding(false);
+  }
+
+  function toggleSelected(phrase: string, checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(phrase);
+      else next.delete(phrase);
+      return next;
+    });
+  }
+
+  async function addSelected() {
+    setBusy(true);
+    setSuggestError("");
+    let added = 0;
+    for (const phrase of selected) {
+      const response = await mutationFetch(`${base}/keywords`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phrase, weight: suggestedKeywordWeight }),
+      }).catch(() => null);
+      const body = response ? ((await response.json().catch(() => ({}))) as { keyword?: SiteKeywordRecord; error?: string }) : {};
+      if (response?.ok && body.keyword) {
+        added += 1;
+        setKeywords((current) => [...current, body.keyword!]);
+      } else if (body.error === "keyword_limit") {
+        setSuggestError(`At most ${siteKeywordLimit} Keywords per Site; the rest were not added.`);
+        break;
+      } else if (body.error !== "duplicate_phrase") {
+        setSuggestError(`${phrase} could not be added.`);
+        break;
+      }
+      setSuggestions((current) => (current ? { ...current, suggestions: current.suggestions.filter((suggestion) => suggestion.phrase !== phrase) } : current));
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(phrase);
+        return next;
+      });
+    }
+    if (added > 0) onMessage(added === 1 ? "Keyword added." : `${added} Keywords added.`);
+    setBusy(false);
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <section role="region" aria-labelledby="service-area-title" className="flex flex-col gap-3">
@@ -279,6 +362,47 @@ export default function SiteSearchSettings({ workspaceId, initial, onMessage }: 
           <Button type="button" disabled={busy || atLimit} onClick={() => void addKeyword()}>
             Add Keyword
           </Button>
+        </div>
+      </section>
+      <section role="region" aria-labelledby="keyword-suggestions-title" className="flex flex-col gap-3">
+        <div className="flex flex-col gap-0.5">
+          <h3 id="keyword-suggestions-title" className="font-semibold">Suggested Keywords</h3>
+          <p className="text-sm text-muted-foreground">Phrases people in the Service Area search for the Business niche, with their monthly Google searches. Tick the ones to track; each is added at weight {suggestedKeywordWeight}.</p>
+        </div>
+        {nicheMissing ? (
+          <p role="alert" className="text-sm">
+            Add the Business niche first so Tracer knows what to suggest. <Link href={`/workspaces/${workspaceId}/settings/business`} className="underline underline-offset-4">Business settings</Link>
+          </p>
+        ) : null}
+        {suggestError ? <p role="alert" className="text-sm">{suggestError}</p> : null}
+        {finding ? <p role="status" className="text-sm text-muted-foreground">Finding keywords</p> : null}
+        {suggestions && suggestions.suggestions.length > 0 ? (
+          <ul className="flex flex-col divide-y divide-border">
+            {suggestions.suggestions.map((suggestion) => (
+              <li key={suggestion.phrase} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <span className="flex min-w-0 items-center gap-3">
+                  <Checkbox aria-label={suggestion.phrase} checked={selected.has(suggestion.phrase)} disabled={busy || atLimit} onCheckedChange={(checked) => toggleSelected(suggestion.phrase, checked === true)} />
+                  <span className="truncate">{suggestion.phrase}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground tabular-nums">
+                  {suggestion.intent ? <span className="capitalize">{suggestion.intent}</span> : null}
+                  <span>{suggestion.monthlyVolume > 0 ? `${suggestion.monthlyVolume.toLocaleString("en-US")} / mo` : "No volume data"}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : suggestions && !finding ? (
+          <p className="text-sm text-muted-foreground">Every suggestion is tracked. Suggest again for more.</p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={busy || finding} onClick={() => void suggest()}>
+            {suggestions ? "Suggest again" : "Suggest Keywords"}
+          </Button>
+          {suggestions && suggestions.suggestions.length > 0 ? (
+            <Button type="button" disabled={busy || finding || atLimit || selected.size === 0} onClick={() => void addSelected()}>
+              Add selected
+            </Button>
+          ) : null}
         </div>
       </section>
     </div>

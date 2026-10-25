@@ -15,11 +15,11 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M18 - Production Hardening and Acceptance, started by the Product Owner on 2026-10-21
-- **Next milestone:** M19 - Production Deployment and Stabilization
+- **Current milestone:** M24 - Keyword Discovery, started on 2026-10-25 after the Product Owner deferred M18
+- **Next milestone:** M18 - Production Hardening and Acceptance resumes, then M19 - Production Deployment and Stabilization
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Staging data reset to empty on 2026-10-21 for acceptance; Production deployed from `main` on 2026-10-22 and its data reset to empty on 2026-10-24 (the Operator user, Organization, and membership kept) after the master key finding below
 - **Production status:** Deployed ahead of M19 for Product Owner acceptance; Production data empty since 2026-10-24; the Neon Production compute never suspends since 2026-10-24
-- **Last roadmap review:** 2026-10-24
+- **Last roadmap review:** 2026-10-25
 
 M9 is Complete and merged to `main`. It delivered signed Twilio voice and status webhooks, the encrypted Organization Twilio Auth Token, idempotent Call lifecycle and provider-event persistence, the minimal constrained TwiML renderer, and Tracking Number replacement. M10 is Complete and merged to `main`. It delivered Business Hours, Keypad Gate, Whisper, and Voicemail execution, the Business Hours and override editor, text-to-speech prompt configuration with a browser Preview, and the Workspace Overview Flow summary. The Product Owner verified M10 on Staging before merging. Staging verification also fixed stale prefetched pages after a write and Resume Setup reverting a new Destination Number after a detach. M11 is Complete and merged to `main`. It delivered dual-channel connected-conversation recording, signed Recording callbacks, idempotent Trigger.dev transfer from Twilio to private R2 with size and checksum verification before Twilio cleanup, a 12-hour recovery sweep, the Workspace-authorized Recording stream route, and R2 and Trigger.dev health in Integrations. M12 is Complete. It delivered Trigger.dev waveform peak generation with recovery-sweep coverage, the Workspace-authorized peaks route, media expiry 12 months after Call start on both media routes, Call Detail with an accessible wavesurfer.js player, Call facts, processing timeline, and availability states, and Workspace Overview Recent Calls. M13 is Complete. It delivered analysis eligibility decided when a Recording is Stored, per-channel `whisper-1` Transcripts with 3-hour capping, immutable validated `gpt-5-mini` Lead Assessments with Transcript-linked evidence, the Operator Lead Review with reporting precedence, Operator Retry and recovery-sweep coverage for both stages, Call Detail Transcript, Lead Assessment, and Lead Review sections, and OpenAI processing health in Integrations. The Staging test-call check for M13 is deferred until after M14. M14 is Complete. It delivered server-backed global and Workspace Calls with canonical outcomes, Lead Review precedence, and server pagination and sorting; one filter query for the toolbar and the advanced popover, including AND and OR condition groups inside the readable Workspace scope; Workspace tabs; Call Detail with a validated back link to its source list and previous and next Call navigation; the append-only Call event log with backfill; and the day-grouped Activity timeline with 30-second visible-tab refresh and region-isolated failures. M15 is Complete. It delivered one analytics query service shared by Home, Workspace Overview, and the Workspaces list; Total Calls, Answer Rate over forwarded Calls, Good Leads with Lead Review precedence, and Average Connected Duration with equal prior-period comparisons; the three-series trend chart in the user or Workspace timezone; Workspace performance for multi-Workspace scope; Recent Calls; routing health with webhook health from accepted voice webhooks; and 7, 30, 90, All Time, and bounded custom ranges. M16 is Complete. It delivered scoped PDF and CSV reports generated in Trigger.dev, Calls Export CSV and Recording ZIP exports with a CSV manifest and a 500-Recording limit, a precomputed stereo MP3 per Stored Recording with Download MP3 and single-Call Export Call, requester-only Report history and the notification popover with downloads that recheck access to the whole Workspace scope, and seven-day artifact expiry through the `report-artifacts` R2 lifecycle rule with a 6-hour sweep that fails stuck jobs and deletes metadata after 90 days.
 
@@ -189,8 +189,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M21 | Search Rankings | Complete | Preview and Staging | M20 |
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
 | M23 | Form Submissions | Complete | Preview and Staging | M22 |
-| M18 | Production Hardening and Acceptance | In Progress | Staging | M23 |
-| M24 | Keyword Discovery | Not Started | Preview and Staging | M18 |
+| M18 | Production Hardening and Acceptance | Deferred | Staging | M23 |
+| M24 | Keyword Discovery | In Progress | Preview and Staging | M18 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M24 |
 
 M18 and M19 keep their identifiers so earlier Changelog entries stay valid; the sequence runs M17, M20, M21, M22, M23, M18, M24, M19. M24 was added on 2026-10-24 at the Product Owner's request and sits before M19 because it depends on the validated Service Area that M18's Search adapter work introduces. Phase 7 (Business HQ) sits between Phase 6 and the deployment phase because the Product Owner decided on 2026-10-20 that every Business HQ domain ships before Production, and on 2026-10-21 pulled Form Submissions forward from the backlog into Phase 7 as M23 for the same reason.
@@ -1228,7 +1228,8 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 ### M18 - Production Hardening and Acceptance
 
-- **Status:** In Progress
+- **Status:** Deferred
+- **Deferral note:** The Product Owner deferred M18 on 2026-10-25 so M24 could start once the four 2026-10-24 slices had merged to `main`. The eight acceptance slices and the required acceptance below are untouched and resume after M24; the Staging deployment of the four slices and the provider reconnects it needs are tracked in the Changelog.
 - **Outcome:** The complete first release passes security, reliability, accessibility, cost, and operational acceptance in Staging.
 - **Depends on:** M23
 - **Target environment:** Staging
@@ -1282,17 +1283,17 @@ M23 closed on 2026-10-21 after the domain, contract, integration, component, Wor
 
 ### M24 - Keyword Discovery
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** An Operator editing a Site's Keywords can ask Tracer to suggest city-qualified search phrases for the Business's niche and Service Area, see each suggestion's monthly search volume, and add the ones worth tracking, instead of guessing the Keyword list by hand.
 - **Depends on:** M18 (the validated Service Area and the DataForSEO adapter that reports task status)
 - **Target environment:** Preview and Staging
-- **Execution note:** Added by the Product Owner on 2026-10-24. One Keyword Discovery module with one interface, `suggest(siteId)`, returning ranked suggestions with phrase, monthly volume, and intent. Inside it, the OpenAI adapter (`gpt-5-mini` through the existing structured-output client) proposes about 30 phrases from the Business niche, the Service Area, and the existing Keywords, and the DataForSEO Labs `keyword_overview` endpoint (about $0.018 per 50 phrases) adds search volume, difficulty, and intent for the Service Area's location; the module dedupes against existing Keywords and ranks by volume. Nothing is saved until the Operator ticks suggestions, which are added as Keywords at weight 3. The last suggestion set is cached per Site in one jsonb column so reopening the panel does not bill again. The run happens inside the request with a visible Finding keywords state. A Site whose Business has no niche gets a message pointing at Business settings rather than a run. OpenAI proposes, DataForSEO measures: OpenAI alone would invent popularity and DataForSEO alone needs seed phrases, and both adapters already exist in the codebase.
+- **Execution note:** Added by the Product Owner on 2026-10-24 and started on 2026-10-25 on `feat/keyword-discovery`. One Keyword Discovery module with one interface, `suggest(siteId)`, returning ranked suggestions with phrase, monthly volume, and intent. Inside it, the OpenAI adapter (`gpt-5-mini` through the existing structured-output client) proposes about 30 phrases from the Business niche, the Service Area, and the existing Keywords, and the DataForSEO Labs `keyword_overview` endpoint (about $0.018 per 50 phrases) adds search volume, difficulty, and intent for the Service Area's location; the module dedupes against existing Keywords and ranks by volume. Nothing is saved until the Operator ticks suggestions, which are added as Keywords at weight 3. The last suggestion set is cached per Site in one jsonb column so reopening the panel does not bill again. The run happens inside the request with a visible Finding keywords state. A Site whose Business has no niche gets a message pointing at Business settings rather than a run. OpenAI proposes, DataForSEO measures: OpenAI alone would invent popularity and DataForSEO alone needs seed phrases, and both adapters already exist in the codebase.
 
 #### Vertical slices
 
-1. Keyword Discovery module: prompt, structured candidate schema, volume lookup, dedupe, ranking, and the cached suggestion set.
-2. Operator route and Site settings panel: Suggest Keywords, Finding keywords, tick to add with weight 3, and the no-niche message.
-3. Lookup counting on the DataForSEO connection and the cost line in the Pricing guide.
+1. Keyword Discovery module: prompt, structured candidate schema, volume lookup, dedupe, ranking, and the cached suggestion set. Landed 2026-10-25 with migration 0029 (`site.keyword_suggestions`) and the Labs `keyword_overview` call on the DataForSEO client.
+2. Operator route and Site settings panel: Suggest Keywords, Finding keywords, tick to add with weight 3, and the no-niche message. Landed 2026-10-25 as `POST site/keywords/suggest`, the suggestion set on the Keywords read, the Suggested Keywords panel, and an `E2E_OPENAI_FAKE` responder for local and browser runs.
+3. Lookup counting on the DataForSEO connection and the cost line in the Pricing guide. Landed 2026-10-25: one lookup per measured run through the counter Rank Check uses, and the Labs prices ($0.012 per request, $0.00012 per measured phrase) in the rate table.
 
 #### Test-first behaviors
 
