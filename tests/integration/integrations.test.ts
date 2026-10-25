@@ -9,6 +9,10 @@
  *  Hyperdrive and Email Service checks.
  *
  * @remarks
+ *  `pool.end()` resolves before its clients' sockets close, so stopping the
+ *  container right after it can send a pooled client PostgreSQL's
+ *  administrator shutdown (57P01) with no listener left; each client
+ *  ignores that one error and still throws any other.
  *  The suite uses one PostgreSQL container, real Better Auth sessions, and a
  *  deterministic in-memory Twilio provider boundary.
  *
@@ -157,6 +161,11 @@ async function json(request: Request, routeHandler = handler()): Promise<{ respo
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool.on("connect", (client) =>
+    client.on("error", (error: Error & { code?: string }) => {
+      if (error.code !== "57P01") throw error;
+    }),
+  );
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, {
     email: "operator@example.com",
