@@ -28,8 +28,10 @@ import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -51,7 +53,7 @@ async function migrateBeforeEventLog(connectionString: string): Promise<void> {
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: { tag: string }[] };
     const index = journal.entries.findIndex((entry) => entry.tag === eventLogMigration);
     await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.slice(0, index) }));
-    const migrationPool = new Pool({ connectionString, max: 1 });
+    const migrationPool = createTestPool(connectionString, { max: 1 });
     try {
       await migrate(drizzle(migrationPool), { migrationsFolder: folder });
     } finally {
@@ -140,7 +142,7 @@ const event = (kind: string, occurredAt: Date, detail: Record<string, unknown> =
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateBeforeEventLog(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ($1, 'Backfill Organization', 'backfill-organization', now())", [organizationId]);
   await pool.query(`insert into "user" (id, name, email, created_at, updated_at) values ('backfill-operator', 'Backfill Operator', 'backfill@example.com', now(), now())`);

@@ -31,8 +31,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { createActivityHandler } from "@/data/activity-handler";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -264,7 +266,7 @@ async function boundaryCallsInWindow(timeZone: string): Promise<string[]> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   ({ organizationId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" }));
   operatorId = (await pool.query<{ id: string }>(`select id from "user" where email = 'operator@example.com'`)).rows[0].id;

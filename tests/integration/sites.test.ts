@@ -23,8 +23,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -116,7 +118,7 @@ async function openLinks(workspaceId: string): Promise<{ site_id: string; ended_
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;

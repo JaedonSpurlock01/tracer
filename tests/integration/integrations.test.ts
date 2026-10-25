@@ -24,8 +24,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
@@ -160,12 +162,7 @@ async function json(request: Request, routeHandler = handler()): Promise<{ respo
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  pool.on("connect", (client) =>
-    client.on("error", (error: Error & { code?: string }) => {
-      if (error.code !== "57P01") throw error;
-    }),
-  );
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, {
     email: "operator@example.com",

@@ -18,8 +18,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
@@ -183,8 +185,8 @@ function generatedGraph(destinationNumber = "+14155550101", recordingEnabled = f
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
-  routingPool = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  pool = createTestPool(container.getConnectionUri());
+  routingPool = createTestPool(container.getConnectionUri(), { max: 1 });
   await migrateDatabase(container.getConnectionUri());
   const first = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Routing Operator", timezone: "UTC" });
   organizationId = first.organizationId;

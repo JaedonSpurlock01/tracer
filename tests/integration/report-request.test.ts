@@ -24,8 +24,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import type { Actor } from "@/data/authorization";
 import { migrateDatabase } from "@/data/migrate";
@@ -53,7 +55,7 @@ async function seedWorkspace(id: string, name: string, timezone: string): Promis
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York");

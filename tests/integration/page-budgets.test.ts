@@ -27,8 +27,10 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import { activityFiltersFromSearchParams } from "@/data/activity-query";
 import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
@@ -155,7 +157,7 @@ async function workspaceNavigation(name: keyof typeof budgets, load: (connection
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   connectionUri = container.getConnectionUri();
-  pool = new Pool({ connectionString: connectionUri });
+  pool = createTestPool(connectionUri);
   await migrateDatabase(connectionUri);
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   actor = { userId: bootstrapped.userId, organizationId: bootstrapped.organizationId, name: "Example Operator", email: "operator@example.com", timezone: "America/Chicago", state: "Active", role: "Operator" };

@@ -31,8 +31,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -218,7 +220,7 @@ async function recordingRow(id: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
   organizationId = bootstrapped.organizationId;

@@ -29,8 +29,10 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createTestPool } from "./test-pool";
 
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -110,7 +112,7 @@ async function seedCall(input: SeedCall): Promise<void> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = new Pool({ connectionString: container.getConnectionUri() });
+  pool = createTestPool(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
   await pool.query("insert into organization (id, name, slug, created_at) values ($1, $1, $1, now()), ('other-org', 'other-org', 'other-org', now())", [organizationId]);
   await seedWorkspace("pocatello", "UTC", "Active", "2026-10-16T00:00:00Z");
