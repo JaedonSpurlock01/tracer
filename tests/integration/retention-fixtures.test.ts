@@ -25,11 +25,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
 import { sweepRecordingMedia } from "@/data/media-retention";
@@ -45,7 +45,7 @@ const localUrl = "postgresql://postgres:postgres@127.0.0.1:5433/tracer";
 const neonUrl = "postgresql://tracer_owner:secret@ep-example-123456.us-east-2.aws.neon.tech/neondb?sslmode=require";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 interface FakeR2 extends RetentionFixtureObjects, Pick<ArtifactObjects, "delete"> {
   objects: Map<string, Uint8Array>;
@@ -80,7 +80,7 @@ function fixtures(r2: FakeR2, overrides: { databaseUrl?: string; bucket?: string
   return createRetentionFixtures({
     databaseUrl: overrides.databaseUrl ?? localUrl,
     bucket: overrides.bucket ?? "tracer-recordings-staging",
-    pool: pool!,
+    database: database!,
     objects: r2,
     organizationId: "fleet",
     workspaceId: "north",
@@ -88,7 +88,7 @@ function fixtures(r2: FakeR2, overrides: { databaseUrl?: string; bucket?: string
 }
 
 async function count(sql: string): Promise<number> {
-  return Number((await pool!.query<{ count: string }>(sql)).rows[0].count);
+  return Number((await database!.query<{ count: string }>(sql)).rows[0].count);
 }
 
 async function contentCounts() {
@@ -105,34 +105,34 @@ async function contentCounts() {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  pool = createTestPool(container.getConnectionUri());
-  await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
-  await pool.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('fleet-operator-member', 'fleet', 'fleet-operator', 'owner', now())");
-  await pool.query(
+  database = createTestDatabase(container.getConnectionUri());
+  await database.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
+  await database.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('fleet-operator-member', 'fleet', 'fleet-operator', 'owner', now())");
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, analysis_enabled, created_at, updated_at)
      values ('north', 'fleet', 'North Plumbing', 'America/Chicago', 'Active', true, true, now(), now())`,
   );
-  await pool.query(
+  await database.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
      values ('fleet-connection', 'fleet', 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $1, 'fleet-operator', now(), now(), now())`,
     [await encryptSecret(masterKey, "fixture-api-key-secret")],
   );
-  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
-  await pool.query(
+  await database.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('north-number', 'fleet', 'PN${"1".repeat(32)}', '+14155550101', 'Tracking Number', true, now(), now(), now(), now())`,
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('north-assignment', 'fleet', 'north', 'north-number', '+14155550101', '2025-01-06T15:12:07.311Z', now())`,
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ('north-flow', 'fleet', 'north', 1, $1, now())", [JSON.stringify(graph)]);
+  await database.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ('north-flow', 'fleet', 'north', 1, $1, now())", [JSON.stringify(graph)]);
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -157,7 +157,7 @@ describe.sequential("retention fixtures", () => {
       ["fresh", "retention-fixture-north-fresh", true],
     ]);
     expect(await contentCounts()).toEqual({ calls: 3, recordings: 3, transcripts: 2, assessments: 2, evidence: 2, reviews: 2 });
-    const calls = await pool!.query<{ id: string; started_at: Date; twilio_call_sid: string; twilio_recording_sid: string; transfer_state: string; twilio_cleanup_state: string }>(
+    const calls = await database!.query<{ id: string; started_at: Date; twilio_call_sid: string; twilio_recording_sid: string; transfer_state: string; twilio_cleanup_state: string }>(
       `select c.id, c.started_at, c.twilio_call_sid, r.twilio_recording_sid, r.transfer_state, r.twilio_cleanup_state
          from call c join recording r on r.call_id = c.id where c.id like 'retention-fixture-%' order by c.id`,
     );
@@ -181,7 +181,7 @@ describe.sequential("retention fixtures", () => {
       "organizations/fleet/workspaces/north/calls/retention-fixture-north-fresh/recordings/retention-fixture-north-fresh-recording.peaks.json",
       "organizations/fleet/workspaces/north/calls/retention-fixture-north-fresh/recordings/retention-fixture-north-fresh-recording.wav",
     ]);
-    const sizes = await pool!.query<{ size_bytes: string; mp3_size_bytes: string; r2_object_key: string; mp3_object_key: string }>(
+    const sizes = await database!.query<{ size_bytes: string; mp3_size_bytes: string; r2_object_key: string; mp3_object_key: string }>(
       "select size_bytes, mp3_size_bytes, r2_object_key, mp3_object_key from recording where id = 'retention-fixture-north-fresh-recording'",
     );
     expect(Number(sizes.rows[0].size_bytes)).toBe(r2.objects.get(sizes.rows[0].r2_object_key)?.byteLength);
@@ -206,7 +206,7 @@ describe.sequential("retention fixtures", () => {
     expect(before[0].remaining).toEqual(expect.arrayContaining(["Transcript", "Lead Assessment evidence", "Lead Assessment rationale", expect.stringMatching(/\.wav$/)]));
     expect(before[1].remaining).toEqual(["Twilio copy (Pending)"]);
 
-    await expect(sweepRecordingMedia({ pool: pool!, objects: r2, twilio, masterKey }, now)).resolves.toEqual({ selected: 2, completed: 2, failed: 0 });
+    await expect(sweepRecordingMedia({ database: database!, objects: r2, twilio, masterKey }, now)).resolves.toEqual({ selected: 2, completed: 2, failed: 0 });
     expect(twilioDeletes).toHaveLength(1);
     expect(twilioDeletes[0]).toMatch(/Recordings\/REffffffff[0-9a-f]{24}\.json$/);
 
@@ -228,7 +228,7 @@ describe.sequential("retention fixtures", () => {
     const r2 = fakeR2();
     const wav = "organizations/fleet/workspaces/north/calls/retention-fixture-north-expired/recordings/retention-fixture-north-expired-recording.wav";
     r2.objects.set(wav, new Uint8Array([1, 2, 3]));
-    await pool!.query(
+    await database!.query(
       `insert into transcript (recording_id, organization_id, call_id, turns, model, created_at)
        values ('retention-fixture-north-expired-recording', 'fleet', 'retention-fixture-north-expired', '[]', 'whisper-1', now())`,
     );
@@ -243,7 +243,7 @@ describe.sequential("retention fixtures", () => {
 
     r2.objects.delete(fresh + ".mp3");
     expect((await fixtures(r2).verify())[2]).toMatchObject({ fixture: "fresh", status: "retained", agrees: false, remaining: [`${fresh}.mp3 is missing`] });
-    await pool!.query("delete from transcript where recording_id = 'retention-fixture-north-expired-recording'");
+    await database!.query("delete from transcript where recording_id = 'retention-fixture-north-expired-recording'");
   });
 
   it("removes every fixture row and R2 object and can seed them again", async () => {
@@ -263,8 +263,8 @@ describe.sequential("retention fixtures", () => {
 
   it("refuses a Workspace outside the Organization", async () => {
     const r2 = fakeR2();
-    await pool!.query("insert into organization (id, name, slug, created_at) values ('other', 'other', 'other', now())");
-    const other = createRetentionFixtures({ databaseUrl: localUrl, bucket: "tracer-recordings-staging", pool: pool!, objects: r2, organizationId: "other", workspaceId: "north" });
+    await database!.query("insert into organization (id, name, slug, created_at) values ('other', 'other', 'other', now())");
+    const other = createRetentionFixtures({ databaseUrl: localUrl, bucket: "tracer-recordings-staging", database: database!, objects: r2, organizationId: "other", workspaceId: "north" });
     await expect(other.seed(now)).rejects.toThrow(RetentionFixtureError);
     expect(r2.objects.size).toBe(0);
   });

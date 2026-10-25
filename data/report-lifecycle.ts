@@ -46,7 +46,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { reportCsvObjectKey, reportPdfObjectKey, reportZipObjectKey } from "@/data/report-artifact-lifecycle";
@@ -59,15 +59,15 @@ const objectKeys: Readonly<Record<ReportFileKind, (jobId: string) => string>> = 
 export const reportPurgeBatchSize = 100;
 
 export async function sweepReportJobs(
-  deps: { pool: Pool; objects: Pick<ArtifactObjects, "delete" | "abortMultipartUploads"> },
+  deps: { database: Database; objects: Pick<ArtifactObjects, "delete" | "abortMultipartUploads"> },
   now: Date,
 ): Promise<{ failed: number; purged: number; objectFailures: number }> {
-  const failed = await deps.pool.query(
+  const failed = await deps.database.query(
     `update report_job set status = 'Failed', failure_reason = $2
       where status in ('Queued', 'Generating') and requested_at < $1::timestamptz - interval '6 hours'`,
     [now, stuckReportJobReason],
   );
-  const expired = await deps.pool.query<{ id: string; files: ReportFileKind[] }>(
+  const expired = await deps.database.query<{ id: string; files: ReportFileKind[] }>(
     `select id, array(select jsonb_array_elements_text(parameters->'files')) as files
        from report_job
       where metadata_expire_at <= $1
@@ -83,7 +83,7 @@ export async function sweepReportJobs(
       objectFailures += 1;
     }
   }
-  const expiredEarly = await deps.pool.query<{ r2_key: string }>(
+  const expiredEarly = await deps.database.query<{ r2_key: string }>(
     `select a.r2_key
        from report_artifact a
        join report_job j on j.id = a.job_id
@@ -100,6 +100,6 @@ export async function sweepReportJobs(
       await attempt(() => deps.objects.delete(key));
     }
   }
-  const purged = await deps.pool.query("delete from report_job where id = any($1::text[]) and metadata_expire_at <= $2", [expired.rows.map(({ id }) => id), now]);
+  const purged = await deps.database.query("delete from report_job where id = any($1::text[]) and metadata_expire_at <= $2", [expired.rows.map(({ id }) => id), now]);
   return { failed: failed.rowCount ?? 0, purged: purged.rowCount ?? 0, objectFailures };
 }

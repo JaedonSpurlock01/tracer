@@ -30,6 +30,6 @@ export default async function UsersPage() {
   if (!isActiveOperatorActor(actor)) {
     notFound();
   }
-  const users = await withRequestRuntime(({ pool }) => createOperatorAdministration(pool, actor.organizationId).list());
+  const users = await withRequestRuntime(({ database }) => createOperatorAdministration(database, actor.organizationId).list());
   return <UsersView currentUserId={actor.userId} initialUsers={users} />;
 }

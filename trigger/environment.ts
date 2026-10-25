@@ -19,8 +19,6 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
-
 import { openDatabase, type Database } from "@/data/database";
 
 export function requiredEnvironment(name: string): string {
@@ -31,9 +29,4 @@ export function requiredEnvironment(name: string): string {
 
 export function taskDatabase(): Database {
   return openDatabase(requiredEnvironment("DATABASE_URL"), { max: 1 });
-}
-
-/** The Database's pool, for tasks whose modules have not yet taken a Database. */
-export function taskPool(): Pool {
-  return taskDatabase().pool;
 }

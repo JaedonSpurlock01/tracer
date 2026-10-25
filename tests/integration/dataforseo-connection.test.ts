@@ -20,12 +20,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import { DataForSeoClientError, type DataForSeoClient } from "@/data/dataforseo-client";
@@ -41,8 +40,7 @@ const firstPassword = "first-synthetic-dataforseo-password";
 const secondPassword = "second-synthetic-dataforseo-password";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const messages: TransactionalEmailMessage[] = [];
@@ -92,7 +90,7 @@ const auth = () => createTracerAuth({
 function handler(overrides: { masterKey?: string } = {}) {
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     cloudflare: fakeCloudflare,
     dataforseo: fakeDataForSeo,
@@ -137,17 +135,16 @@ function overview(cookie: string): Request {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
-  await pool.query(
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at)
      values ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at, removed_at) values
        ('keyword-1', 'site-pocatello', 'asphalt paving pocatello', 5, now(), now(), null),
        ('keyword-2', 'site-pocatello', 'driveway paving pocatello', 1, now(), now(), null),
@@ -156,7 +153,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -167,7 +164,7 @@ describe.sequential("Organization DataForSEO connection", () => {
     expect(malformed.response.status).toBe(400);
     const rejected = await json(post(cookie, "dataforseo/connect", { login, password: "rejected-password" }));
     expect(rejected.response.status).toBe(422);
-    await expect(pool!.query("select count(*) from dataforseo_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from dataforseo_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
     expect((await json(overview(cookie))).body.dataforseo).toBeNull();
   });
 
@@ -189,7 +186,7 @@ describe.sequential("Organization DataForSEO connection", () => {
     });
     expect(JSON.stringify(connected.body)).not.toContain(firstPassword);
     expect(JSON.stringify(connected.body)).not.toContain("iphertext");
-    const stored = await pool!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
+    const stored = await database!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
     expect(stored.rows[0]?.password_ciphertext).toMatch(/^v1:/);
     expect(stored.rows[0]?.password_ciphertext).not.toContain(firstPassword);
     const duplicate = await json(post(cookie, "dataforseo/connect", { login, password: firstPassword }));
@@ -241,10 +238,10 @@ describe.sequential("Organization DataForSEO connection", () => {
     const cookie = await signIn("operator@example.com");
     const rejected = await json(post(cookie, "dataforseo/rotate", { password: "rejected-password" }));
     expect(rejected.response.status).toBe(422);
-    const before = await pool!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
+    const before = await database!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
     const rotated = await json(post(cookie, "dataforseo/rotate", { password: secondPassword }));
     expect(rotated.response.status).toBe(200);
-    const after = await pool!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
+    const after = await database!.query<{ password_ciphertext: string }>("select password_ciphertext from dataforseo_connection where organization_id = $1", [organizationId]);
     expect(after.rows[0].password_ciphertext).not.toBe(before.rows[0].password_ciphertext);
     verifiedPasswords.length = 0;
     await json(post(cookie, "dataforseo/test"));
@@ -253,16 +250,16 @@ describe.sequential("Organization DataForSEO connection", () => {
 
   it("reports lookups this month from the connection and disconnects by removing the credential", async () => {
     const cookie = await signIn("operator@example.com");
-    await pool!.query("update dataforseo_connection set lookups_this_month = 14, lookups_month = date_trunc('month', current_date)::date, last_checked_at = now() where organization_id = $1", [organizationId]);
+    await database!.query("update dataforseo_connection set lookups_this_month = 14, lookups_month = date_trunc('month', current_date)::date, last_checked_at = now() where organization_id = $1", [organizationId]);
     const counted = await json(overview(cookie));
     expect(counted.body.dataforseo).toMatchObject({ lookupsThisMonth: 14, lastCheckedAt: expect.any(String) });
-    await pool!.query("update dataforseo_connection set lookups_month = (date_trunc('month', current_date) - interval '1 month')::date where organization_id = $1", [organizationId]);
+    await database!.query("update dataforseo_connection set lookups_month = (date_trunc('month', current_date) - interval '1 month')::date where organization_id = $1", [organizationId]);
     const stale = await json(overview(cookie));
     expect(stale.body.dataforseo).toMatchObject({ lookupsThisMonth: 0 });
     const disconnected = await json(post(cookie, "dataforseo/disconnect"));
     expect(disconnected.response.status).toBe(200);
-    await expect(pool!.query("select count(*) from dataforseo_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
-    await expect(pool!.query("select count(*) from site_keyword where removed_at is null")).resolves.toMatchObject({ rows: [{ count: "2" }] });
+    await expect(database!.query("select count(*) from dataforseo_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from site_keyword where removed_at is null")).resolves.toMatchObject({ rows: [{ count: "2" }] });
     expect((await json(overview(cookie))).body.dataforseo).toBeNull();
     const test = await json(post(cookie, "dataforseo/test"));
     expect(test.response.status).toBe(404);

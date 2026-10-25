@@ -22,12 +22,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase, createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { encryptSecret } from "@/data/credential-encryption";
 import { DataForSeoClientError, type DataForSeoClient, type DataForSeoSerpItem, type DataForSeoSerpQuery } from "@/data/dataforseo-client";
 import { migrateDatabase } from "@/data/migrate";
@@ -39,9 +38,8 @@ const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const password = "fleet-synthetic-dataforseo-password";
 
 let container: StartedPostgreSqlContainer | undefined;
-let owner: Pool | undefined;
-let runtime: Pool | undefined;
-let runtimeDatabase: Database | undefined;
+let owner: OpenedDatabase | undefined;
+let runtime: OpenedDatabase | undefined;
 
 const queries: { login: string; query: DataForSeoSerpQuery }[] = [];
 const failing = new Set<string>();
@@ -78,7 +76,7 @@ function utcDay(at: Date): string {
 }
 
 async function check(now: Date, organizationId?: string) {
-  return checkRankings({ database: runtimeDatabase!, dataforseo, masterKey, now, organizationId });
+  return checkRankings({ database: runtime!, dataforseo, masterKey, now, organizationId });
 }
 
 async function rankStatus(keywordId: string) {
@@ -101,14 +99,13 @@ const nextDay = new Date(firstRun.getTime() + 24 * 60 * 60 * 1000);
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  owner = createTestPool(container.getConnectionUri());
+  owner = createTestDatabase(container.getConnectionUri());
   const runtimePassword = "D".repeat(64);
   await provisionRuntimeRole(owner, runtimePassword);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = runtimePassword;
-  runtimeDatabase = createTestDatabase(runtimeUrl.toString());
-  runtime = runtimeDatabase.pool;
+  runtime = createTestDatabase(runtimeUrl.toString());
   await owner.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now()), ('solo', 'solo', 'solo', now())");
   await owner.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('fleet-operator', 'Fleet Operator', 'fleet-operator@example.com', true, 'Active', 'America/Chicago', now(), now())`);
   await owner.query(
@@ -154,8 +151,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await runtime?.end();
-  await owner?.end();
+  await runtime?.close();
+  await owner?.close();
   await container?.stop();
 });
 

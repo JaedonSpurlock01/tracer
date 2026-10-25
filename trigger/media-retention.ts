@@ -32,17 +32,17 @@ import { schedules } from "@trigger.dev/sdk";
 import { sweepRecordingMedia } from "@/data/media-retention";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const mediaRetention = schedules.task({
   id: "media-retention-sweep",
   cron: "29 8 * * *",
   run: async (payload) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       return await sweepRecordingMedia(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -55,7 +55,7 @@ export const mediaRetention = schedules.task({
         payload.timestamp,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

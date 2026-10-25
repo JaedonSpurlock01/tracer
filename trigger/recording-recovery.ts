@@ -26,17 +26,17 @@ import { schedules } from "@trigger.dev/sdk";
 
 import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingMp3TaskId, recordingTranscriptionTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
 import { sweepStuckRecordings } from "@/data/recording-recovery";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingRecovery = schedules.task({
   id: "recording-recovery-sweep",
   cron: "17 */12 * * *",
   run: async (payload) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       return await sweepStuckRecordings(
         {
-          pool,
+          database,
           recordingProcessing: createTriggerRecordingProcessing({
             secretKey: requiredEnvironment("TRIGGER_SECRET_KEY"),
             baseUrl: process.env.TRIGGER_API_URL,
@@ -65,7 +65,7 @@ export const recordingRecovery = schedules.task({
         payload.timestamp,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

@@ -48,7 +48,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, requireActiveActor, type Actor } from "@/data/authorization";
 import { callListQueryFromSearchParams } from "@/data/call-list-query";
@@ -74,7 +74,7 @@ import { createReadableWorkspaces, readableWorkspaceSql } from "@/data/workspace
 
 export interface ReportsHandlerOptions {
   auth: TracerAuth;
-  pool: Pool;
+  database: Database;
   reportBucket?: ReportArtifactBucket;
   reportGeneration?: ReportGeneration;
 }
@@ -123,13 +123,13 @@ function reportFiles(value: unknown): Array<"pdf" | "csv"> {
 
 const maxCallsQueryLength = 8000;
 
-async function readableWorkspaceIds(pool: Pool, actor: Actor): Promise<string[]> {
+async function readableWorkspaceIds(database: Database, actor: Actor): Promise<string[]> {
   const values: unknown[] = [];
-  const result = await pool.query<{ id: string }>(`select w.id from workspace w where ${readableWorkspaceSql(actor, values)}`, values);
+  const result = await database.query<{ id: string }>(`select w.id from workspace w where ${readableWorkspaceSql(actor, values)}`, values);
   return result.rows.map(({ id }) => id);
 }
 
-async function callExportRequest(pool: Pool, actor: Actor, body: Record<string, unknown>): Promise<ReportJobRequest> {
+async function callExportRequest(database: Database, actor: Actor, body: Record<string, unknown>): Promise<ReportJobRequest> {
   const { scope, file, callId, query } = body;
   if (file !== "csv" && file !== "zip") throw new InvalidReportInput();
   const workspaceId = isRecord(scope) && scope.kind === "workspace" && typeof scope.workspaceId === "string" ? scope.workspaceId : null;
@@ -141,15 +141,15 @@ async function callExportRequest(pool: Pool, actor: Actor, body: Record<string, 
   if (typeof query !== "string" || query.length > maxCallsQueryLength) throw new InvalidReportInput();
   return {
     kind: "call_export",
-    scope: workspaceId !== null ? { kind: "workspace", workspaceId } : { kind: "global", workspaceIds: await readableWorkspaceIds(pool, actor) },
+    scope: workspaceId !== null ? { kind: "workspace", workspaceId } : { kind: "global", workspaceIds: await readableWorkspaceIds(database, actor) },
     selection: { kind: "filters", filters: callListQueryFromSearchParams(new URLSearchParams(query)).filters },
     file,
   };
 }
 
-async function reportJobRequest(pool: Pool, actor: Actor, body: Record<string, unknown>): Promise<ReportJobRequest> {
+async function reportJobRequest(database: Database, actor: Actor, body: Record<string, unknown>): Promise<ReportJobRequest> {
   if (body.kind === "report") return { kind: "report", scope: reportScope(body.scope), period: reportPeriod(body.period), files: reportFiles(body.files) };
-  if (body.kind === "call_export") return callExportRequest(pool, actor, body);
+  if (body.kind === "call_export") return callExportRequest(database, actor, body);
   throw new InvalidReportInput();
 }
 
@@ -168,15 +168,15 @@ export interface ReportHistoryItem {
   canRegenerate: boolean;
 }
 
-async function readableWorkspaceNames(pool: Pool, actor: Actor, ids: string[]): Promise<Map<string, string>> {
+async function readableWorkspaceNames(database: Database, actor: Actor, ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   const values: unknown[] = [ids];
-  const result = await pool.query<{ id: string; name: string }>(`select w.id, w.name from workspace w where w.id = any($1::text[]) and ${readableWorkspaceSql(actor, values)}`, values);
+  const result = await database.query<{ id: string; name: string }>(`select w.id, w.name from workspace w where w.id = any($1::text[]) and ${readableWorkspaceSql(actor, values)}`, values);
   return new Map(result.rows.map(({ id, name }) => [id, name]));
 }
 
-async function reportHistoryItems(pool: Pool, actor: Actor, jobs: ReportJob[], now: Date): Promise<ReportHistoryItem[]> {
-  const names = await readableWorkspaceNames(pool, actor, [...new Set(jobs.flatMap(({ workspaceIds }) => workspaceIds))]);
+async function reportHistoryItems(database: Database, actor: Actor, jobs: ReportJob[], now: Date): Promise<ReportHistoryItem[]> {
+  const names = await readableWorkspaceNames(database, actor, [...new Set(jobs.flatMap(({ workspaceIds }) => workspaceIds))]);
   return jobs.map((job) => {
     const accessible = job.workspaceIds.every((id) => names.has(id));
     const downloadable = accessible && job.status === "Completed" && job.artifactsExpireAt !== null && job.artifactsExpireAt > now;
@@ -221,16 +221,16 @@ function errorResponse(error: unknown): Response {
 export function createReportsHandler(options: ReportsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
+      const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const route = new URL(request.url).pathname.replace(/^\/api\/reports\/?/, "");
-      const readable = createReadableWorkspaces(options.pool, actor);
+      const readable = createReadableWorkspaces(options.database, actor);
       const now = new Date();
       if (request.method === "GET" && route === "") {
-        return response({ jobs: await reportHistoryItems(options.pool, actor, await listReportJobs(options.pool, actor, now), now) });
+        return response({ jobs: await reportHistoryItems(options.database, actor, await listReportJobs(options.database, actor, now), now) });
       }
       const downloadMatch = route.match(/^([^/]+)\/files\/(pdf|csv|zip)$/);
       if (request.method === "GET" && downloadMatch) {
-        const download = await authorizeReportDownload(options.pool, actor, readable, downloadMatch[1], downloadMatch[2] as ReportFileKind, now);
+        const download = await authorizeReportDownload(options.database, actor, readable, downloadMatch[1], downloadMatch[2] as ReportFileKind, now);
         const served = download && options.reportBucket ? await reportDownloadResponse(options.reportBucket, download) : null;
         return served ?? response({ error: "not_found" }, 404);
       }
@@ -238,20 +238,20 @@ export function createReportsHandler(options: ReportsHandlerOptions): (request: 
       if (request.method === "POST" && regenerateMatch) {
         const generation = options.reportGeneration;
         if (!generation) return response({ error: "generation_unavailable" }, 503);
-        const result = await regenerateReportJob(options.pool, actor, readable, regenerateMatch[1], now, generation);
+        const result = await regenerateReportJob(options.database, actor, readable, regenerateMatch[1], now, generation);
         if (typeof result === "string") return response({ error: result }, result === "not_found" ? 404 : 409);
-        return response({ job: (await reportHistoryItems(options.pool, actor, [result.job], now))[0] }, result.created ? 201 : 200);
+        return response({ job: (await reportHistoryItems(options.database, actor, [result.job], now))[0] }, result.created ? 201 : 200);
       }
       if (request.method === "POST" && route === "preview") {
-        const preview = await previewReportJob(options.pool, actor, readable, await reportJobRequest(options.pool, actor, await readBody(request)), now);
+        const preview = await previewReportJob(options.database, actor, readable, await reportJobRequest(options.database, actor, await readBody(request)), now);
         return response({ preview, recordingExportLimit });
       }
       if (request.method === "POST" && route === "") {
         const generation = options.reportGeneration;
         if (!generation) return response({ error: "generation_unavailable" }, 503);
-        const input = await reportJobRequest(options.pool, actor, await readBody(request));
-        const { job, created } = await requestReportJob(options.pool, actor, readable, input, now, generation);
-        return response({ job: (await reportHistoryItems(options.pool, actor, [job], now))[0] }, created ? 201 : 200);
+        const input = await reportJobRequest(options.database, actor, await readBody(request));
+        const { job, created } = await requestReportJob(options.database, actor, readable, input, now, generation);
+        return response({ job: (await reportHistoryItems(options.database, actor, [job], now))[0] }, created ? 201 : 200);
       }
       return response({ error: "not_found" }, 404);
     } catch (error) {

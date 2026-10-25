@@ -26,13 +26,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
 
@@ -42,7 +41,7 @@ const t0 = new Date("2026-10-01T15:00:00.000Z");
 const at = (seconds: number) => new Date(t0.getTime() + seconds * 1000);
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 const organizationId = "backfill-organization";
 
 async function migrateBeforeEventLog(connectionString: string): Promise<void> {
@@ -53,11 +52,11 @@ async function migrateBeforeEventLog(connectionString: string): Promise<void> {
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: { tag: string }[] };
     const index = journal.entries.findIndex((entry) => entry.tag === eventLogMigration);
     await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.slice(0, index) }));
-    const migrationPool = createTestPool(connectionString, { max: 1 });
+    const migrationDatabase = createTestDatabase(connectionString, { max: 1 });
     try {
-      await migrate(drizzle(migrationPool), { migrationsFolder: folder });
+      await migrate(migrationDatabase.drizzle, { migrationsFolder: folder });
     } finally {
-      await migrationPool.end();
+      await migrationDatabase.close();
     }
   } finally {
     await rm(folder, { recursive: true, force: true });
@@ -69,7 +68,7 @@ async function seedCall(
   call: { forwardStartedAt?: Date; answeredAt?: Date; endedAt?: Date; outcome?: string; gathers?: string[] },
 ): Promise<void> {
   const completed = call.endedAt !== undefined && call.outcome !== undefined;
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, forward_started_at, answered_at, ended_at, started_at, created_at, updated_at)
      values ($1, $2, 'backfill-workspace', 'backfill-assignment', 'backfill-flow-version', $3, '+14155550123', '+14155550999',
@@ -77,7 +76,7 @@ async function seedCall(
     [id, organizationId, `CA-${id}`, completed ? "Completed" : "In Progress", call.outcome ?? null, call.forwardStartedAt ?? null, call.answeredAt ?? null, call.endedAt ?? null, t0],
   );
   for (const [attempt, digits] of (call.gathers ?? []).entries()) {
-    await pool!.query(
+    await database!.query(
       `insert into provider_event (id, organization_id, number_assignment_id, call_id, idempotency_key, kind, disposition, payload, received_at)
        values ($1, $2, 'backfill-assignment', $3, $4, 'gather', 'accepted', $5, $6)`,
       [`${id}-gather-${attempt}`, organizationId, id, `CA-${id}:gather:gate:${attempt + 1}`, JSON.stringify({ Digits: digits }), at(5 + attempt * 5)],
@@ -91,7 +90,7 @@ async function seedRecording(
   recording: { transfer: "Stored" | "Failed" | "Pending"; transcript?: "Completed" | "Skipped" | "Failed" | "Pending"; assessment?: "Completed" | "Failed" | "Pending"; updatedAt: Date },
 ): Promise<void> {
   const stored = recording.transfer === "Stored";
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, failure_stage, failure_reason,
                             r2_object_key, size_bytes, sha256, stored_at, transcript_state, transcript_skip_reason, transcript_failure_reason,
                             transcript_audio_ms, transcript_cost_usd, transcript_completed_at, lead_assessment_state, lead_assessment_failure_reason, created_at, updated_at)
@@ -122,7 +121,7 @@ async function seedRecording(
     ],
   );
   if (recording.assessment === "Completed") {
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, 'Good Lead', 82, 'Caller asked for a quote.', 'Clear service request.', 'gpt-5-mini', 900, 120, 0.000315, $5)`,
       [`${id}-assessment`, organizationId, callId, id, at(300)],
@@ -131,7 +130,7 @@ async function seedRecording(
 }
 
 async function events(callId: string): Promise<Record<string, unknown>[]> {
-  const result = await pool!.query(
+  const result = await database!.query(
     "select kind, occurred_at, detail, actor_user_id from call_event where call_id = $1 order by occurred_at, id",
     [callId],
   );
@@ -142,27 +141,27 @@ const event = (kind: string, occurredAt: Date, detail: Record<string, unknown> =
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateBeforeEventLog(container.getConnectionUri());
-  await pool.query("insert into organization (id, name, slug, created_at) values ($1, 'Backfill Organization', 'backfill-organization', now())", [organizationId]);
-  await pool.query(`insert into "user" (id, name, email, created_at, updated_at) values ('backfill-operator', 'Backfill Operator', 'backfill@example.com', now(), now())`);
-  await pool.query(
+  await database.query("insert into organization (id, name, slug, created_at) values ($1, 'Backfill Organization', 'backfill-organization', now())", [organizationId]);
+  await database.query(`insert into "user" (id, name, email, created_at, updated_at) values ('backfill-operator', 'Backfill Operator', 'backfill@example.com', now(), now())`);
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('backfill-number', $1, 'PNaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '+14155550123', 'Backfill Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, analysis_enabled, spam_gate_enabled, created_at, updated_at)
      values ('backfill-workspace', $1, 'Backfill Workspace', 'UTC', 'Active', true, true, true, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('backfill-assignment', $1, 'backfill-workspace', 'backfill-number', '+14155550123', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: true, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
      values ('backfill-flow-version', $1, 'backfill-workspace', 1, $2, now())`,
     [organizationId, JSON.stringify(graph)],
@@ -170,7 +169,7 @@ beforeAll(async () => {
 
   await seedCall("answered-call", { gathers: ["1"], forwardStartedAt: at(10), answeredAt: at(15), endedAt: at(60), outcome: "Answered" });
   await seedRecording("answered-recording", "answered-call", { transfer: "Stored", transcript: "Completed", assessment: "Completed", updatedAt: at(300) });
-  await pool.query(
+  await database.query(
     "insert into lead_review (call_id, organization_id, classification, note, reviewer_user_id, reviewed_at) values ('answered-call', $1, 'Not Good Lead', 'Wrong area.', 'backfill-operator', $2)",
     [organizationId, at(400)],
   );
@@ -190,7 +189,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -232,9 +231,9 @@ it("adds no events when the backfill runs again", async () => {
   const migration = await readFile(path.join(migrationsFolder, `${eventLogMigration}.sql`), "utf8");
   const backfill = migration.split("--> statement-breakpoint").filter((statement) => /insert into "call_event"/i.test(statement));
   expect(backfill.length).toBeGreaterThan(0);
-  const before = (await pool!.query("select count(*)::int as count from call_event")).rows[0].count;
+  const before = (await database!.query("select count(*)::int as count from call_event")).rows[0].count;
 
-  for (const statement of backfill) await pool!.query(statement);
+  for (const statement of backfill) await database!.query(statement);
 
-  expect((await pool!.query("select count(*)::int as count from call_event")).rows[0].count).toBe(before);
+  expect((await database!.query("select count(*)::int as count from call_event")).rows[0].count).toBe(before);
 });

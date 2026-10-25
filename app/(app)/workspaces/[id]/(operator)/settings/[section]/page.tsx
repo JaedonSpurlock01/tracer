@@ -42,14 +42,14 @@ export default async function WorkspaceSettingsSectionPage({ params }: { params:
   const { id, section } = await params;
   const match = workspaceSettingsSections.find((item) => item.slug === section);
   if (!match) notFound();
-  const data = await withRequestRuntime(async ({ database, pool, email }) => {
+  const data = await withRequestRuntime(async ({ database, email }) => {
     const workspace = await createWorkspaces(database, actor.organizationId).find(id);
-    const accessUsers = workspace && match.slug === "access" ? await createOperatorAdministration(pool, actor.organizationId).list() : undefined;
-    const site = workspace && match.slug === "site" ? await createSites(pool, actor).findLinked(workspace.id) : null;
-    const keywords = site ? await createSiteKeywords(pool, actor).list(site.id).catch(() => null) : null;
-    const deal = workspace && match.slug === "site" ? await createDeals(pool, actor).current(workspace.id).catch(() => null) : undefined;
-    const business = workspace && match.slug === "site" ? await createBusinesses(pool, actor).find(workspace.id).catch(() => null) : undefined;
-    const forms = workspace && match.slug === "forms" ? await createFormSubmissions(pool, actor, email).list(workspace.id).catch(() => null) : undefined;
+    const accessUsers = workspace && match.slug === "access" ? await createOperatorAdministration(database, actor.organizationId).list() : undefined;
+    const site = workspace && match.slug === "site" ? await createSites(database, actor).findLinked(workspace.id) : null;
+    const keywords = site ? await createSiteKeywords(database, actor).list(site.id).catch(() => null) : null;
+    const deal = workspace && match.slug === "site" ? await createDeals(database, actor).current(workspace.id).catch(() => null) : undefined;
+    const business = workspace && match.slug === "site" ? await createBusinesses(database, actor).find(workspace.id).catch(() => null) : undefined;
+    const forms = workspace && match.slug === "forms" ? await createFormSubmissions(database, actor, email).list(workspace.id).catch(() => null) : undefined;
     return { workspace, accessUsers, site: site ? siteResponseForActor(actor, site) : null, keywords, deal, business, forms };
   });
   if (!data.workspace) notFound();

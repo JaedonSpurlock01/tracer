@@ -28,11 +28,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -48,7 +48,7 @@ const callerSample = 1000;
 const businessSample = 2000;
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 
 interface FakeR2 extends RecordingObjects {
@@ -132,7 +132,7 @@ const conversation: FakeTranscriber["scripts"] = {
 };
 
 function dependencies(r2: FakeR2, transcriber: FakeTranscriber, leadAssessment: FakeLeadAssessment): RecordingTranscriptionDependencies {
-  return { pool: pool!, objects: r2, transcriber, leadAssessment, now: () => now };
+  return { database: database!, objects: r2, transcriber, leadAssessment, now: () => now };
 }
 
 function pcmWav(channels: 1 | 2, sampleRate: number, seconds: number): Uint8Array {
@@ -171,12 +171,12 @@ async function storedRecording(
   const id = randomUUID();
   const wavKey = `organizations/${organizationId}/workspaces/transcription-workspace/calls/${callId}/recordings/${id}.wav`;
   const wav = options.wav === undefined ? pcmWav(channels, 8000, 12) : options.wav;
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
      values ($1, $2, 'transcription-workspace', 'transcription-assignment', 'transcription-flow-version', $3, '+14155550114', $4, $4, $4)`,
     [callId, organizationId, `CA${String(sequence).padStart(32, "0")}`, options.callStartedAt ?? days(1)],
   );
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, twilio_cleanup_state,
                             r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at,
                             transcript_state, transcript_skip_reason, created_at, updated_at)
@@ -206,11 +206,11 @@ async function storedRecording(
 }
 
 async function purge(id: string, at: Date): Promise<void> {
-  await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
+  await database!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
 }
 
 async function recordingRow(id: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select transfer_state, twilio_cleanup_state, r2_object_key, waveform_state, waveform_object_key, transcript_state, transcript_skip_reason, transcript_failure_reason,
             transcript_audio_ms, transcript_cost_usd, transcript_completed_at, lead_assessment_state, lead_assessment_failure_reason
        from recording where id = $1`,
@@ -220,33 +220,33 @@ async function recordingRow(id: string): Promise<Record<string, unknown>> {
 }
 
 async function transcriptRow(id: string): Promise<{ turns: unknown; model: string; call_id: string; organization_id: string } | undefined> {
-  const result = await pool!.query("select turns, model, call_id, organization_id from transcript where recording_id = $1", [id]);
+  const result = await database!.query<{ turns: unknown; model: string; call_id: string; organization_id: string }>("select turns, model, call_id, organization_id from transcript where recording_id = $1", [id]);
   return result.rows[0];
 }
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const operator = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transcription Operator", timezone: "UTC" });
+  const operator = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Transcription Operator", timezone: "UTC" });
   organizationId = operator.organizationId;
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('transcription-number', $1, 'PNeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', '+14155550114', 'Transcription Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, recording_enabled, analysis_enabled, created_at, updated_at)
      values ('transcription-workspace', $1, 'Transcription Workspace', 'UTC', 'Active', '+14155550199', true, true, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('transcription-assignment', $1, 'transcription-workspace', 'transcription-number', '+14155550114', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('transcription-flow-version', $1, 'transcription-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), operator.userId],
@@ -254,7 +254,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -483,13 +483,13 @@ describe("Recording transcription", () => {
 
     expect(transcriber.calls).toEqual([]);
     expect(await recordingRow(recording.id)).toMatchObject({ transcript_state: "Pending", transcript_failure_reason: null });
-    await expect(pool!.query("select 1 from call_event where call_id = $1 and kind = 'transcript_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
+    await expect(database!.query("select 1 from call_event where call_id = $1 and kind = 'transcript_failed'", [recording.callId])).resolves.toMatchObject({ rowCount: 0 });
   });
 });
 
 describe("Recording transcription Call events", () => {
   async function callEvents(callId: string): Promise<{ kind: string; occurred_at: Date; detail: Record<string, unknown> }[]> {
-    const result = await pool!.query("select kind, occurred_at, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+    const result = await database!.query<{ kind: string; occurred_at: Date; detail: Record<string, unknown> }>("select kind, occurred_at, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
     return result.rows;
   }
 

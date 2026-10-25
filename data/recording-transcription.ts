@@ -43,7 +43,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { appendCallEvent } from "@/data/call-events";
 import { OpenAIError, transcriptionModel, type AudioTranscriber } from "@/data/openai-client";
@@ -54,7 +54,7 @@ import { readRecordingAudio, RecordingAudioError } from "@/data/recording-wav";
 import { normalizeTranscript, parseTranscriptTurns, TranscriptError, transcriptionCostUsd, type TranscribedChunk, type TranscriptTurn } from "@/data/transcript";
 
 export interface RecordingTranscriptionDependencies {
-  pool: Pool;
+  database: Database;
   objects: RecordingObjects;
   transcriber: AudioTranscriber;
   leadAssessment: RecordingProcessing;
@@ -100,9 +100,7 @@ async function transcribe(deps: RecordingTranscriptionDependencies, row: Transcr
 }
 
 async function complete(deps: RecordingTranscriptionDependencies, row: TranscriptionRow, result: { turns: TranscriptTurn[]; audioMs: number }): Promise<boolean> {
-  const client = await deps.pool.connect();
-  try {
-    await client.query("begin");
+  return await deps.database.transaction(async (client) => {
     const now = deps.now();
     const locked = await client.query<{ transcript_state: string | null; media_retained: boolean }>(
       `select r.transcript_state, ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
@@ -114,7 +112,6 @@ async function complete(deps: RecordingTranscriptionDependencies, row: Transcrip
     );
     const current = locked.rows[0];
     if (!current?.media_retained || !runnableStates.includes(current.transcript_state ?? "")) {
-      await client.query("rollback");
       return false;
     }
     await client.query(
@@ -129,18 +126,12 @@ async function complete(deps: RecordingTranscriptionDependencies, row: Transcrip
       [row.id, result.audioMs, transcriptionCostUsd(result.audioMs), now],
     );
     await appendCallEvent(client, { callId: row.call_id, kind: "transcript_completed", key: `transcript_completed:${row.id}`, occurredAt: now });
-    await client.query("commit");
     return true;
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function transcribeRecording(deps: RecordingTranscriptionDependencies, recordingId: string): Promise<void> {
-  const result = await deps.pool.query<TranscriptionRow>(
+  const result = await deps.database.query<TranscriptionRow>(
     `select r.id, r.organization_id, r.call_id, r.channels, r.r2_object_key, r.transcript_state,
             ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
@@ -154,7 +145,7 @@ export async function transcribeRecording(deps: RecordingTranscriptionDependenci
   try {
     completed = await complete(deps, row, await transcribe(deps, row));
   } catch (error) {
-    const failed = await deps.pool.query<{ media_retained: boolean }>(
+    const failed = await deps.database.query<{ media_retained: boolean }>(
       `with failed as (
          update recording r set transcript_state = 'Failed', transcript_failure_reason = $2, updated_at = $3
            from call c

@@ -25,12 +25,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { createIntegrations } from "@/data/integrations";
@@ -44,8 +43,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -105,7 +103,7 @@ const auth = () => createTracerAuth({
 function handler() {
   return createWorkspacesHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     dataforseo: fakeDataForSeo,
     openai,
@@ -144,45 +142,44 @@ function utcDay(offset: number): string {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
        ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
        ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Active', now(), now()),
        ('workspace-c', $1, 'Blackfoot Paving', 'America/Boise', 'Setup Required', now(), now())`,
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query(
     `insert into business (id, organization_id, workspace_id, name, niche, created_at, updated_at) values
        ('business-a', $1, 'workspace-a', 'Pocatello Paving', 'Asphalt paving', now(), now()),
        ('business-b', $1, 'workspace-b', 'St George Paving', null, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at) values
        ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now()),
        ('site-st-george', $1, 'asphalt-paving-st-george', 'asphaltpavingstgeorge.com', 'zone-2', now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values
        ('link-a', $1, 'site-pocatello', 'workspace-a', now(), $2),
        ('link-b', $1, 'site-st-george', 'workspace-b', now(), $2)`,
     [organizationId, operatorId],
   );
   const sealed = await sealSecret(masterKey, "synthetic-dataforseo-password");
-  await pool.query(
+  await database.query(
     `insert into dataforseo_connection (id, organization_id, login, password_ciphertext, master_key_fingerprint, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
      values ('keywords-connection', $1, 'operator@example.com', $2, $3, $4, now(), now(), now(), now())`,
     [organizationId, sealed.ciphertext, sealed.fingerprint, operatorId],
@@ -190,7 +187,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -237,7 +234,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect(saved.body).toEqual({ serviceArea: { city: "Pocatello", region: "Idaho", country: "United States", locationCode: 1016141, locationName: "Pocatello,Idaho,United States" } });
     expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { locationCode: "1016141", locationName: "Pocatello,Idaho,United States" }))).response.status).toBe(400);
     expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { locationCode: 1016141, locationName: "" }))).response.status).toBe(400);
-    const stored = await pool!.query("select service_area_city, service_area_region, service_area_country, service_area_location_code, service_area_location_name from site where id = 'site-pocatello'");
+    const stored = await database!.query("select service_area_city, service_area_region, service_area_country, service_area_location_code, service_area_location_name from site where id = 'site-pocatello'");
     expect(stored.rows[0]).toEqual({ service_area_city: "Pocatello", service_area_region: "Idaho", service_area_country: "United States", service_area_location_code: 1016141, service_area_location_name: "Pocatello,Idaho,United States" });
   });
 
@@ -275,7 +272,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect((await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.elsewhere}`, { weight: 2 }))).response.status).toBe(404);
     const removed = await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.driveway}`));
     expect(removed.response.status).toBe(204);
-    const row = await pool!.query<{ removed_at: Date | null }>("select removed_at from site_keyword where id = $1", [keywordIds.driveway]);
+    const row = await database!.query<{ removed_at: Date | null }>("select removed_at from site_keyword where id = $1", [keywordIds.driveway]);
     expect(row.rows[0].removed_at).not.toBeNull();
     expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.driveway}`))).response.status).toBe(404);
     const again = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "Driveway Paving Pocatello", weight: 2 }));
@@ -292,7 +289,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     const overflow = await json(send(cookie, "POST", "workspace-a/site/keywords", { phrase: "one too many" }));
     expect(overflow.response.status).toBe(409);
     expect(overflow.body).toEqual({ error: "keyword_limit" });
-    const fillers = await pool!.query<{ id: string }>("select id from site_keyword where site_id = 'site-pocatello' and phrase like 'filler phrase %'");
+    const fillers = await database!.query<{ id: string }>("select id from site_keyword where site_id = 'site-pocatello' and phrase like 'filler phrase %'");
     for (const filler of fillers.rows) expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${filler.id}`))).response.status).toBe(204);
     expect((await json(send(cookie, "GET", "workspace-a/site/keywords"))).body.keywords).toHaveLength(2);
   });
@@ -335,7 +332,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     expect((await json(send(cookie, "PATCH", `workspace-a/site/keywords/${keywordIds.paving}`, { weight: 4 }))).response.status).toBe(403);
     expect((await json(send(cookie, "DELETE", `workspace-a/site/keywords/${keywordIds.paving}`))).response.status).toBe(403);
     expect((await json(send(cookie, "PUT", "workspace-a/site/service-area", { city: "Boise", region: "Idaho", country: "United States" }))).response.status).toBe(403);
-    expect((await pool!.query("select count(*) from site_keyword where site_id = 'site-pocatello' and removed_at is null")).rows[0]).toEqual({ count: "2" });
+    expect((await database!.query("select count(*) from site_keyword where site_id = 'site-pocatello' and removed_at is null")).rows[0]).toEqual({ count: "2" });
   });
 
   it("reads Search with no score before any check and with the weighted score, trend, and 7-day change afterwards", async () => {
@@ -351,7 +348,7 @@ describe.sequential("Site Keywords and Service Area", () => {
     ]);
 
     const top = JSON.stringify([{ position: 1, domain: "www.idahopaving.example", url: "https://www.idahopaving.example/", title: "Idaho Paving" }, { position: 2, domain: "pocatelloasphaltpaving.com", url: "https://pocatelloasphaltpaving.com/", title: "Pocatello Asphalt Paving" }]);
-    await pool!.query(
+    await database!.query(
       `insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at, matched_type) values
          ('rank-paving-7', $1, $3::date, 5, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '7 days', 'organic'),
          ('rank-paving-1', $1, $4::date, 3, 'https://pocatelloasphaltpaving.com/', '[]'::jsonb, now() - interval '1 day', 'organic'),
@@ -368,11 +365,11 @@ describe.sequential("Site Keywords and Service Area", () => {
       { id: keywordIds.driveway, phrase: "Driveway Paving Pocatello", weight: 2, status: "not_ranking", position: null, change7d: null, rankingUrl: null, matchedType: null, failureReason: null, topResults: [], checkedAt: expect.any(String) },
     ]);
 
-    await pool!.query("update keyword_rank_day set check_status = 'failed', failure_reason = 'DataForSEO rejected the task (40501): Invalid Field: ''location_name''.' where id = 'rank-driveway-0'");
+    await database!.query("update keyword_rank_day set check_status = 'failed', failure_reason = 'DataForSEO rejected the task (40501): Invalid Field: ''location_name''.' where id = 'rank-driveway-0'");
     const failed = await json(send(cookie, "GET", "workspace-a/site/search"));
     expect((failed.body.keywords as Array<Record<string, unknown>>)[1]).toMatchObject({ status: "check_failed", position: null, failureReason: expect.stringContaining("Invalid Field"), checkedAt: expect.any(String) });
     expect((failed.body.keywords as Array<Record<string, unknown>>)[0]).toMatchObject({ status: "ranking", position: 2 });
-    await pool!.query("update keyword_rank_day set check_status = 'checked', failure_reason = null where id = 'rank-driveway-0'");
+    await database!.query("update keyword_rank_day set check_status = 'checked', failure_reason = null where id = 'rank-driveway-0'");
     const trend = after.body.trend as Array<{ day: string; score: number | null }>;
     expect(trend).toHaveLength(30);
     expect(trend.at(-1)).toEqual({ day: utcDay(0), score: 20 });
@@ -384,11 +381,11 @@ describe.sequential("Site Keywords and Service Area", () => {
 
   it("reads a rank day stored on the UTC date just after UTC midnight while the Workspace timezone is still on the previous day", async () => {
     const now = new Date("2026-10-21T00:30:00Z");
-    await pool!.query(
+    await database!.query(
       "insert into keyword_rank_day (id, site_keyword_id, day, position, ranking_url, top_results, checked_at) values ('rank-elsewhere-utc', $1, '2026-10-21', 4, 'https://asphaltpavingstgeorge.com/', '[]'::jsonb, $2)",
       [keywordIds.elsewhere, now],
     );
-    const search = await siteSearch(pool!, "site-st-george", "America/Denver", now);
+    const search = await siteSearch(database!, "site-st-george", "America/Denver", now);
     expect(search?.checkedAt).toBe(now.toISOString());
     expect(search?.score).toBe(35);
     expect(search?.trend.at(-1)).toEqual({ day: "2026-10-21", score: 35 });

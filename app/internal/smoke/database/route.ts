@@ -39,17 +39,17 @@ export async function handleDatabaseSmoke(
     return new Response(null, { status: 404 });
   }
 
-  const [{ Pool }, { smokeDatabase }] = await Promise.all([
-    import("pg"),
+  const [{ openDatabase }, { smokeDatabase }] = await Promise.all([
+    import("@/data/database"),
     import("@/data/database-smoke"),
   ]);
-  const pool = new Pool({ connectionString: bindings.HYPERDRIVE.connectionString, max: 1 });
+  const database = openDatabase(bindings.HYPERDRIVE.connectionString, { max: 1 });
 
   try {
-    await smokeDatabase(pool);
+    await smokeDatabase(database);
     return Response.json({ status: "ok" } satisfies DatabaseSmokeResponse);
   } finally {
-    await pool.end();
+    await database.close();
   }
 }
 

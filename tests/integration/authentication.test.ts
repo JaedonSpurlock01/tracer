@@ -17,61 +17,59 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator, BootstrapConflictError } from "@/data/bootstrap-initial-operator";
 import { createIdentityAdministration } from "@/data/identity-administration";
 import { migrateDatabase } from "@/data/migrate";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container!.getConnectionUri());
+  database = createTestDatabase(container!.getConnectionUri());
   await migrateDatabase(container!.getConnectionUri());
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
 describe.sequential("provisioned identity", () => {
   it("creates exactly one initial Operator and reports an exact rerun as existing", async () => {
     const input = { email: " Operator@Example.com ", name: "Example Operator", timezone: "America/Chicago" };
-    const created = await bootstrapInitialOperator(pool!, input);
-    const existing = await bootstrapInitialOperator(pool!, input);
+    const created = await bootstrapInitialOperator(database!, input);
+    const existing = await bootstrapInitialOperator(database!, input);
 
     expect(created.status).toBe("created");
     expect(existing).toMatchObject({ status: "existing", organizationId: created.organizationId, userId: created.userId });
-    await expect(pool!.query("select count(*) from organization")).resolves.toMatchObject({ rows: [{ count: "1" }] });
-    await expect(pool!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
-    await expect(pool!.query("select count(*) from member where role = 'owner'")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query("select count(*) from organization")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query("select count(*) from member where role = 'owner'")).resolves.toMatchObject({ rows: [{ count: "1" }] });
   });
 
   it("rejects a conflicting rerun without partial writes", async () => {
     await expect(
-      bootstrapInitialOperator(pool!, {
+      bootstrapInitialOperator(database!, {
         email: "operator@example.com",
         name: "Different Operator",
         timezone: "America/Chicago",
       }),
     ).rejects.toBeInstanceOf(BootstrapConflictError);
-    await expect(pool!.query('select name from "user"')).resolves.toMatchObject({ rows: [{ name: "Example Operator" }] });
+    await expect(database!.query('select name from "user"')).resolves.toMatchObject({ rows: [{ name: "Example Operator" }] });
   });
 
   it("keeps OTP responses generic and protects Organization deletion through the public handler", async () => {
     let sentCode = "";
     const backgroundTasks: Promise<unknown>[] = [];
     const auth = createTracerAuth({
-      database: drizzle(pool!, { schema }),
+      database: database!.drizzle,
       email: {
         async send(message) {
           sentCode = message.text.match(/\d{6}/)?.[0] ?? "";
@@ -107,7 +105,7 @@ describe.sequential("provisioned identity", () => {
 
     const disallowedTasks: Promise<unknown>[] = [];
     const disallowedAuth = createTracerAuth({
-      database: drizzle(pool!, { schema }),
+      database: database!.drizzle,
       email: {
         async send(message) {
           sentCode = message.text.match(/\d{6}/)?.[0] ?? "";
@@ -141,7 +139,7 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ email: "unknown@example.com", otp: "123456" }),
     }));
     expect(unprovisionedVerification.status).not.toBe(200);
-    await expect(pool!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
     expect(backgroundTasks).toHaveLength(0);
 
     const deferredGoogle = await auth.handler(new Request("http://localhost:3000/api/auth/sign-in/social", {
@@ -150,7 +148,7 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ provider: "google", callbackURL: "/account/settings" }),
     }));
     expect(deferredGoogle.status).not.toBe(200);
-    await expect(pool!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query('select count(*) from "user"')).resolves.toMatchObject({ rows: [{ count: "1" }] });
 
     const signIn = await auth.handler(new Request("http://localhost:3000/api/auth/sign-in/email-otp", {
       method: "POST",
@@ -158,8 +156,8 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ email: "operator@example.com", otp: signInCode }),
     }));
     expect(signIn.status).toBe(200);
-    await expect(pool!.query('select state from "user"')).resolves.toMatchObject({ rows: [{ state: "Active" }] });
-    await expect(pool!.query("select count(*) from session")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query('select state from "user"')).resolves.toMatchObject({ rows: [{ state: "Active" }] });
+    await expect(database!.query("select count(*) from session")).resolves.toMatchObject({ rows: [{ count: "1" }] });
     const sessionCookie = (signIn.headers.get("set-cookie") ?? "").split(";", 1)[0] ?? "";
     const profileUpdate = await auth.handler(new Request("http://localhost:3000/api/auth/update-user", {
       method: "POST",
@@ -167,16 +165,16 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ name: "Updated Operator" }),
     }));
     expect(profileUpdate.status).toBe(200);
-    await expect(pool!.query('select name, timezone from "user"')).resolves.toMatchObject({ rows: [{ name: "Updated Operator", timezone: "America/Chicago" }] });
+    await expect(database!.query('select name, timezone from "user"')).resolves.toMatchObject({ rows: [{ name: "Updated Operator", timezone: "America/Chicago" }] });
     const preferencesUpdate = await auth.handler(new Request("http://localhost:3000/api/auth/update-user", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: sessionCookie },
       body: JSON.stringify({ timezone: "America/New_York" }),
     }));
     expect(preferencesUpdate.status).toBe(200);
-    await expect(pool!.query('select name, timezone from "user"')).resolves.toMatchObject({ rows: [{ name: "Updated Operator", timezone: "America/New_York" }] });
+    await expect(database!.query('select name, timezone from "user"')).resolves.toMatchObject({ rows: [{ name: "Updated Operator", timezone: "America/New_York" }] });
 
-    const [{ id: organizationId }] = (await pool!.query<{ id: string }>("select id from organization")).rows;
+    const [{ id: organizationId }] = (await database!.query<{ id: string }>("select id from organization")).rows;
     const deletion = await auth.handler(new Request("http://localhost:3000/api/auth/organization/delete", {
       method: "POST",
       headers: {
@@ -186,7 +184,7 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ organizationId }),
     }));
     expect(deletion.status).not.toBe(200);
-    await expect(pool!.query("select count(*) from organization")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query("select count(*) from organization")).resolves.toMatchObject({ rows: [{ count: "1" }] });
 
     const disabledCodeRequest = await auth.handler(request({ email: "operator@example.com", type: "sign-in" }));
     expect(disabledCodeRequest.status).toBe(provisioned.status);
@@ -195,8 +193,8 @@ describe.sequential("provisioned identity", () => {
     const disabledCode = sentCode;
     expect(disabledCode).toMatch(/^\d{6}$/);
 
-    const [{ id: userId }] = (await pool!.query<{ id: string }>('select id from "user" limit 1')).rows;
-    await createIdentityAdministration(pool!).disable(userId);
+    const [{ id: userId }] = (await database!.query<{ id: string }>('select id from "user" limit 1')).rows;
+    await createIdentityAdministration(database!).disable(userId);
     const disabled = await auth.handler(request({ email: "operator@example.com", type: "sign-in" }));
     expect(disabled.status).toBe(provisioned.status);
     expect(await disabled.json()).toEqual({ success: true });
@@ -207,21 +205,21 @@ describe.sequential("provisioned identity", () => {
       body: JSON.stringify({ email: "operator@example.com", otp: disabledCode }),
     }));
     expect(disabledSignIn.status).not.toBe(200);
-    await expect(pool!.query("select count(*) from session")).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from session")).resolves.toMatchObject({ rows: [{ count: "0" }] });
   });
 
   it("disables a user and revokes all sessions transactionally", async () => {
-    const [{ id: userId }] = (await pool!.query<{ id: string }>('select id from "user" limit 1')).rows;
-    await pool!.query(
+    const [{ id: userId }] = (await database!.query<{ id: string }>('select id from "user" limit 1')).rows;
+    await database!.query(
       `insert into session (id, expires_at, token, created_at, updated_at, user_id)
        values ('session-1', now() + interval '1 day', 'token-1', now(), now(), $1),
               ('session-2', now() + interval '1 day', 'token-2', now(), now(), $1)`,
       [userId],
     );
 
-    await createIdentityAdministration(pool!).disable(userId);
+    await createIdentityAdministration(database!).disable(userId);
 
-    await expect(pool!.query('select state from "user" where id = $1', [userId])).resolves.toMatchObject({ rows: [{ state: "Disabled" }] });
-    await expect(pool!.query("select count(*) from session where user_id = $1", [userId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query('select state from "user" where id = $1', [userId])).resolves.toMatchObject({ rows: [{ state: "Disabled" }] });
+    await expect(database!.query("select count(*) from session where user_id = $1", [userId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
   });
 });

@@ -48,7 +48,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { AnalysisSkipReason } from "@/data/analysis-eligibility";
 import type { Actor } from "@/data/authorization";
@@ -377,14 +377,14 @@ export function downloadableMp3RecordingId(recording: Pick<RecordingAvailability
   return recording && !recording.expired && !recording.purged_at && recording.transfer_state === "Stored" && recording.mp3_state === "Stored" ? recording.id : null;
 }
 
-export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
-  const workspaces = createReadableWorkspaces(pool, actor);
+export function createCallDetails(database: Database, actor: Actor): CallDetails {
+  const workspaces = createReadableWorkspaces(database, actor);
 
   return {
     async find(workspaceId, callId) {
       const workspace = await workspaces.find(workspaceId);
       if (!workspace) return null;
-      const result = await pool.query<CallRow>(
+      const result = await database.query<CallRow>(
         `select c.id, c.twilio_call_sid, c.tracking_number, c.caller_number, c.state, c.outcome, c.forward_node_id, c.started_at, c.ended_at,
                 ${totalSecondsSql} as total_seconds,
                 ${connectedSecondsSql} as connected_seconds,
@@ -396,7 +396,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       );
       const row = result.rows[0];
       if (!row) return null;
-      const recordings = await pool.query<RecordingRow>(
+      const recordings = await database.query<RecordingRow>(
         `select r.id, r.created_at, r.updated_at, r.stored_at, r.waveform_generated_at, r.channels, r.duration_seconds, r.transfer_state, r.waveform_state, r.mp3_state,
                 r.transcript_state, r.transcript_skip_reason, r.transcript_failure_reason, r.transcript_completed_at,
                 r.lead_assessment_state, r.lead_assessment_failure_reason,
@@ -410,7 +410,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
           limit 1`,
         [row.id, actor.organizationId],
       );
-      const events = await pool.query<EventRow>(
+      const events = await database.query<EventRow>(
         `select id, kind, idempotency_key, payload->>'CallStatus' as call_status, payload->>'Digits' as digits,
                 payload->>'RecordingStatus' as recording_status, received_at
            from provider_event
@@ -420,11 +420,11 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       );
       const graph = parseCallFlowGraph(row.graph);
       const recording = recordings.rows[0];
-      const leadReview = await findLeadReview(pool, actor.organizationId, row.id);
+      const leadReview = await findLeadReview(database, actor.organizationId, row.id);
       const operator = canManageWorkspaces(actor);
       const assessment = recording
         ? (
-            await pool.query<AssessmentRow>(
+            await database.query<AssessmentRow>(
               "select id, classification, score, summary, rationale, processed_at from lead_assessment where recording_id = $1 and organization_id = $2",
               [recording.id, actor.organizationId],
             )
@@ -433,12 +433,12 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
       const contentAvailable = recording !== undefined && !recording.expired && !recording.purged_at;
       const turns =
         contentAvailable && recording.transcript_state === "Completed"
-          ? (await pool.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [recording.id, actor.organizationId])).rows[0]?.turns
+          ? (await database.query<{ turns: unknown }>("select turns from transcript where recording_id = $1 and organization_id = $2", [recording.id, actor.organizationId])).rows[0]?.turns
           : undefined;
       const evidence =
         contentAvailable && assessment
           ? (
-              await pool.query<{ turn_index: number; start_ms: number; quote: string }>(
+              await database.query<{ turn_index: number; start_ms: number; quote: string }>(
                 "select turn_index, start_ms, quote from lead_assessment_evidence where lead_assessment_id = $1 order by position",
                 [assessment.id],
               )
@@ -471,7 +471,7 @@ export function createCallDetails(pool: Pool, actor: Actor): CallDetails {
     async listRecent(workspaceId) {
       const [workspace, result] = await Promise.all([
         workspaces.find(workspaceId),
-        pool.query<{ id: string; caller_number: string | null; state: CallDetail["state"]; outcome: OutcomeKind | null; started_at: Date; connected_seconds: number | null }>(
+        database.query<{ id: string; caller_number: string | null; state: CallDetail["state"]; outcome: OutcomeKind | null; started_at: Date; connected_seconds: number | null }>(
           `select c.id, c.caller_number, c.state, c.outcome, c.started_at, ${connectedSecondsSql} as connected_seconds
              from call c
             where c.organization_id = $1 and c.workspace_id = $2

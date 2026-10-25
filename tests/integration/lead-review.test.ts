@@ -25,12 +25,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { createIntegrations } from "@/data/integrations";
@@ -42,8 +41,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 let operatorCookie = "";
@@ -71,7 +69,7 @@ const auth = () => createTracerAuth({
 
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
-  pool: pool!, database: database!,
+  database: database!,
   twilio: fakeTwilio,
   integrations: (id) => createIntegrations({ database: database!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
@@ -79,7 +77,7 @@ const workspacesHandler = () => createWorkspacesHandler({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -115,7 +113,7 @@ async function callDetail(workspaceId: string, callId: string, cookie: string) {
 }
 
 async function storedReviews(callId: string) {
-  return (await pool!.query("select classification, note, reviewer_user_id, reviewed_at from lead_review where call_id = $1", [callId])).rows;
+  return (await database!.query("select classification, note, reviewer_user_id, reviewed_at from lead_review where call_id = $1", [callId])).rows;
 }
 
 const graph = generateInitialCallFlow({
@@ -132,36 +130,36 @@ let seeded = 0;
 async function seedCall(callId: string, workspaceId = "granted-active", assessment: string | null = null): Promise<void> {
   seeded += 1;
   const sequence = String(seeded).padStart(32, "0");
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
   const trackingNumber = `+1415555${String(seeded).padStart(4, "0")}`;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Call Number', true, now(), now(), now(), now())`,
     [`${callId}-number`, workspace.organization_id, `PN${sequence}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ($1, $2, $3, $4, $5, now(), now(), 'replaced', now())`,
     [`${callId}-assignment`, workspace.organization_id, workspaceId, `${callId}-number`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, $4, $5, now())`,
     [`${callId}-flow`, workspace.organization_id, workspaceId, seeded, JSON.stringify(graph)],
   );
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, started_at, ended_at, duration_seconds, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, '+13125550142', 'Completed', 'Voicemail', 'flow_outcome', now() - interval '10 minutes', now() - interval '9 minutes', 60, now(), now())`,
     [callId, workspace.organization_id, workspaceId, `${callId}-assignment`, `${callId}-flow`, `CA${sequence}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                             waveform_state, transcript_state, transcript_audio_ms, transcript_cost_usd, transcript_completed_at, lead_assessment_state, created_at, updated_at)
      values ($1, $2, $3, $4, $5, 'voicemail', 1, 40, 'Stored', $6, 1024, 'checksum', now(), 'Pending', 'Completed', 40000, 0.004, now(), $7, now(), now())`,
     [`${callId}-recording`, workspace.organization_id, workspaceId, callId, `RE${sequence}`, `recordings/${callId}-recording.wav`, assessment ? "Completed" : "Pending"],
   );
   if (assessment) {
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, $2, $3, $4, $5, 82, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
       [`${callId}-assessment`, workspace.organization_id, callId, `${callId}-recording`, assessment],
@@ -172,11 +170,10 @@ async function seedCall(callId: string, workspaceId = "granted-active", assessme
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
-  await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
-  await pool.query(
+  ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
+  await database.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
      values ('granted-active', $1, 'Acme Plumbing', 'UTC', 'Active', true, now(), now()),
             ('granted-quiet', $1, 'Quiet Dental', 'UTC', 'Active', true, now(), now()),
@@ -184,7 +181,7 @@ beforeAll(async () => {
             ('other-organization-workspace', 'other-organization-id', 'Other Org Workspace', 'UTC', 'Active', true, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at, archived_at)
      values ('archived-workspace', $1, 'Old Roofing', 'UTC', 'Archived', true, now(), now(), now())`,
     [organizationId],
@@ -197,7 +194,7 @@ beforeAll(async () => {
   }));
   expect(provisioned.status).toBe(201);
   const clientId = ((await provisioned.json()) as { user: { id: string } }).user.id;
-  await pool.query(
+  await database.query(
     `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
      values ('cross-organization-grant', 'other-organization-id', 'other-organization-workspace', $1, now())`,
     [clientId],
@@ -210,7 +207,7 @@ beforeAll(async () => {
   await seedCall("archived-call", "archived-workspace");
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Lead Review writes", () => {
   it("lets an Operator add a Lead Review and then overwrite it with a new reviewer time on the same single row", async () => {
@@ -231,9 +228,9 @@ describe.sequential("Lead Review writes", () => {
   });
 
   it("never modifies the Lead Assessment", async () => {
-    const before = (await pool!.query("select * from lead_assessment where call_id = 'assessed-call'")).rows;
+    const before = (await database!.query("select * from lead_assessment where call_id = 'assessed-call'")).rows;
     await putLeadReview("granted-active", "assessed-call", operatorCookie, { classification: "Not Good Lead" });
-    expect((await pool!.query("select * from lead_assessment where call_id = 'assessed-call'")).rows).toEqual(before);
+    expect((await database!.query("select * from lead_assessment where call_id = 'assessed-call'")).rows).toEqual(before);
     expect(before[0]).toMatchObject({ classification: "Good Lead", score: 82 });
   });
 
@@ -241,7 +238,7 @@ describe.sequential("Lead Review writes", () => {
     await seedCall("review-history-call");
     await putLeadReview("granted-active", "review-history-call", operatorCookie, { classification: "Not Good Lead", note: "Wrong service area." });
     await putLeadReview("granted-active", "review-history-call", operatorCookie, { classification: "Good Lead" });
-    const events = await pool!.query(
+    const events = await database!.query(
       "select kind, detail, actor_user_id, occurred_at from call_event where call_id = 'review-history-call' and kind = 'lead_review_added' order by occurred_at, id",
     );
     expect(events.rows).toEqual([
@@ -252,7 +249,7 @@ describe.sequential("Lead Review writes", () => {
 
   it("appends no Lead Review event when a Client Viewer's Lead Review is refused", async () => {
     await putLeadReview("granted-active", "review-history-call", clientCookie, { classification: "Uncertain" });
-    const events = await pool!.query("select count(*)::int as count from call_event where call_id = 'review-history-call' and kind = 'lead_review_added'");
+    const events = await database!.query("select count(*)::int as count from call_event where call_id = 'review-history-call' and kind = 'lead_review_added'");
     expect(events.rows[0].count).toBe(2);
   });
 
@@ -328,10 +325,10 @@ describe.sequential("Lead Review in Call Detail", () => {
 
   it("keeps the Lead Review without a reviewer name after its reviewer is deleted", async () => {
     await seedCall("orphaned-review-call");
-    await pool!.query(`insert into "user" (id, name, email, email_verified, state, created_at, updated_at)
+    await database!.query(`insert into "user" (id, name, email, email_verified, state, created_at, updated_at)
                        values ('departed-operator', 'Departed Operator', 'departed@example.com', true, 'Active', now(), now())`);
-    await pool!.query(`insert into lead_review (call_id, organization_id, classification, reviewer_user_id, reviewed_at) values ('orphaned-review-call', $1, 'Good Lead', 'departed-operator', now())`, [organizationId]);
-    await pool!.query(`delete from "user" where id = 'departed-operator'`);
+    await database!.query(`insert into lead_review (call_id, organization_id, classification, reviewer_user_id, reviewed_at) values ('orphaned-review-call', $1, 'Good Lead', 'departed-operator', now())`, [organizationId]);
+    await database!.query(`delete from "user" where id = 'departed-operator'`);
     const call = await callDetail("granted-active", "orphaned-review-call", operatorCookie);
     expect(call.leadReview).toMatchObject({ classification: "Good Lead", note: null, reviewerName: null });
   });

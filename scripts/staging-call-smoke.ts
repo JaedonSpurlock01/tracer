@@ -66,7 +66,7 @@ try {
   if (!newest) throw new Error(`No Calls found for ${trackingNumber}`);
   if (newest.state !== "Completed") throw new Error(`Newest Call ${newest.twilioCallSid} is ${newest.state}`);
   if (values.replay) {
-    const result = await replayCallCallbacks({ pool, callId: newest.id, baseURL, authToken: requireEnvironment("TWILIO_AUTH_TOKEN"), send: (request) => fetch(request) });
+    const result = await replayCallCallbacks({ database: pool, callId: newest.id, baseURL, authToken: requireEnvironment("TWILIO_AUTH_TOKEN"), send: (request) => fetch(request) });
     console.log(`replay call=${newest.twilioCallSid} replayed=${result.replayed} rejected=${result.rejected} unchanged=${result.unchanged}`);
     if (result.rejected > 0 || !result.unchanged || result.replayed === 0) process.exitCode = 1;
   }

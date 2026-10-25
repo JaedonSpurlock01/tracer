@@ -44,7 +44,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 export interface RecordingMediaBucket {
   get(key: string, options?: { range?: { offset: number; length: number } }): Promise<{ body: ReadableStream } | null>;
@@ -81,10 +81,10 @@ export function recordingAvailabilitySql(recording: string, callStartedAt: strin
 }
 
 export async function findAvailableRecordingMedia(
-  pool: Pool,
+  database: Database,
   scope: { organizationId: string; workspaceId: string; recordingId: string },
 ): Promise<AvailableRecordingMedia | null> {
-  const result = await pool.query<{ r2_object_key: string; size_bytes: string; waveform_object_key: string | null; call_id: string; mp3_object_key: string | null; mp3_size_bytes: string | null }>(
+  const result = await database.query<{ r2_object_key: string; size_bytes: string; waveform_object_key: string | null; call_id: string; mp3_object_key: string | null; mp3_size_bytes: string | null }>(
     `select r.r2_object_key, r.size_bytes, case when r.waveform_state = 'Stored' then r.waveform_object_key end as waveform_object_key,
             r.call_id, case when r.mp3_state = 'Stored' then r.mp3_object_key end as mp3_object_key, r.mp3_size_bytes
        from recording r

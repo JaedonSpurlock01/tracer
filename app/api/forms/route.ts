@@ -21,7 +21,7 @@ import { createFormsHandler } from "@/data/forms-handler";
 import { withTracerRuntime } from "@/data/tracer-runtime";
 
 async function handle(request: Request): Promise<Response> {
-  return withTracerRuntime((runtime) => createFormsHandler({ pool: runtime.pool, email: runtime.email })(request));
+  return withTracerRuntime((runtime) => createFormsHandler({ database: runtime.database, email: runtime.email })(request));
 }
 
 export const POST = handle;

@@ -35,11 +35,11 @@ import { createHash } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { emptyCallFilters } from "@/data/call-list-query";
@@ -51,7 +51,7 @@ import { ReportRequestError } from "@/data/report-request";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 const requestedAt = new Date("2026-10-14T15:37:12.418Z");
 
@@ -107,24 +107,24 @@ async function pdfText(bytes: Uint8Array): Promise<string[]> {
   return pages;
 }
 
-const generate = (r2: FakeR2, jobId: string) => generateReportJob({ pool: pool!, objects: r2, now: () => new Date("2026-10-14T15:41:27.906Z"), pageSize: 2 }, jobId);
+const generate = (r2: FakeR2, jobId: string) => generateReportJob({ database: database!, objects: r2, now: () => new Date("2026-10-14T15:41:27.906Z"), pageSize: 2 }, jobId);
 
-const create = async (request: ReportJobRequest) => (await createReportJob(pool!, viewer, createReadableWorkspaces(pool!, viewer), request, requestedAt)).job;
+const create = async (request: ReportJobRequest) => (await createReportJob(database!, viewer, createReadableWorkspaces(database!, viewer), request, requestedAt)).job;
 
 const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
 
 async function seedWorkspace(id: string, name: string, timezone: string, trackingNumber: string): Promise<void> {
-  await pool!.query(`insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ($1, 'fleet', $2, $3, 'Active', now(), now())`, [id, name, timezone]);
-  await pool!.query(
+  await database!.query(`insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ($1, 'fleet', $2, $3, 'Active', now(), now())`, [id, name, timezone]);
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, 'fleet', $2, $3, 'Call Number', true, now(), now(), now(), now())`,
     [`${id}-number`, `PN${id.padEnd(32, "0")}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) values ($1, 'fleet', $2, $3, $4, now(), now())`,
     [`${id}-assignment`, id, `${id}-number`, trackingNumber],
   );
-  await pool!.query(`insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, 'fleet', $2, 1, $3, now())`, [`${id}-flow`, id, JSON.stringify(graph)]);
+  await database!.query(`insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, 'fleet', $2, 1, $3, now())`, [`${id}-flow`, id, JSON.stringify(graph)]);
 }
 
 interface SeedCall {
@@ -146,7 +146,7 @@ let seeded = 0;
 async function seedCall(input: SeedCall): Promise<void> {
   seeded += 1;
   const answered = input.outcome === "Answered";
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, started_at, answered_at, ended_at, duration_seconds, created_at, updated_at)
      values ($1, 'fleet', $2, $3, $4, $5, $6, $7, 'Completed', $8, 'flow_outcome', $9::timestamptz,
@@ -155,7 +155,7 @@ async function seedCall(input: SeedCall): Promise<void> {
       input.outcome, input.startedAt, answered, input.totalSeconds, input.connectedSeconds ?? 0],
   );
   if (input.transcript === undefined) return;
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                             waveform_state, waveform_object_key, waveform_generated_at, transcript_state, transcript_skip_reason, transcript_completed_at, lead_assessment_state, created_at, updated_at)
      values ($1, 'fleet', $2, $3, $4, $5, 2, 41, 'Stored', $6, 2048, 'checksum', now(), 'Stored', $6 || '.peaks.json', now(),
@@ -163,26 +163,26 @@ async function seedCall(input: SeedCall): Promise<void> {
     [`${input.id}-recording`, input.workspaceId, input.id, `RE${String(seeded).padStart(32, "0")}`, input.outcome === "Voicemail" ? "voicemail" : "connected", `recordings/${input.id}.wav`, input.transcript],
   );
   if (input.assessment) {
-    await pool!.query(
+    await database!.query(
       `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
        values ($1, 'fleet', $2, $3, $4, $5, 'Caller asked for a quote.', 'Clear service need.', 'gpt-5-mini', 900, 120, 0.000465, now())`,
       [`${input.id}-assessment`, input.id, `${input.id}-recording`, input.assessment.classification, input.assessment.score],
     );
   }
-  if (input.review) await pool!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, 'fleet', $2, now())", [input.id, input.review]);
+  if (input.review) await database!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, 'fleet', $2, now())", [input.id, input.review]);
 }
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
+  await database.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York", "+14155550113");
   await seedWorkspace("south", "South Roofing, Inc.", "Asia/Tokyo", "+14155550127");
   await seedWorkspace("west", "West Electric", "America/Los_Angeles", "+14155550139");
-  await pool.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('report-viewer', 'Report Viewer', 'report-viewer@example.com', true, 'Active', 'Europe/Berlin', now(), now())`);
+  await database.query(`insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ('report-viewer', 'Report Viewer', 'report-viewer@example.com', true, 'Active', 'Europe/Berlin', now(), now())`);
   for (const workspaceId of ["north", "south"]) {
-    await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, 'report-viewer', now())", [`grant-${workspaceId}`, workspaceId]);
+    await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, 'report-viewer', now())", [`grant-${workspaceId}`, workspaceId]);
   }
   await seedCall({ id: "north-before-week", workspaceId: "north", trackingNumber: "+14155550113", callerNumber: "+12125550164", startedAt: "2026-10-05T05:59:12.611Z", outcome: "Missed", totalSeconds: 23 });
   await seedCall({ id: "north-week-start", workspaceId: "north", trackingNumber: "+14155550113", callerNumber: "+12125550171", startedAt: "2026-10-05T06:00:03.317Z", outcome: "Missed", totalSeconds: 19 });
@@ -239,7 +239,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -260,9 +260,9 @@ describe("Report CSV generation", () => {
         `south-voicemail,"South Roofing, Inc.",+14155550127,+818055501942,2026-10-08T19:12:48-06:00,Voicemail,74,0,None,,No,Ready,Skipped\r\n` +
         `south-assessed,"South Roofing, Inc.",+14155550127,+818055501977,2026-10-11T17:58:41-06:00,Answered,146,131,Uncertain,58,No,Ready,Available\r\n`,
     );
-    const stored = await pool!.query("select status, completed_at, artifacts_expire_at from report_job where id = $1", [job.id]);
+    const stored = await database!.query("select status, completed_at, artifacts_expire_at from report_job where id = $1", [job.id]);
     expect(stored.rows[0]).toEqual({ status: "Completed", completed_at: new Date("2026-10-14T15:41:27.906Z"), artifacts_expire_at: new Date("2026-10-21T15:41:27.906Z") });
-    const artifacts = await pool!.query("select file_kind, r2_key, byte_size::int as byte_size, content_type from report_artifact where job_id = $1", [job.id]);
+    const artifacts = await database!.query("select file_kind, r2_key, byte_size::int as byte_size, content_type from report_artifact where job_id = $1", [job.id]);
     expect(artifacts.rows).toEqual([{ file_kind: "csv", r2_key: key, byte_size: r2.objects.get(key)!.bytes.byteLength, content_type: "text/csv; charset=utf-8" }]);
   });
 
@@ -282,7 +282,7 @@ describe("Report CSV generation", () => {
         "north-expired,North Plumbing,+14155550113,+12125550133,2025-09-17T10:03:52-04:00,Answered,208,196,Good Lead,91,No,Expired,Expired\r\n" +
         "north-reviewed,North Plumbing,+14155550113,+12125550187,2026-10-06T11:47:31-04:00,Answered,317,283,Not Good Lead,37,Yes,Ready,Available\r\n",
     );
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
   });
 
   it("writes one selected Call, and refuses to queue an export of a Call outside the job's Workspaces", async () => {
@@ -305,13 +305,13 @@ describe("Report CSV generation", () => {
     await generate(r2, job.id);
     const first = text(r2, `reports/${job.id}/calls.csv`);
 
-    await generateReportJob({ pool: pool!, objects: r2, now: () => new Date("2026-10-14T16:02:51.337Z") }, job.id);
+    await generateReportJob({ database: database!, objects: r2, now: () => new Date("2026-10-14T16:02:51.337Z") }, job.id);
 
     expect(r2.puts).toEqual([`reports/${job.id}/calls.csv`]);
     expect(text(r2, `reports/${job.id}/calls.csv`)).toBe(first);
     expect(first.split("\r\n").map((line) => line.split(",")[0]).slice(1, -1)).toEqual(["north-expired", "north-before-week", "north-week-start", "north-reviewed"]);
-    expect((await pool!.query("select completed_at from report_job where id = $1", [job.id])).rows[0].completed_at).toEqual(new Date("2026-10-14T15:41:27.906Z"));
-    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(1);
+    expect((await database!.query("select completed_at from report_job where id = $1", [job.id])).rows[0].completed_at).toEqual(new Date("2026-10-14T15:41:27.906Z"));
+    expect((await database!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(1);
   });
 
   it("keeps a job Generating when the upload fails and completes it on the rerun by overwriting the same key", async () => {
@@ -320,7 +320,7 @@ describe("Report CSV generation", () => {
     r2.putFailure = new R2ObjectError(503);
 
     await expect(generate(r2, job.id)).rejects.toEqual(new R2ObjectError(503));
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
 
     r2.putFailure = null;
     await generate(r2, job.id);
@@ -329,7 +329,7 @@ describe("Report CSV generation", () => {
     expect(text(r2, `reports/${job.id}/calls.csv`)).toBe(
       header + `south-voicemail,"South Roofing, Inc.",+14155550127,+818055501942,2026-10-09T10:12:48+09:00,Voicemail,74,0,None,,No,Ready,Skipped\r\n`,
     );
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
   });
 
   it("records a concise failure reason once retries are exhausted, after which a late rerun changes nothing", async () => {
@@ -338,15 +338,15 @@ describe("Report CSV generation", () => {
     r2.putFailure = new R2ObjectError(503);
     const error = await generate(r2, job.id).catch((value: unknown) => value);
 
-    await recordReportGenerationFailure(pool!, job.id, error);
-    await recordReportGenerationFailure(pool!, (await create({ kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "all" }, files: ["csv"] })).id, new Error("connection string postgres://secret"));
+    await recordReportGenerationFailure(database!, job.id, error);
+    await recordReportGenerationFailure(database!, (await create({ kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "all" }, files: ["csv"] })).id, new Error("connection string postgres://secret"));
     r2.putFailure = null;
     await generate(r2, job.id);
 
-    expect((await pool!.query("select status, failure_reason from report_job where id = $1", [job.id])).rows[0]).toEqual({ status: "Failed", failure_reason: "R2 request failed (HTTP 503)" });
-    expect((await pool!.query("select failure_reason from report_job where kind = 'report' and status = 'Failed'")).rows).toEqual([{ failure_reason: "Report generation failed" }]);
+    expect((await database!.query("select status, failure_reason from report_job where id = $1", [job.id])).rows[0]).toEqual({ status: "Failed", failure_reason: "R2 request failed (HTTP 503)" });
+    expect((await database!.query("select failure_reason from report_job where kind = 'report' and status = 'Failed'")).rows).toEqual([{ failure_reason: "Report generation failed" }]);
     expect(r2.puts).toEqual([`reports/${job.id}/calls.csv`]);
-    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(0);
+    expect((await database!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(0);
   });
 
   it("completes a PDF and CSV report only once both files exist, with the PDF naming its Workspaces, period, timezone, and Total Calls", async () => {
@@ -370,8 +370,8 @@ describe("Report CSV generation", () => {
     expect(pages[1]).toContain("Combined summary");
     expect(pages[1]).toContain("Total Calls 4");
     expect(pages.join("\n")).toContain("Lead Assessment (estimate)");
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
-    const artifacts = await pool!.query("select file_kind, r2_key, byte_size::int as byte_size, content_type from report_artifact where job_id = $1 order by file_kind", [job.id]);
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    const artifacts = await database!.query("select file_kind, r2_key, byte_size::int as byte_size, content_type from report_artifact where job_id = $1 order by file_kind", [job.id]);
     expect(artifacts.rows).toEqual([
       { file_kind: "csv", r2_key: csvKey, byte_size: r2.objects.get(csvKey)!.bytes.byteLength, content_type: "text/csv; charset=utf-8" },
       { file_kind: "pdf", r2_key: pdfKey, byte_size: pdf.bytes.byteLength, content_type: "application/pdf" },
@@ -391,8 +391,8 @@ describe("Report CSV generation", () => {
     expect(pages[1]).toContain("North Plumbing");
     expect(pages[1]).toContain("Total Calls 4");
     expect(pages.join("\n")).not.toContain("Workspace comparison");
-    expect((await pool!.query("select file_kind from report_artifact where job_id = $1", [job.id])).rows).toEqual([{ file_kind: "pdf" }]);
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    expect((await database!.query("select file_kind from report_artifact where job_id = $1", [job.id])).rows).toEqual([{ file_kind: "pdf" }]);
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
   });
 
   it("keeps a PDF report Generating when its upload fails and completes it on the rerun by overwriting the same key", async () => {
@@ -401,14 +401,14 @@ describe("Report CSV generation", () => {
     r2.putFailure = new R2ObjectError(503);
 
     await expect(generate(r2, job.id)).rejects.toEqual(new R2ObjectError(503));
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Generating");
 
     r2.putFailure = null;
     await generate(r2, job.id);
 
     expect(r2.puts).toEqual([`reports/${job.id}/report.pdf`, `reports/${job.id}/report.pdf`]);
-    expect((await pool!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
-    expect((await pool!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(1);
+    expect((await database!.query("select status from report_job where id = $1", [job.id])).rows[0].status).toBe("Completed");
+    expect((await database!.query("select count(*)::int as count from report_artifact where job_id = $1", [job.id])).rows[0].count).toBe(1);
   });
 
   it("uses the requester's account timezone for a global Calls export, as global Calls does, even for one Workspace", async () => {
@@ -423,7 +423,7 @@ describe("Report CSV generation", () => {
     await generate(r2, job.id);
 
     expect(job.timeZone).toBe("Europe/Berlin");
-    expect((await pool!.query("select time_zone from report_job where id = $1", [job.id])).rows[0].time_zone).toBe("Europe/Berlin");
+    expect((await database!.query("select time_zone from report_job where id = $1", [job.id])).rows[0].time_zone).toBe("Europe/Berlin");
     expect(text(r2, `reports/${job.id}/calls.csv`)).toBe(
       header +
         `south-assessed,"South Roofing, Inc.",+14155550127,+818055501977,2026-10-12T01:58:41+02:00,Answered,146,131,Uncertain,58,No,Ready,Available\r\n` +

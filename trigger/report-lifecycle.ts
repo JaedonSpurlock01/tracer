@@ -29,17 +29,17 @@ import { schedules } from "@trigger.dev/sdk";
 
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { sweepReportJobs } from "@/data/report-lifecycle";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const reportLifecycle = schedules.task({
   id: "report-lifecycle-sweep",
   cron: "41 */6 * * *",
   run: async (payload) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       return await sweepReportJobs(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -50,7 +50,7 @@ export const reportLifecycle = schedules.task({
         payload.timestamp,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

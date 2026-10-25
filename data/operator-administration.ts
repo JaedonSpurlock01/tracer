@@ -21,7 +21,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Transaction } from "@/data/database";
 
 import {
   decideOperatorStateChange,
@@ -142,7 +142,7 @@ function toRecord(row: OperatorRow): OperatorRecord {
 }
 
 async function insertAccessGrants(
-  client: PoolClient,
+  client: Transaction,
   input: { organizationId: string; userId: string; workspaceIds: readonly string[]; actorUserId: string },
 ): Promise<void> {
   const workspaceIds = [...new Set(input.workspaceIds)];
@@ -163,27 +163,12 @@ async function insertAccessGrants(
   }
 }
 
-async function selectRecord(client: PoolClient, organizationId: string, userId: string): Promise<OperatorRecord | null> {
+async function selectRecord(client: Transaction, organizationId: string, userId: string): Promise<OperatorRecord | null> {
   const result = await client.query<OperatorRow>(`${recordQuery} where u.id = $2 limit 1`, [organizationId, userId]);
   return result.rows[0] ? toRecord(result.rows[0]) : null;
 }
 
-async function withTransaction<T>(connection: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await connection.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function countActiveOperators(client: PoolClient, organizationId: string): Promise<number> {
+async function countActiveOperators(client: Transaction, organizationId: string): Promise<number> {
   const result = await client.query<{ count: string }>(
     `select count(*)
        from "user" u
@@ -194,7 +179,7 @@ async function countActiveOperators(client: PoolClient, organizationId: string):
   return Number(result.rows[0].count);
 }
 
-async function lockMembershipRole(client: PoolClient, organizationId: string, userId: string): Promise<MembershipRole> {
+async function lockMembershipRole(client: Transaction, organizationId: string, userId: string): Promise<MembershipRole> {
   const membership = await client.query<{ role: MembershipRole }>(
     `select role from member where organization_id = $1 and user_id = $2 for update`,
     [organizationId, userId],
@@ -205,11 +190,11 @@ async function lockMembershipRole(client: PoolClient, organizationId: string, us
   return membership.rows[0].role;
 }
 
-export function createOperatorAdministration(connection: Pool, organizationId: string): OperatorAdministration {
+export function createOperatorAdministration(connection: Database, organizationId: string): OperatorAdministration {
   const lock = () => ["tracer:users:" + organizationId];
-  const lockUsers = (client: PoolClient) =>
+  const lockUsers = (client: Transaction) =>
     client.query("select pg_advisory_xact_lock(hashtextextended('tracer:users:' || $1, 0))", lock());
-  const requireRecord = async (client: PoolClient, userId: string) => {
+  const requireRecord = async (client: Transaction, userId: string) => {
     const record = await selectRecord(client, organizationId, userId);
     if (!record) {
       throw new OperatorAdministrationError("not_found");
@@ -243,7 +228,7 @@ export function createOperatorAdministration(connection: Pool, organizationId: s
         throw new OperatorAdministrationError("access_grant_required");
       }
 
-      return withTransaction(connection, async (client) => {
+      return connection.transaction(async (client) => {
         await client.query("select pg_advisory_xact_lock(hashtextextended('tracer:users:' || $1, 0))", lock());
         const existing = await client.query(`select id from "user" where lower(trim(email)) = $1 limit 1`, [email]);
         if (existing.rows[0]) {
@@ -274,7 +259,7 @@ export function createOperatorAdministration(connection: Pool, organizationId: s
     },
 
     async addAccessGrant(input) {
-      return withTransaction(connection, async (client) => {
+      return connection.transaction(async (client) => {
         await lockUsers(client);
         if ((await lockMembershipRole(client, organizationId, input.userId)) !== "member") {
           throw new OperatorAdministrationError("not_client_viewer");
@@ -290,7 +275,7 @@ export function createOperatorAdministration(connection: Pool, organizationId: s
     },
 
     async removeAccessGrant(input) {
-      return withTransaction(connection, async (client) => {
+      return connection.transaction(async (client) => {
         await lockUsers(client);
         const role = await lockMembershipRole(client, organizationId, input.userId);
         const grants = await client.query<{ workspace_id: string }>(
@@ -316,7 +301,7 @@ export function createOperatorAdministration(connection: Pool, organizationId: s
         throw new OperatorAdministrationError("role_unavailable");
       }
       const nextRole = input.role;
-      return withTransaction(connection, async (client) => {
+      return connection.transaction(async (client) => {
         await lockUsers(client);
         const target = await client.query<{ state: UserState; role: MembershipRole }>(
           `select u.state, m.role
@@ -360,7 +345,7 @@ export function createOperatorAdministration(connection: Pool, organizationId: s
     },
 
     async setState(userId, nextState) {
-      return withTransaction(connection, async (client) => {
+      return connection.transaction(async (client) => {
         await client.query("select pg_advisory_xact_lock(hashtextextended('tracer:users:' || $1, 0))", lock());
         const target = await client.query<{
           state: UserState;

@@ -31,17 +31,17 @@ import { createR2RecordingObjects } from "@/data/r2-objects";
 import { createTriggerRecordingProcessing, recordingMp3TaskId, recordingTranscriptionTaskId, recordingTransferTaskId, recordingWaveformTaskId } from "@/data/recording-processing";
 import { transferRecording } from "@/data/recording-transfer";
 import { createTwilioRecordingMedia } from "@/data/twilio-client";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingTransfer = task({
   id: recordingTransferTaskId,
   concurrency: { total: 5 },
   run: async (payload: { recordingId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       await transferRecording(
         {
-          pool,
+          database,
           masterKey: requiredEnvironment("TWILIO_CREDENTIAL_MASTER_KEY"),
           twilio: createTwilioRecordingMedia(),
           objects: createR2RecordingObjects({
@@ -70,7 +70,7 @@ export const recordingTransfer = task({
         payload.recordingId,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

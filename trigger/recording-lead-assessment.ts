@@ -28,20 +28,20 @@ import { AbortTaskRunError, task } from "@trigger.dev/sdk";
 import { createOpenAIClient, OpenAIError } from "@/data/openai-client";
 import { assessRecordingLead } from "@/data/recording-lead-assessment";
 import { recordingLeadAssessmentTaskId } from "@/data/recording-processing";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingLeadAssessment = task({
   id: recordingLeadAssessmentTaskId,
   concurrency: { total: 5 },
   run: async (payload: { recordingId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
-      await assessRecordingLead({ pool, responder: createOpenAIClient({ apiKey: requiredEnvironment("OPENAI_API_KEY") }), now: () => new Date() }, payload.recordingId);
+      await assessRecordingLead({ database, responder: createOpenAIClient({ apiKey: requiredEnvironment("OPENAI_API_KEY") }), now: () => new Date() }, payload.recordingId);
     } catch (error) {
       if (error instanceof OpenAIError && !error.retryable) throw new AbortTaskRunError(error.message);
       throw error;
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

@@ -1,7 +1,7 @@
 /**
  * -------------------------------------------------------------------------
- * @file   test-pool.ts
- * @brief  Creates a PostgreSQL pool for an integration suite that survives container teardown.
+ * @file   test-database.ts
+ * @brief  Opens the Database module for an integration suite.
  *
  * @description
  *  Every integration suite ends its pools and then stops its Testcontainers
@@ -19,22 +19,15 @@
  *  the fix lives in one place; the report-jobs suite found it first.
  *
  * @see
- *  tests/integration/test-pool.test.ts
+ *  tests/integration/database.test.ts
  *  tests/integration/report-jobs.test.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
-
-import { openDatabase, type Database } from "@/data/database";
+import { openDatabase, type OpenedDatabase } from "@/data/database";
 
 /** The same Database module Production opens, against the test container. */
-export function createTestDatabase(connectionString: string, options: { max?: number } = {}): Database {
+export function createTestDatabase(connectionString: string, options: { max?: number } = {}): OpenedDatabase {
   return openDatabase(connectionString, { max: options.max ?? 10 });
-}
-
-/** Its pool, for repositories that have not yet taken a Database. */
-export function createTestPool(connectionString: string, options: { max?: number } = {}): Pool {
-  return createTestDatabase(connectionString, options).pool;
 }

@@ -53,10 +53,10 @@ export default async function CallDetailPage({
   const { id, callId } = await params;
   const query = await searchParams;
   const source = callSourceFromBack(query.back, id);
-  const data = await withRequestRuntime(async ({ pool }) => {
-    const call = await createCallDetails(pool, actor).find(id, callId);
+  const data = await withRequestRuntime(async ({ database }) => {
+    const call = await createCallDetails(database, actor).find(id, callId);
     if (!call) return null;
-    return { call, neighbors: await createCallList(pool, actor).neighbors(callSourceListQuery(source, id), callId) };
+    return { call, neighbors: await createCallList(database, actor).neighbors(callSourceListQuery(source, id), callId) };
   });
   if (!data) notFound();
   return (

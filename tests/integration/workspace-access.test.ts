@@ -23,12 +23,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { createIntegrations } from "@/data/integrations";
 import { migrateDatabase } from "@/data/migrate";
@@ -43,8 +42,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
@@ -83,7 +81,7 @@ const recordingBucket: RecordingMediaBucket = {
 
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
-  pool: pool!, database: database!,
+  database: database!,
   twilio: fakeTwilio,
   integrations: (id) => createIntegrations({ database: database!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
@@ -92,7 +90,7 @@ const workspacesHandler = () => createWorkspacesHandler({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -120,11 +118,10 @@ async function workspaces(path: string, cookie: string, init: RequestInit = {}) 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  organizationId = (await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
-  await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
-  await pool.query(
+  organizationId = (await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
+  await database.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
      values ('granted-active', $1, 'Acme Plumbing', 'UTC', 'Active', now(), now()),
             ('granted-archived', $1, 'Delta Electric', 'UTC', 'Active', now(), now()),
@@ -141,16 +138,16 @@ beforeAll(async () => {
   }));
   expect(provisioned.status).toBe(201);
   const clientId = ((await provisioned.json()) as { user: { id: string } }).user.id;
-  await pool.query(
+  await database.query(
     `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
      values ('cross-organization-grant', 'other-organization-id', 'other-organization-workspace', $1, now())`,
     [clientId],
   );
-  await pool.query(`update workspace set state = 'Archived', archived_at = now() where id = 'granted-archived'`);
-  await pool.query(`update workspace set state = 'Setup Required' where id = 'granted-restored'`);
+  await database.query(`update workspace set state = 'Archived', archived_at = now() where id = 'granted-archived'`);
+  await database.query(`update workspace set state = 'Setup Required' where id = 'granted-restored'`);
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Workspace access", () => {
   let clientCookie = "";
@@ -182,7 +179,7 @@ describe.sequential("Workspace access", () => {
 
   it("blocks the next read from an existing session after an Access Grant is removed", async () => {
     const operatorCookie = await signIn("operator@example.com");
-    const clientId = (await pool!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
+    const clientId = (await database!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
     const removed = await usersHandler()(new Request(`http://localhost:3000/api/users/${clientId}/access-grants/granted-archived`, {
       method: "DELETE",
       headers: { cookie: operatorCookie },
@@ -204,31 +201,31 @@ async function seedRecording(
 ): Promise<{ key: string; bytes: Uint8Array; peaksKey: string; peaks: string; callId: string; mp3Key: string; mp3: Uint8Array }> {
   seededCalls += 1;
   const sequence = String(seededCalls).padStart(32, "0");
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
   const callId = `${recordingId}-call`;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Recording Number', true, now(), now(), now(), now())`,
     [`${callId}-number`, workspace.organization_id, `PN${sequence}`, `+1415555${String(seededCalls).padStart(4, "0")}`],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ($1, $2, $3, $4, $5, now(), now(), 'replaced', now())`,
     [`${callId}-assignment`, workspace.organization_id, workspaceId, `${callId}-number`, `+1415555${String(seededCalls).padStart(4, "0")}`],
   );
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
      values ($1, $2, $3, $4, '{}', now())`,
     [`${callId}-flow`, workspace.organization_id, workspaceId, seededCalls],
   );
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`,
     [callId, workspace.organization_id, workspaceId, `${callId}-assignment`, `${callId}-flow`, `CA${sequence}`, `+1415555${String(seededCalls).padStart(4, "0")}`, options.callStartedAt ?? new Date()],
   );
   const key = recordingObjectKey({ id: recordingId, organizationId: workspace.organization_id, workspaceId, callId });
   const bytes = new TextEncoder().encode(`RIFF synthetic recording ${recordingId}`);
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at, created_at, updated_at)
      values ($1, $2, $3, $4, $5, 'connected', 2, $6, $7, $8, 'checksum', $9, now(), now())`,
     [recordingId, workspace.organization_id, workspaceId, callId, `RE${sequence}`, transferState, transferState === "Stored" ? key : null, transferState === "Stored" ? bytes.byteLength : null, transferState === "Stored" ? new Date() : null],
@@ -237,14 +234,14 @@ async function seedRecording(
   const peaksKey = waveformObjectKey({ id: recordingId, organizationId: workspace.organization_id, workspaceId, callId });
   const peaks = JSON.stringify({ version: 1, sampleRate: 8000, samplesPerPixel: 160, pixelsPerSecond: 50, durationSeconds: 0.04, lanes: ["Caller", "Business"], peaks: [[0.1, 0.5], [0.25, 1]] });
   if (transferState === "Stored" && options.waveform !== false) {
-    await pool!.query("update recording set waveform_state = 'Stored', waveform_object_key = $2, waveform_generated_at = now() where id = $1", [recordingId, peaksKey]);
+    await database!.query("update recording set waveform_state = 'Stored', waveform_object_key = $2, waveform_generated_at = now() where id = $1", [recordingId, peaksKey]);
     storedObjects.set(peaksKey, new TextEncoder().encode(peaks));
   }
   const mp3Key = mp3ObjectKey({ id: recordingId, organizationId: workspace.organization_id, workspaceId, callId });
   const mp3 = new TextEncoder().encode(`ID3 synthetic mp3 ${recordingId}`);
   const mp3State = options.mp3 ?? (transferState === "Stored" ? "Stored" : "Pending");
   if (mp3State !== "Pending") {
-    await pool!.query(
+    await database!.query(
       "update recording set mp3_state = $2, mp3_object_key = $3, mp3_size_bytes = $4, mp3_generated_at = now() where id = $1",
       [recordingId, mp3State, mp3State === "Stored" ? mp3Key : null, mp3State === "Stored" ? mp3.byteLength : null],
     );
@@ -357,7 +354,7 @@ describe.sequential("Recording stream", () => {
   });
 
   it("answers Not Found to an existing Client Viewer session after its Access Grant is removed", async () => {
-    const clientId = (await pool!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
+    const clientId = (await database!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
     const removed = await usersHandler()(new Request(`http://localhost:3000/api/users/${clientId}/access-grants/granted-active`, {
       method: "DELETE",
       headers: { cookie: operatorCookie },
@@ -377,8 +374,8 @@ describe.sequential("Recording waveform peaks", () => {
   beforeAll(async () => {
     operatorCookie = await signIn("operator@example.com");
     clientCookie = await signIn("client@example.com");
-    const clientId = (await pool!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
-    await pool!.query(
+    const clientId = (await database!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
+    await database!.query(
       `insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('regranted-active', $1, 'granted-active', $2, now())`,
       [organizationId, clientId],
     );
@@ -422,7 +419,7 @@ describe.sequential("Recording waveform peaks", () => {
   it("answers Not Found for peaks whose waveform is not Stored or whose Recording is not Stored", async () => {
     await seedRecording("granted-active", "pending-waveform-recording", "Stored", { waveform: false });
     await seedRecording("granted-active", "failed-waveform-recording");
-    await pool!.query("update recording set waveform_state = 'Failed', waveform_failure_reason = 'Waveform generation failed' where id = 'failed-waveform-recording'");
+    await database!.query("update recording set waveform_state = 'Failed', waveform_failure_reason = 'Waveform generation failed' where id = 'failed-waveform-recording'");
     await seedRecording("granted-active", "pending-transfer-peaks-recording", "Pending");
     for (const recordingId of ["pending-waveform-recording", "failed-waveform-recording", "pending-transfer-peaks-recording"]) {
       const response = await recordingPeaks("granted-active", recordingId, operatorCookie);
@@ -446,7 +443,7 @@ describe.sequential("Recording waveform peaks", () => {
   });
 
   it("answers Not Found for peaks to an existing Client Viewer session after its Access Grant is removed", async () => {
-    const clientId = (await pool!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
+    const clientId = (await database!.query<{ id: string }>(`select id from "user" where email = 'client@example.com'`)).rows[0].id;
     const removed = await usersHandler()(new Request(`http://localhost:3000/api/users/${clientId}/access-grants/granted-active`, {
       method: "DELETE",
       headers: { cookie: operatorCookie },
@@ -466,7 +463,7 @@ describe.sequential("Recording MP3 download", () => {
   beforeAll(async () => {
     operatorCookie = await signIn("operator@example.com");
     clientCookie = await signIn("client@example.com");
-    await pool!.query(
+    await database!.query(
       `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
        select 'mp3-regrant', organization_id, 'granted-active', (select id from "user" where email = 'client@example.com'), now()
          from workspace where id = 'granted-active'
@@ -537,7 +534,7 @@ describe.sequential("Recording media expiry", () => {
 
   it("refuses audio, peaks, and the MP3 with Not Found once 12 months have passed since the Call started, keeping the Call and Recording", async () => {
     await seedRecording("granted-active", "expired-recording", "Stored", { callStartedAt: monthsAgo(13) });
-    const before = (await pool!.query("select * from recording where id = 'expired-recording'")).rows[0];
+    const before = (await database!.query("select * from recording where id = 'expired-recording'")).rows[0];
     for (const response of [
       await recordingAudio("granted-active", "expired-recording", operatorCookie),
       await recordingPeaks("granted-active", "expired-recording", operatorCookie),
@@ -546,8 +543,8 @@ describe.sequential("Recording media expiry", () => {
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: "not_found" });
     }
-    expect((await pool!.query("select * from recording where id = 'expired-recording'")).rows[0]).toEqual(before);
-    expect((await pool!.query("select id from call where id = 'expired-recording-call'")).rowCount).toBe(1);
+    expect((await database!.query("select * from recording where id = 'expired-recording'")).rows[0]).toEqual(before);
+    expect((await database!.query("select id from call where id = 'expired-recording-call'")).rowCount).toBe(1);
   });
 
   it("keeps serving audio, peaks, and the MP3 before 12 months have passed since the Call started", async () => {

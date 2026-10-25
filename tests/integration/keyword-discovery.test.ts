@@ -21,12 +21,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import type { DataForSeoClient, DataForSeoKeywordOverviewQuery } from "@/data/dataforseo-client";
@@ -36,8 +35,7 @@ import type { StructuredRequest, StructuredResponder } from "@/data/openai-clien
 import { sealSecret } from "@/data/provider-credential";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 const viewerId = "viewer-user-id";
@@ -87,48 +85,47 @@ function discovery(actor: Actor = operatorActor()) {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())", [organizationId, viewerId]);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values
        ('workspace-a', $1, 'Pocatello Paving', 'UTC', 'Active', now(), now()),
        ('workspace-b', $1, 'St George Paving', 'America/Denver', 'Active', now(), now())`,
     [organizationId],
   );
-  await pool.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
-  await pool.query(
+  await database.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('grant-a', $1, 'workspace-a', $2, now())", [organizationId, viewerId]);
+  await database.query(
     `insert into business (id, organization_id, workspace_id, name, niche, created_at, updated_at) values
        ('business-a', $1, 'workspace-a', 'Pocatello Paving', 'Asphalt paving', now(), now()),
        ('business-b', $1, 'workspace-b', 'St George Paving', null, now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, first_seen_at, last_seen_at, created_at, updated_at,
                        service_area_city, service_area_region, service_area_country, service_area_location_code, service_area_location_name) values
        ('site-pocatello', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', now(), now(), now(), now(), 'Pocatello', 'Idaho', 'United States', 1016141, 'Pocatello,Idaho,United States'),
        ('site-st-george', $1, 'asphalt-paving-st-george', 'asphaltpavingstgeorge.com', 'zone-2', now(), now(), now(), now(), 'St. George', 'Utah', 'United States', 1026339, 'St. George,Utah,United States')`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site_link (id, organization_id, site_id, workspace_id, started_at, started_by_user_id) values
        ('link-a', $1, 'site-pocatello', 'workspace-a', now(), $2),
        ('link-b', $1, 'site-st-george', 'workspace-b', now(), $2)`,
     [organizationId, operatorId],
   );
-  await pool.query(
+  await database.query(
     "insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values ('keyword-existing', 'site-pocatello', 'Asphalt Paving Pocatello', 3, now(), now())",
   );
   const sealed = await sealSecret(masterKey, "synthetic-dataforseo-password");
-  await pool.query(
+  await database.query(
     `insert into dataforseo_connection (id, organization_id, login, password_ciphertext, master_key_fingerprint, connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
      values ('discovery-connection', $1, 'operator@example.com', $2, $3, $4, now(), now(), now(), now())`,
     [organizationId, sealed.ciphertext, sealed.fingerprint, operatorId],
@@ -136,7 +133,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -173,17 +170,17 @@ describe.sequential("Keyword Discovery", () => {
         { phrase: "asphalt repair pocatello", monthlyVolume: 0, difficulty: null, intent: null },
       ],
     });
-    const stored = await pool!.query<{ keyword_suggestions: unknown }>("select keyword_suggestions from site where id = 'site-pocatello'");
+    const stored = await database!.query<{ keyword_suggestions: unknown }>("select keyword_suggestions from site where id = 'site-pocatello'");
     expect(stored.rows[0].keyword_suggestions).toEqual(set);
   });
 
   it("counts one DataForSEO lookup on the connection per suggestion run", async () => {
-    const counted = await pool!.query<{ lookups_this_month: number; lookups_month: string }>("select lookups_this_month, lookups_month::text from dataforseo_connection where organization_id = $1", [organizationId]);
+    const counted = await database!.query<{ lookups_this_month: number; lookups_month: string }>("select lookups_this_month, lookups_month::text from dataforseo_connection where organization_id = $1", [organizationId]);
     expect(counted.rows[0]).toEqual({ lookups_this_month: 1, lookups_month: "2026-10-01" });
   });
 
   it("serves the cached set without calling either provider and hides a suggestion once it is tracked", async () => {
-    await pool!.query("insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values ('keyword-added', 'site-pocatello', 'Sealcoating Pocatello', 3, now(), now())");
+    await database!.query("insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values ('keyword-added', 'site-pocatello', 'Sealcoating Pocatello', 3, now(), now())");
     now = new Date("2026-10-26T09:00:00.000Z");
 
     const set = await discovery().suggest("site-pocatello");
@@ -200,11 +197,11 @@ describe.sequential("Keyword Discovery", () => {
     const set = await discovery().suggest("site-pocatello", { refresh: true });
 
     expect(structuredRequests).toHaveLength(2);
-    expect((await pool!.query<{ lookups_this_month: number }>("select lookups_this_month from dataforseo_connection where organization_id = $1", [organizationId])).rows[0].lookups_this_month).toBe(2);
+    expect((await database!.query<{ lookups_this_month: number }>("select lookups_this_month from dataforseo_connection where organization_id = $1", [organizationId])).rows[0].lookups_this_month).toBe(2);
     expect(structuredRequests[1].input).toContain("sealcoating pocatello");
     expect(overviewQueries[1]).toEqual({ keywords: ["pocatello asphalt contractor"], locationCode: 1016141, languageCode: "en" });
     expect(set).toEqual({ suggestedAt: "2026-10-26T09:00:00.000Z", suggestions: [{ phrase: "pocatello asphalt contractor", monthlyVolume: 90, difficulty: 20, intent: "commercial" }] });
-    const stored = await pool!.query<{ keyword_suggestions: unknown }>("select keyword_suggestions from site where id = 'site-pocatello'");
+    const stored = await database!.query<{ keyword_suggestions: unknown }>("select keyword_suggestions from site where id = 'site-pocatello'");
     expect(stored.rows[0].keyword_suggestions).toEqual(set);
   });
 
@@ -226,7 +223,7 @@ describe.sequential("Keyword Discovery", () => {
     await expect(discovery().suggest("site-pocatello", { refresh: true })).rejects.toMatchObject({ name: "KeywordDiscoveryError", code: "invalid_output" });
 
     responderText = null;
-    const stored = await pool!.query<{ keyword_suggestions: KeywordSuggestionSet }>("select keyword_suggestions from site where id = 'site-pocatello'");
+    const stored = await database!.query<{ keyword_suggestions: KeywordSuggestionSet }>("select keyword_suggestions from site where id = 'site-pocatello'");
     expect(stored.rows[0].keyword_suggestions.suggestedAt).toBe("2026-10-26T09:00:00.000Z");
     expect(overviewQueries).toHaveLength(2);
   });

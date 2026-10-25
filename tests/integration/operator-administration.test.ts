@@ -18,21 +18,19 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { migrateDatabase } from "@/data/migrate";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 let otherUserId = "";
@@ -47,10 +45,9 @@ let clientId = "";
 const messages: TransactionalEmailMessage[] = [];
 const backgroundTasks: Promise<unknown>[] = [];
 
-const database = () => drizzle(pool!, { schema });
 
 const auth = () => createTracerAuth({
-  database: database(),
+  database: database!.drizzle,
   email: {
     async send(message) {
       messages.push(message);
@@ -66,7 +63,7 @@ const auth = () => createTracerAuth({
 
 const handler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email: {
     async send(message) {
       messages.push(message);
@@ -107,9 +104,9 @@ async function json(request: Request): Promise<{ response: Response; body: Recor
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, {
+  const bootstrapped = await bootstrapInitialOperator(database, {
     email: "operator@example.com",
     name: "Example Operator",
     timezone: "America/Chicago",
@@ -118,17 +115,17 @@ beforeAll(async () => {
   operatorId = bootstrapped.userId;
   otherUserId = "other-user-id";
   viewerId = "viewer-user-id";
-  await pool.query(
+  await database.query(
     `insert into organization (id, name, slug, created_at) values ($1, 'Other Org', 'other-org', now())`,
     ["other-organization-id"],
   );
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Other Operator', 'other@example.com', false, 'Provisioned', 'UTC', now(), now()),
             ($2, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [otherUserId, viewerId],
   );
-  await pool.query(
+  await database.query(
     `insert into member (id, organization_id, user_id, role, created_at)
      values ('other-membership-id', 'other-organization-id', $1, 'owner', now()),
             ('viewer-membership-id', $2, $3, 'member', now())`,
@@ -138,7 +135,7 @@ beforeAll(async () => {
   setupWorkspaceId = "setup-workspace-id";
   secondActiveWorkspaceId = "second-active-workspace-id";
   archivedWorkspaceId = "archived-workspace-id";
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
      values ($1, $5, 'Acme Plumbing', 'UTC', 'Active', now(), now()),
             ($2, $5, 'Beta Roofing', 'UTC', 'Setup Required', now(), now()),
@@ -149,7 +146,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -233,8 +230,8 @@ describe.sequential("Operator administration", () => {
     }));
     expect(setupRequired.response.status).toBe(409);
     expect(setupRequired.body).toEqual({ error: "workspace_not_grantable" });
-    await expect(pool!.query(`select count(*) from "user" where email = 'client@example.com'`)).resolves.toMatchObject({ rows: [{ count: "0" }] });
-    await expect(pool!.query("select count(*) from access_grant")).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query(`select count(*) from "user" where email = 'client@example.com'`)).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from access_grant")).resolves.toMatchObject({ rows: [{ count: "0" }] });
   });
 
   it("provisions a Client Viewer and the initial Access Grant together", async () => {
@@ -277,7 +274,7 @@ describe.sequential("Operator administration", () => {
 
     const duplicate = await grant(clientId, secondActiveWorkspaceId);
     expect(duplicate.response.status).toBe(200);
-    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "2" }] });
+    await expect(database!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "2" }] });
 
     const archived = await grant(clientId, archivedWorkspaceId);
     expect(archived.response.status).toBe(409);
@@ -314,7 +311,7 @@ describe.sequential("Operator administration", () => {
     const last = await revoke(clientId, activeWorkspaceId);
     expect(last.response.status).toBe(409);
     expect(last.body).toEqual({ error: "last_access_grant" });
-    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    await expect(database!.query("select count(*) from access_grant where user_id = $1", [clientId])).resolves.toMatchObject({ rows: [{ count: "1" }] });
   });
 
   it("demotes an Operator to Client Viewer only with an Access Grant", async () => {
@@ -332,7 +329,7 @@ describe.sequential("Operator administration", () => {
     const setupRequired = await changeRole({ role: "Client Viewer", workspaceIds: [setupWorkspaceId] });
     expect(setupRequired.response.status).toBe(409);
     expect(setupRequired.body).toEqual({ error: "workspace_not_grantable" });
-    await expect(pool!.query("select role from member where user_id = $1", [thirdId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
+    await expect(database!.query("select role from member where user_id = $1", [thirdId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
 
     const demoted = await changeRole({ role: "Client Viewer", workspaceIds: [secondActiveWorkspaceId] });
     expect(demoted.response.status).toBe(200);
@@ -372,8 +369,8 @@ describe.sequential("Operator administration", () => {
     }));
     expect(result.response.status).toBe(409);
     expect(result.body).toEqual({ error: "last_active_operator" });
-    await expect(pool!.query("select count(*) from access_grant where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
-    await expect(pool!.query("select role from member where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
+    await expect(database!.query("select count(*) from access_grant where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select role from member where user_id = $1", [operatorId])).resolves.toMatchObject({ rows: [{ role: "owner" }] });
   });
 
   it("protects the last Active Operator from disablement", async () => {
@@ -385,7 +382,7 @@ describe.sequential("Operator administration", () => {
     }));
     expect(result.response.status).toBe(409);
     expect(result.body).toEqual({ error: "last_active_operator" });
-    await expect(pool!.query('select state from "user" where id = $1', [operatorId])).resolves.toMatchObject({ rows: [{ state: "Active" }] });
+    await expect(database!.query('select state from "user" where id = $1', [operatorId])).resolves.toMatchObject({ rows: [{ state: "Active" }] });
   });
 
   it("does not mutate a user outside the Operator Organization", async () => {
@@ -417,7 +414,7 @@ describe.sequential("Operator administration", () => {
 
   it("activates a newly signed-in Operator and grants Organization capabilities", async () => {
     const cookie = await signIn("second@example.com");
-    await expect(pool!.query('select state, last_sign_in_at from "user" where id = $1', [secondId])).resolves.toMatchObject({ rows: [{ state: "Active", last_sign_in_at: expect.anything() }] });
+    await expect(database!.query('select state, last_sign_in_at from "user" where id = $1', [secondId])).resolves.toMatchObject({ rows: [{ state: "Active", last_sign_in_at: expect.anything() }] });
     const result = await json(new Request("http://localhost:3000/api/users", { headers: { cookie } }));
     expect(result.response.status).toBe(200);
   });
@@ -431,7 +428,7 @@ describe.sequential("Operator administration", () => {
       body: JSON.stringify({ state: "Disabled" }),
     }));
     expect(disabled.response.status).toBe(200);
-    await expect(pool!.query("select count(*) from session where user_id = $1", [secondId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from session where user_id = $1", [secondId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
     const revoked = await json(new Request("http://localhost:3000/api/users", { headers: { cookie: secondCookie } }));
     expect(revoked.response.status).toBe(401);
 

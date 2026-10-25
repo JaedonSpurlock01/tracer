@@ -16,9 +16,9 @@
  * @remarks
  *  Inside a Worker the pool drives RequestSocket so the 10-second connect
  *  and 30-second query timeouts are real; elsewhere pg's Node socket is
- *  used. The pool and the Drizzle instance are exposed for the move from
- *  raw pools: `pool` goes to repositories that have not yet taken a
- *  Database, and `drizzle` exists only for the Better Auth adapter. The
+ *  used. The Drizzle instance exists only for the Better Auth adapter, and
+ *  the pg pool is on openDatabase's own result for this module's tests,
+ *  never on the Database callers hold. The
  *  pool tolerates PostgreSQL closing an idle or checked-out client
  *  (57P01, the server shutting down or a terminated backend) because the
  *  integration suite stops its container while clients are open, and
@@ -70,8 +70,6 @@ export interface Database {
   readonly stats: DatabaseStats;
   /** Ends the pool in the background, giving up after the deadline so a dead connection never holds the owner. */
   close(): Promise<"closed" | "abandoned">;
-  /** The pool, for repositories that have not yet taken a Database. */
-  pool: Pool;
   /** The Drizzle instance the Better Auth adapter needs; nothing else uses it. */
   drizzle: NodePgDatabase<typeof schema>;
 }
@@ -94,7 +92,10 @@ function isPoolTimeout(error: unknown): boolean {
 
 type Instrumented = { query: (...args: unknown[]) => unknown };
 
-export function openDatabase(connectionString: string, options: DatabaseOptions): Database {
+/** What openDatabase returns: the Database plus its pg pool, which only this module's own tests reach. */
+export type OpenedDatabase = Database & { readonly pool: Pool };
+
+export function openDatabase(connectionString: string, options: DatabaseOptions): OpenedDatabase {
   const sockets = options.sockets ?? (isCloudflareWorker() ? loadCloudflareSockets : undefined);
   const stream = sockets ? (config: { ssl?: unknown }) => new RequestSocket(Boolean(config.ssl), sockets) : undefined;
   const pool = new Pool({ connectionString, max: options.max, connectionTimeoutMillis: connectTimeoutMs, query_timeout: queryTimeoutMs, stream: stream as PoolConfig["stream"] });

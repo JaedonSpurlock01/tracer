@@ -51,7 +51,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { Actor } from "@/data/authorization";
 import { appendCallEvent } from "@/data/call-events";
@@ -62,7 +62,7 @@ import { createReadableWorkspaces } from "@/data/workspace-authorization";
 export type MediaPurgeResult = { purgedAt: string } | "not_found" | "no_recording" | "media_expired" | "already_purged";
 
 export interface MediaPurgeDeps {
-  pool: Pool;
+  database: Database;
   objects?: MediaRemovalDeps["objects"];
   twilio?: MediaRemovalDeps["twilio"];
   masterKey?: string;
@@ -71,9 +71,9 @@ export interface MediaPurgeDeps {
 type PurgeRow = { id: string | null; call_id: string; workspace_id: string; started_at: Date; media_purged_at: Date | null; expired: boolean };
 
 export async function purgeCallMedia(deps: MediaPurgeDeps, actor: Actor, workspaceId: string, callId: string, now: Date): Promise<MediaPurgeResult> {
-  const workspace = await createReadableWorkspaces(deps.pool, actor).find(workspaceId);
+  const workspace = await createReadableWorkspaces(deps.database, actor).find(workspaceId);
   if (!workspace) return "not_found";
-  const result = await deps.pool.query<PurgeRow>(
+  const result = await deps.database.query<PurgeRow>(
     `select c.id as call_id, c.workspace_id, c.started_at, r.id, r.media_purged_at,
             ${recordingMediaExpiredSql("c.started_at", "$4::timestamptz")} as expired
        from call c
@@ -91,21 +91,19 @@ export async function purgeCallMedia(deps: MediaPurgeDeps, actor: Actor, workspa
   if (!row.id) return "no_recording";
   if (row.media_purged_at) return "already_purged";
   if (row.expired) return "media_expired";
+  const recordingId = row.id;
 
   let artifactKeys: string[] = [];
-  const client = await deps.pool.connect();
-  try {
-    await client.query("begin");
+  const outcome = await deps.database.transaction(async (client) => {
     const marked = await client.query(
       "update recording set media_purged_at = $2, media_purged_by_user_id = $3 where id = $1 and media_purged_at is null",
-      [row.id, now, actor.userId],
+      [recordingId, now, actor.userId],
     );
     if (marked.rowCount === 0) {
-      await client.query("rollback");
-      return "already_purged";
+      return "already_purged" as const;
     }
-    await deleteRecordingContent(client, row.id);
-    await appendCallEvent(client, { callId: row.call_id, kind: "media_purged", key: `media_purged:${row.id}`, occurredAt: now, actorUserId: actor.userId });
+    await deleteRecordingContent(client, recordingId);
+    await appendCallEvent(client, { callId: row.call_id, kind: "media_purged", key: `media_purged:${recordingId}`, occurredAt: now, actorUserId: actor.userId });
     const expired = await client.query<{ r2_key: string }>(
       `update report_job j set artifacts_expire_at = $2
          from report_artifact a
@@ -114,20 +112,16 @@ export async function purgeCallMedia(deps: MediaPurgeDeps, actor: Actor, workspa
                or (a.included_recording_ids is null and $4 = any(j.workspace_ids) and j.requested_at > $5
                    and coalesce(j.parameters->'selection'->>'callId', $6) = $6))
        returning a.r2_key`,
-      [row.id, now, actor.organizationId, row.workspace_id, row.started_at, row.call_id],
+      [recordingId, now, actor.organizationId, row.workspace_id, row.started_at, row.call_id],
     );
     artifactKeys = expired.rows.map(({ r2_key }) => r2_key);
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+    return undefined;
+  });
+  if (outcome) return outcome;
 
   if (deps.objects) {
     try {
-      await deleteRecordingCopies({ pool: deps.pool, objects: deps.objects, twilio: deps.twilio, masterKey: deps.masterKey }, row.id, now);
+      await deleteRecordingCopies({ database: deps.database, objects: deps.objects, twilio: deps.twilio, masterKey: deps.masterKey }, row.id, now);
     } catch (error) {
       console.error("Purged Recording media cleanup failed; the media retention sweep will retry it", error);
     }

@@ -31,11 +31,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
@@ -54,7 +54,7 @@ const accountSid = "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const now = new Date("2026-10-16T12:00:00.000Z");
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operator: Actor | undefined;
 
@@ -96,7 +96,7 @@ function fakeTwilio(): FakeTwilio {
       return twilio.media.get(recordingSid)!;
     },
     async deleteRecording(_credential, recordingSid) {
-      const row = await pool!.query("select transfer_state from recording where twilio_recording_sid = $1", [recordingSid]);
+      const row = await database!.query("select transfer_state from recording where twilio_recording_sid = $1", [recordingSid]);
       twilio.deletes.push({ sid: recordingSid, transferState: row.rows[0].transfer_state });
       if (twilio.deleteFailure) throw twilio.deleteFailure;
       twilio.media.delete(recordingSid);
@@ -134,7 +134,7 @@ function fakeWaveform(failure: Error | null = null): RecordingProcessing & { req
   return {
     requests,
     async request(request) {
-      const row = await pool!.query("select transfer_state from recording where id = $1", [request.id]);
+      const row = await database!.query("select transfer_state from recording where id = $1", [request.id]);
       requests.push({ request, transferState: row.rows[0].transfer_state });
       if (failure) throw failure;
     },
@@ -146,7 +146,7 @@ function fakeTranscription(failure: Error | null = null): RecordingProcessing & 
   return {
     requests,
     async request(request) {
-      const row = await pool!.query("select transcript_state from recording where id = $1", [request.id]);
+      const row = await database!.query("select transcript_state from recording where id = $1", [request.id]);
       requests.push({ request, transcriptState: row.rows[0].transcript_state });
       if (failure) throw failure;
     },
@@ -154,7 +154,7 @@ function fakeTranscription(failure: Error | null = null): RecordingProcessing & 
 }
 
 function dependencies(twilio: FakeTwilio, r2: FakeR2, waveform = fakeWaveform(), transcription = fakeTranscription(), mp3 = fakeWaveform()): RecordingTransferDependencies {
-  return { pool: pool!, masterKey, twilio, objects: r2, waveform, transcription, mp3, now: () => now };
+  return { database: database!, masterKey, twilio, objects: r2, waveform, transcription, mp3, now: () => now };
 }
 
 let sequence = 0;
@@ -174,7 +174,7 @@ async function pendingRecording(source: "connected" | "voicemail" = "voicemail",
   const sid = `RE${String(sequence).padStart(32, "0")}`;
   const callSid = `CA${String(sequence).padStart(32, "0")}`;
   const workspaceId = seed.workspaceId ?? "transfer-workspace";
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, state, outcome, started_at, answered_at, ended_at, created_at, updated_at)
      values ($1, $2, $3, 'transfer-assignment', $4, $5, '+14155550111', $6, $7, now() - interval '5 minutes', $8, $9, now(), now())`,
     [
@@ -189,14 +189,14 @@ async function pendingRecording(source: "connected" | "voicemail" = "voicemail",
       seed.forwardedSeconds === undefined ? null : now,
     ],
   );
-  const event = (kind: string, idempotencyKey: string, payload: Record<string, string>) => pool!.query(
+  const event = (kind: string, idempotencyKey: string, payload: Record<string, string>) => database!.query(
     `insert into provider_event (id, organization_id, number_assignment_id, call_id, idempotency_key, kind, disposition, payload, received_at)
      values ($1, $2, 'transfer-assignment', $3, $4, $5, 'accepted', $6, now())`,
     [randomUUID(), organizationId, callId, idempotencyKey, kind, JSON.stringify(payload)],
   );
   if (seed.keypadDigits !== undefined) await event("gather", `${callSid}:gather:gate:1`, { Digits: seed.keypadDigits });
   if (seed.forwardedSeconds !== undefined) await event("forward_status", `${callSid}:forward_status:completed`, { CallStatus: "completed", CallDuration: String(seed.forwardedSeconds) });
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`,
     [id, organizationId, workspaceId, callId, sid, source, source === "connected" ? 2 : 1, seed.durationSeconds ?? 12],
@@ -205,12 +205,12 @@ async function pendingRecording(source: "connected" | "voicemail" = "voicemail",
 }
 
 async function analysisState(id: string): Promise<{ transcript_state: string | null; transcript_skip_reason: string | null }> {
-  const result = await pool!.query("select transcript_state, transcript_skip_reason from recording where id = $1", [id]);
+  const result = await database!.query<{ transcript_state: string | null; transcript_skip_reason: string | null }>("select transcript_state, transcript_skip_reason from recording where id = $1", [id]);
   return result.rows[0];
 }
 
 async function recordingRow(id: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select transfer_state, twilio_cleanup_state, r2_object_key, size_bytes::int as size_bytes, sha256, stored_at, twilio_deleted_at, failure_stage, failure_reason
        from recording where id = $1`,
     [id],
@@ -220,45 +220,45 @@ async function recordingRow(id: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Transfer Operator", timezone: "UTC" });
   organizationId = bootstrapped.organizationId;
   operator = { organizationId, userId: bootstrapped.userId, role: "Operator", timezone: "UTC", name: "Transfer Operator", email: "operator@example.com", state: "Active" };
-  await pool.query(
+  await database.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
      values ('transfer-connection', $1, $2, 'SK11111111111111111111111111111111', $3, $4, now(), now(), now())`,
     [organizationId, accountSid, await encryptSecret(masterKey, apiKeySecret), bootstrapped.userId],
   );
-  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
-  await pool.query(
+  await database.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('transfer-number', $1, 'PNdddddddddddddddddddddddddddddddd', '+14155550111', 'Transfer Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
      values ('transfer-workspace', $1, 'Transfer Workspace', 'UTC', 'Active', '+14155550199', now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('transfer-assignment', $1, 'transfer-workspace', 'transfer-number', '+14155550111', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('transfer-flow-version', $1, 'transfer-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), bootstrapped.userId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, recording_enabled, analysis_enabled, created_at, updated_at)
      values ('analysis-workspace', $1, 'Analysis Workspace', 'UTC', 'Active', '+14155550199', true, true, now(), now())`,
     [organizationId],
   );
   const flow = (spamGateEnabled: boolean) => generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('analysis-flow-version', $1, 'analysis-workspace', 1, $2, $4, now()),
             ('analysis-gated-flow-version', $1, 'analysis-workspace', 2, $3, $4, now())`,
@@ -267,7 +267,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -438,7 +438,7 @@ describe("Recording transfer", () => {
     });
 
     it("keeps the eligibility decided at Stored time when analysis is enabled before a cleanup retry", async () => {
-      await pool!.query("update workspace set recording_enabled = true where id = 'transfer-workspace'");
+      await database!.query("update workspace set recording_enabled = true where id = 'transfer-workspace'");
       const recording = await pendingRecording("voicemail", { durationSeconds: 60 });
       const twilio = fakeTwilio();
       const r2 = fakeR2();
@@ -446,7 +446,7 @@ describe("Recording transfer", () => {
       twilio.deleteFailure = new TwilioClientError("unavailable", null);
       try {
         await expect(transferRecording(dependencies(twilio, r2), recording.id)).rejects.toBe(twilio.deleteFailure);
-        await pool!.query("update workspace set analysis_enabled = true where id = 'transfer-workspace'");
+        await database!.query("update workspace set analysis_enabled = true where id = 'transfer-workspace'");
         twilio.deleteFailure = null;
         const transcription = fakeTranscription();
 
@@ -455,7 +455,7 @@ describe("Recording transfer", () => {
         expect(transcription.requests).toEqual([]);
         expect(await analysisState(recording.id)).toEqual({ transcript_state: "Skipped", transcript_skip_reason: "analysis_disabled" });
       } finally {
-        await pool!.query("update workspace set analysis_enabled = false, recording_enabled = false where id = 'transfer-workspace'");
+        await database!.query("update workspace set analysis_enabled = false, recording_enabled = false where id = 'transfer-workspace'");
       }
     });
 
@@ -551,19 +551,19 @@ describe("Recording transfer", () => {
       recording = await pendingRecording();
       const twilio = fakeTwilio();
       twilio.media.set(recording.sid, recording.bytes);
-      await pool!.query(
+      await database!.query(
         `create function reject_stored_recording() returns trigger language plpgsql as $$
          begin raise exception 'injected database failure'; end $$`,
       );
-      await pool!.query(
+      await database!.query(
         `create trigger reject_stored_recording before update on recording
            for each row when (new.transfer_state = 'Stored' and new.id = '${recording.id}') execute function reject_stored_recording()`,
       );
       try {
         await expect(transferRecording(dependencies(twilio, r2), recording.id)).rejects.toThrow("injected database failure");
       } finally {
-        await pool!.query("drop trigger reject_stored_recording on recording");
-        await pool!.query("drop function reject_stored_recording()");
+        await database!.query("drop trigger reject_stored_recording on recording");
+        await database!.query("drop function reject_stored_recording()");
       }
 
       expect(twilio.deletes).toEqual([]);
@@ -680,9 +680,9 @@ describe("Recording transfer", () => {
     const purgedPending = await pendingRecording();
     const purgedFailed = await pendingRecording();
     const expiredPending = await pendingRecording();
-    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[purgedPending.id, purgedFailed.id], now]);
-    await pool!.query("update recording set transfer_state = 'Failed', failure_stage = 'download', failure_reason = 'Twilio is unavailable' where id = $1", [purgedFailed.id]);
-    await pool!.query("update call set started_at = $2::timestamptz - interval '13 months' where id = $1", [expiredPending.callId, now]);
+    await database!.query("update recording set media_purged_at = $2 where id = any($1)", [[purgedPending.id, purgedFailed.id], now]);
+    await database!.query("update recording set transfer_state = 'Failed', failure_stage = 'download', failure_reason = 'Twilio is unavailable' where id = $1", [purgedFailed.id]);
+    await database!.query("update call set started_at = $2::timestamptz - interval '13 months' where id = $1", [expiredPending.callId, now]);
     const records = [purgedPending, purgedFailed, expiredPending];
     for (const recording of records) twilio.media.set(recording.sid, recording.bytes);
     const before = await Promise.all(records.map((recording) => recordingRow(recording.id)));
@@ -707,8 +707,8 @@ describe("Recording transfer", () => {
     });
     const transfer = transferRecording(dependencies(twilio, r2), recording.id);
     await expect.poll(() => twilio.downloads.length).toBe(1);
-    const purge = purgeCallMedia({ pool: pool!, objects: r2, twilio, masterKey }, operator!, "transfer-workspace", recording.callId, now);
-    await expect.poll(async () => (await pool!.query("select 1 from pg_stat_activity where wait_event_type = 'Lock'")).rowCount).toBe(1);
+    const purge = purgeCallMedia({ database: database!, objects: r2, twilio, masterKey }, operator!, "transfer-workspace", recording.callId, now);
+    await expect.poll(async () => (await database!.query("select 1 from pg_stat_activity where wait_event_type = 'Lock'")).rowCount).toBe(1);
 
     release();
     await Promise.allSettled([transfer]);
@@ -717,12 +717,12 @@ describe("Recording transfer", () => {
     expect(r2.puts).toHaveLength(1);
     expect(r2.objects.size).toBe(0);
     expect(twilio.media.has(recording.sid)).toBe(false);
-    await expect(pool!.query("select twilio_cleanup_state, media_deleted_at from recording where id = $1", [recording.id])).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Deleted", media_deleted_at: now }] });
+    await expect(database!.query("select twilio_cleanup_state, media_deleted_at from recording where id = $1", [recording.id])).resolves.toMatchObject({ rows: [{ twilio_cleanup_state: "Deleted", media_deleted_at: now }] });
   });
 });
 
 async function callEvents(callId: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
-  const result = await pool!.query("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
+  const result = await database!.query<{ kind: string; detail: Record<string, unknown> }>("select kind, detail from call_event where call_id = $1 order by occurred_at, id", [callId]);
   return result.rows;
 }
 

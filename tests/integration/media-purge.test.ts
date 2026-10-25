@@ -32,13 +32,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { createAnalytics } from "@/data/analytics";
 import type { Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -50,17 +48,14 @@ import { migrateDatabase } from "@/data/migrate";
 import { masterKeyFingerprint } from "@/data/provider-credential";
 import { createOperatorAdministrationHandler } from "@/data/operator-administration-handler";
 import { provisionRuntimeRole, runtimeRole } from "@/data/runtime-role";
-import { schema } from "@/data/schema";
 import { createTracerAuth } from "@/data/tracer-auth";
 import { createTwilioRecordingMedia, type TwilioClient } from "@/data/twilio-client";
 import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let owner: Pool | undefined;
-let ownerDatabase: Database | undefined;
-let runtime: Pool | undefined;
-let runtimeDatabase: Database | undefined;
+let owner: OpenedDatabase | undefined;
+let runtime: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 let operatorCookie = "";
@@ -76,9 +71,8 @@ const fakeTwilio: TwilioClient = {
 };
 const email = { async send(message: (typeof messages)[number]) { messages.push(message); return { messageId: `email-${messages.length}` }; } };
 
-const database = () => drizzle(owner!, { schema });
 const auth = () => createTracerAuth({
-  database: database(),
+  database: owner!.drizzle,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -119,9 +113,9 @@ const twilioMedia = createTwilioRecordingMedia({ fetch: (input, init) => twilio.
 
 const workspacesHandler = () => createWorkspacesHandler({
   auth: auth(),
-  pool: runtime!, database: runtimeDatabase!,
+  database: runtime!,
   twilio: fakeTwilio,
-  integrations: (id) => createIntegrations({ database: ownerDatabase!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
+  integrations: (id) => createIntegrations({ database: owner!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
   recordingBucket: r2,
   masterKey,
@@ -130,7 +124,7 @@ const workspacesHandler = () => createWorkspacesHandler({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: owner!,
+  database: owner!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -237,15 +231,13 @@ async function mediaState(callId: string) {
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   await migrateDatabase(container.getConnectionUri());
-  ownerDatabase = createTestDatabase(container.getConnectionUri());
-  owner = ownerDatabase.pool;
+  owner = createTestDatabase(container.getConnectionUri());
   const password = "D".repeat(64);
   await provisionRuntimeRole(owner, password);
   const runtimeUrl = new URL(container.getConnectionUri());
   runtimeUrl.username = runtimeRole;
   runtimeUrl.password = password;
-  runtimeDatabase = createTestDatabase(runtimeUrl.toString());
-  runtime = runtimeDatabase.pool;
+  runtime = createTestDatabase(runtimeUrl.toString());
   ({ organizationId, userId: operatorId } = await bootstrapInitialOperator(owner, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" }));
   await owner.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
@@ -286,8 +278,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await runtime?.end();
-  await owner?.end();
+  await runtime?.close();
+  await owner?.close();
   await container?.stop();
 });
 
@@ -395,7 +387,7 @@ describe.sequential("Operator Purge Media", () => {
     }
 
     const swept = new Date();
-    await expect(sweepRecordingMedia({ pool: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept)).resolves.toMatchObject({ failed: 0 });
+    await expect(sweepRecordingMedia({ database: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept)).resolves.toMatchObject({ failed: 0 });
     expect(objectKeys("failing-call").filter((key) => r2.objects.has(key))).toEqual([]);
     expect(await mediaState("failing-call")).toMatchObject({ recording: { media_deleted_at: swept } });
   });
@@ -464,7 +456,7 @@ describe.sequential("Operator Purge Media", () => {
 
     twilio.statuses.clear();
     const swept = new Date();
-    await sweepRecordingMedia({ pool: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept);
+    await sweepRecordingMedia({ database: runtime!, objects: r2, twilio: twilioMedia, masterKey }, swept);
     await expect(owner!.query("select twilio_cleanup_state, twilio_deleted_at, media_deleted_at from recording where call_id = 'twilio-failing-call'")).resolves.toMatchObject({
       rows: [{ twilio_cleanup_state: "Deleted", twilio_deleted_at: swept, media_deleted_at: swept }],
     });

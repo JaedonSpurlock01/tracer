@@ -23,13 +23,13 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { FormSubmissionsError, ingestFormSubmission } from "@/data/form-submissions";
 import type { TransactionalEmail } from "@/data/transactional-email";
 
 export interface FormsHandlerOptions {
-  pool: Pool;
+  database: Database;
   email: TransactionalEmail;
 }
 
@@ -51,7 +51,7 @@ export function createFormsHandler(options: FormsHandlerOptions): (request: Requ
     if (!body || typeof body !== "object" || Array.isArray(body)) return response({ error: "invalid_input" }, 400);
     const input = body as Record<string, unknown>;
     try {
-      const result = await ingestFormSubmission(options.pool, options.email, { key, site: input.site, submissionId: input.submissionId, page: input.page, fields: input.fields });
+      const result = await ingestFormSubmission(options.database, options.email, { key, site: input.site, submissionId: input.submissionId, page: input.page, fields: input.fields });
       const { submission } = result;
       return response({ submission: { id: submission.id, held: submission.held, forward: submission.forward } }, result.created ? 201 : 200);
     } catch (error) {

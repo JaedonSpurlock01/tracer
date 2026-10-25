@@ -32,7 +32,7 @@ export default async function WorkspaceFormsPage({ params }: { params: Promise<{
   const actor = await resolveRequestActor();
   if (actor?.state !== "Active") notFound();
   const { id } = await params;
-  const list = await withRequestRuntime((runtime) => createFormSubmissions(runtime.pool, actor, runtime.email).list(id));
+  const list = await withRequestRuntime((runtime) => createFormSubmissions(runtime.database, actor, runtime.email).list(id));
   if (!list) notFound();
   return <FormsView list={list} readOnly={!canManageWorkspaces(actor)} />;
 }

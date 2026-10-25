@@ -34,7 +34,7 @@ import { createOpenAIClient, OpenAIError } from "@/data/openai-client";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { createTriggerRecordingProcessing, recordingLeadAssessmentTaskId, recordingTranscriptionTaskId } from "@/data/recording-processing";
 import { transcribeRecording } from "@/data/recording-transcription";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingTranscription = task({
   id: recordingTranscriptionTaskId,
@@ -42,11 +42,11 @@ export const recordingTranscription = task({
   machine: "small-2x",
   maxDuration: 3600,
   run: async (payload: { recordingId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       await transcribeRecording(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -67,7 +67,7 @@ export const recordingTranscription = task({
       if (error instanceof OpenAIError && !error.retryable) throw new AbortTaskRunError(error.message);
       throw error;
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

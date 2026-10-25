@@ -16,28 +16,19 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 export interface IdentityAdministration {
   disable(userId: string): Promise<void>;
 }
 
-export function createIdentityAdministration(connection: Pool): IdentityAdministration {
+export function createIdentityAdministration(connection: Database): IdentityAdministration {
   return {
     async disable(userId) {
-      const client = await connection.connect();
-
-      try {
-        await client.query("begin");
+      await connection.transaction(async (client) => {
         await client.query(`update "user" set state = 'Disabled', updated_at = now() where id = $1`, [userId]);
         await client.query(`delete from session where user_id = $1`, [userId]);
-        await client.query("commit");
-      } catch (error) {
-        await client.query("rollback");
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
     },
   };
 }

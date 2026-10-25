@@ -43,7 +43,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { downloadableMp3RecordingId, totalSecondsSql } from "@/data/call-details";
 import { emptyCallFilters } from "@/data/call-list-query";
@@ -140,9 +140,9 @@ function selectionWhere(organizationId: string, selection: ReportSelection): { w
   return { where: ["c.organization_id = $1", "c.workspace_id = any($2::text[])", "c.started_at < $3", ...selectionConditions(selection, values)].join(" and "), values };
 }
 
-export async function previewReportSelection(pool: Pool, organizationId: string, selection: ReportSelection): Promise<ReportSelectionPreview> {
+export async function previewReportSelection(database: Database, organizationId: string, selection: ReportSelection): Promise<ReportSelectionPreview> {
   const { where, values } = selectionWhere(organizationId, selection);
-  const groups = await pool.query<RecordingStateRow & { count: number }>(
+  const groups = await database.query<RecordingStateRow & { count: number }>(
     `select case when r.id is not null then 'recording' end as recording_id, coalesce(r.expired, false) as expired, r.media_purged_at is not null as purged,
             r.transfer_state, r.mp3_state, count(*)::int as count
        from ${callSource}
@@ -166,19 +166,19 @@ export async function previewReportSelection(pool: Pool, organizationId: string,
   return preview;
 }
 
-export async function reportSelectionWorkspaceIds(pool: Pool, organizationId: string, selection: ReportSelection): Promise<string[]> {
+export async function reportSelectionWorkspaceIds(database: Database, organizationId: string, selection: ReportSelection): Promise<string[]> {
   const { where, values } = selectionWhere(organizationId, selection);
-  const result = await pool.query<{ workspace_id: string }>(`select distinct c.workspace_id from ${callSource} where ${where} order by 1`, values);
+  const result = await database.query<{ workspace_id: string }>(`select distinct c.workspace_id from ${callSource} where ${where} order by 1`, values);
   return result.rows.map(({ workspace_id }) => workspace_id);
 }
 
-export async function* reportJobCalls(pool: Pool, organizationId: string, selection: ReportSelection, pageSize = defaultPageSize): AsyncGenerator<ReportSelectionCall[]> {
+export async function* reportJobCalls(database: Database, organizationId: string, selection: ReportSelection, pageSize = defaultPageSize): AsyncGenerator<ReportSelectionCall[]> {
   const { where, values } = selectionWhere(organizationId, selection);
   let cursor: { startedAt: string; id: string } | null = null;
   for (;;) {
     const page = [...values];
     const after: string = cursor ? ` and (c.started_at, c.id) > ($${page.push(cursor.startedAt)}::timestamptz, $${page.push(cursor.id)})` : "";
-    const rows: ReportCallRow[] = (await pool.query<ReportCallRow>(
+    const rows: ReportCallRow[] = (await database.query<ReportCallRow>(
       `select ${callListColumns}, c.tracking_number, ${totalSecondsSql} as total_seconds, r.transcript_state, r.mp3_object_key, c.started_at::text as started_at_cursor
          from ${callSource}
         where ${where}${after}

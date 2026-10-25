@@ -28,17 +28,17 @@ import { createAudiowaveformPeakGenerator } from "@/data/audiowaveform";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { recordingWaveformTaskId } from "@/data/recording-processing";
 import { generateRecordingWaveform } from "@/data/recording-waveform";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const recordingWaveform = task({
   id: recordingWaveformTaskId,
   concurrency: { total: 5 },
   run: async (payload: { recordingId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       await generateRecordingWaveform(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -51,7 +51,7 @@ export const recordingWaveform = task({
         payload.recordingId,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

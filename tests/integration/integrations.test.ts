@@ -23,12 +23,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { encryptSecret } from "@/data/credential-encryption";
 import { migrateDatabase } from "@/data/migrate";
@@ -49,8 +48,7 @@ const authToken = "synthetic-auth-token";
 const account: TwilioAccountSummary = { sid: accountSid, friendlyName: "Tracer Account", status: "active", type: "Full" };
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let operatorId = "";
 let viewerId = "";
@@ -105,7 +103,7 @@ function handler(overrides: { masterKey?: string; allowedRecipients?: ReadonlySe
   const configuredMasterKey = "masterKey" in overrides ? overrides.masterKey : masterKey;
   return createIntegrationsHandler({
     auth: auth(),
-    pool: pool!, database: database!,
+    database: database!,
     twilio: fakeTwilio,
     cloudflare: { async verifyToken() { throw new Error("not implemented"); }, async listSites() { throw new Error("not implemented"); }, async listDeployments() { throw new Error("not implemented"); }, async fetchDailyTraffic() { throw new Error("not implemented"); }, async captureScreenshot() { throw new Error("not implemented"); } },
     masterKey: configuredMasterKey,
@@ -161,9 +159,8 @@ async function json(request: Request, routeHandler = handler()): Promise<{ respo
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  const bootstrapped = await bootstrapInitialOperator(pool, {
+  const bootstrapped = await bootstrapInitialOperator(database, {
     email: "operator@example.com",
     name: "Example Operator",
     timezone: "America/Chicago",
@@ -171,28 +168,28 @@ beforeAll(async () => {
   organizationId = bootstrapped.organizationId;
   operatorId = bootstrapped.userId;
   viewerId = "viewer-user-id";
-  await pool.query(
+  await database.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at)
      values ($1, 'Client Viewer', 'viewer@example.com', false, 'Active', 'UTC', now(), now())`,
     [viewerId],
   );
-  await pool.query(
+  await database.query(
     `insert into member (id, organization_id, user_id, role, created_at) values ('viewer-membership-id', $1, $2, 'member', now())`,
     [organizationId, viewerId],
   );
-  await pool.query(
+  await database.query(
     `insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other Org', 'other-org', now())`,
   );
   const otherCiphertext = await encryptSecret(masterKey, "other-secret");
-  await pool.query(
+  await database.query(
     `insert into twilio_connection
        (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, account_friendly_name,
         connected_by_user_id, connected_at, last_verified_at, created_at, updated_at)
      values ('other-connection-id', 'other-organization-id', $1, $2, $3, 'Other Account', $4, now(), now(), now(), now())`,
     [accountSid, firstKeySid, otherCiphertext, operatorId],
   );
-  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
-  await pool.query(
+  await database.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database.query(
     `insert into twilio_number
        (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable,
         first_seen_at, last_seen_at, created_at, updated_at)
@@ -204,7 +201,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -260,7 +257,7 @@ describe.sequential("Organization integrations", () => {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ accountSid, apiKeySid: "SK99999999999999999999999999999999", apiKeySecret: "rejected-secret" }),
     }));
     expect(rejected.response.status).toBe(422);
-    await expect(pool!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
   });
 
   it("connects and encrypts the Organization Twilio credential", async () => {
@@ -272,7 +269,7 @@ describe.sequential("Organization integrations", () => {
     expect(JSON.stringify(connected.body)).not.toContain(firstSecret);
     expect(JSON.stringify(connected.body)).not.toContain("ciphertext");
     expect(JSON.stringify(connected.body)).not.toContain("apiKeySecret");
-    const encrypted = await pool!.query<{ api_key_secret_ciphertext: string }>("select api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
+    const encrypted = await database!.query<{ api_key_secret_ciphertext: string }>("select api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
     expect(encrypted.rows[0]?.api_key_secret_ciphertext).toMatch(/^v1:/);
     expect(encrypted.rows[0]?.api_key_secret_ciphertext).not.toContain(firstSecret);
     const duplicate = await json(new Request("http://localhost:3000/api/integrations/twilio/connect", {
@@ -309,7 +306,7 @@ describe.sequential("Organization integrations", () => {
 
   it("seals the credential with the master key fingerprint and reports it readable", async () => {
     const cookie = await signIn("operator@example.com");
-    const row = await pool!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
+    const row = await database!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
     expect(row.rows[0]?.master_key_fingerprint).toBe(await masterKeyFingerprint(masterKey));
     const health = await json(new Request("http://localhost:3000/api/integrations", { headers: { cookie } }));
     expect(health.body.twilio).toMatchObject({ credentialState: "readable" });
@@ -339,14 +336,14 @@ describe.sequential("Organization integrations", () => {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ apiKeySid: "SK99999999999999999999999999999999", apiKeySecret: "rejected" }),
     }));
     expect(rejected.response.status).toBe(422);
-    const beforeRotation = await pool!.query<{ api_key_sid: string; api_key_secret_ciphertext: string }>("select api_key_sid, api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
+    const beforeRotation = await database!.query<{ api_key_sid: string; api_key_secret_ciphertext: string }>("select api_key_sid, api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
     expect(beforeRotation.rows[0]).toMatchObject({ api_key_sid: firstKeySid });
     const rotated = await json(new Request("http://localhost:3000/api/integrations/twilio/rotate", {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ apiKeySid: secondKeySid, apiKeySecret: secondSecret }),
     }));
     expect(rotated.response.status).toBe(200);
     expect((rotated.body.connection as { apiKeySid: string }).apiKeySid).toBe(secondKeySid);
-    const afterRotation = await pool!.query<{ api_key_sid: string; api_key_secret_ciphertext: string }>("select api_key_sid, api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
+    const afterRotation = await database!.query<{ api_key_sid: string; api_key_secret_ciphertext: string }>("select api_key_sid, api_key_secret_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
     expect(afterRotation.rows[0]).toMatchObject({ api_key_sid: secondKeySid });
     expect(afterRotation.rows[0]?.api_key_secret_ciphertext).not.toBe(beforeRotation.rows[0]?.api_key_secret_ciphertext);
     await json(new Request("http://localhost:3000/api/integrations/twilio/test", { method: "POST", headers: { cookie } }));
@@ -365,7 +362,7 @@ describe.sequential("Organization integrations", () => {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ authToken: "rejected-auth-token" }),
     }));
     expect(rejected.response.status).toBe(422);
-    await expect(pool!.query("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ auth_token_ciphertext: null }] });
+    await expect(database!.query("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ auth_token_ciphertext: null }] });
 
     const configured = await json(new Request("http://localhost:3000/api/integrations/twilio/auth-token", {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ authToken }),
@@ -374,7 +371,7 @@ describe.sequential("Organization integrations", () => {
     expect(configured.body.connection).toMatchObject({ authTokenConfigured: true });
     expect(JSON.stringify(configured.body)).not.toContain(authToken);
     expect(credentials.at(-1)).toMatchObject({ accountSid, apiKeySid: accountSid, apiKeySecret: authToken });
-    const stored = await pool!.query<{ auth_token_ciphertext: string }>("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
+    const stored = await database!.query<{ auth_token_ciphertext: string }>("select auth_token_ciphertext from twilio_connection where organization_id = $1", [organizationId]);
     expect(stored.rows[0]?.auth_token_ciphertext).toMatch(/^v1:/);
     expect(stored.rows[0]?.auth_token_ciphertext).not.toContain(authToken);
   });
@@ -431,7 +428,7 @@ describe.sequential("Organization integrations", () => {
     }), underRotatedKey);
     expect(rotated.response.status).toBe(200);
     expect(rotated.body.connection).toMatchObject({ credentialState: "readable", lastFailureAt: null });
-    const row = await pool!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
+    const row = await database!.query<{ master_key_fingerprint: string | null }>("select master_key_fingerprint from twilio_connection where organization_id = $1", [organizationId]);
     expect(row.rows[0]?.master_key_fingerprint).toBe(await masterKeyFingerprint(rotatedKey));
 
     const backUnderOriginal = await json(new Request("http://localhost:3000/api/integrations/twilio/rotate", {
@@ -442,27 +439,27 @@ describe.sequential("Organization integrations", () => {
 
   it("blocks disconnect while Active Workspaces depend on Twilio and ends their Number Assignments when forced", async () => {
     const cookie = await signIn("operator@example.com");
-    const numberId = (await pool!.query<{ id: string }>("select id from twilio_number where organization_id = $1 and twilio_sid = 'PN11111111111111111111111111111111'", [organizationId])).rows[0].id;
-    await pool!.query(
+    const numberId = (await database!.query<{ id: string }>("select id from twilio_number where organization_id = $1 and twilio_sid = 'PN11111111111111111111111111111111'", [organizationId])).rows[0].id;
+    await database!.query(
       "insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at) values ('disconnect-workspace', $1, 'Disconnect Workspace', 'UTC', 'Active', '+14155550199', now(), now())",
       [organizationId],
     );
-    await pool!.query(
+    await database!.query(
       "insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) values ('disconnect-assignment', $1, 'disconnect-workspace', $2, '+14155552671', now(), now())",
       [organizationId, numberId],
     );
     const blocked = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie } }));
     expect(blocked.response.status).toBe(409);
     expect(blocked.body).toMatchObject({ error: "active_workspaces", activeWorkspaceCount: 1 });
-    expect((await pool!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).rows[0]).toEqual({ count: "1" });
+    expect((await database!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).rows[0]).toEqual({ count: "1" });
 
     const disconnected = await json(new Request("http://localhost:3000/api/integrations/twilio/disconnect", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ force: true }) }));
     expect(disconnected.response.status).toBe(200);
     expect(disconnected.body).toEqual({ disconnected: true, endedAssignments: 1 });
-    expect((await pool!.query("select ended_reason, voice_restore_skipped_at is not null as skipped from number_assignment where id = 'disconnect-assignment'")).rows[0]).toEqual({ ended_reason: "disconnected", skipped: true });
-    expect((await pool!.query("select state from workspace where id = 'disconnect-workspace'")).rows[0]).toEqual({ state: "Setup Required" });
-    await expect(pool!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
-    await expect(pool!.query("select count(*) from twilio_connection where organization_id = 'other-organization-id'")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    expect((await database!.query("select ended_reason, voice_restore_skipped_at is not null as skipped from number_assignment where id = 'disconnect-assignment'")).rows[0]).toEqual({ ended_reason: "disconnected", skipped: true });
+    expect((await database!.query("select state from workspace where id = 'disconnect-workspace'")).rows[0]).toEqual({ state: "Setup Required" });
+    await expect(database!.query("select count(*) from twilio_connection where organization_id = $1", [organizationId])).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    await expect(database!.query("select count(*) from twilio_connection where organization_id = 'other-organization-id'")).resolves.toMatchObject({ rows: [{ count: "1" }] });
   });
 
   it("tests Hyperdrive and Email Service", async () => {
@@ -508,33 +505,33 @@ describe.sequential("Organization integrations", () => {
 
   it("reports the last stored Recording transfer and the 5 most recent Organization transfer failures without object keys or Recording SIDs", async () => {
     for (const organization of [organizationId, "other-organization-id"]) {
-      await pool!.query(
+      await database!.query(
         `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at)
          values ($1, $2, 'Transfer Health', 'UTC', 'Active', now(), now())`,
         [`${organization}-health-workspace`, organization],
       );
-      await pool!.query(
+      await database!.query(
         `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, released_at, created_at, updated_at)
          values ($1, $2, $3, '+14155550177', 'Health', true, now(), now(), now(), now(), now())`,
         [`${organization}-health-number`, organization, organization === organizationId ? "PN77777777777777777777777777777777" : "PN88888888888888888888888888888888"],
       );
-      await pool!.query(
+      await database!.query(
         `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
          values ($1, $2, $3, $4, '+14155550177', now(), now(), 'replaced', now())`,
         [`${organization}-health-assignment`, organization, `${organization}-health-workspace`, `${organization}-health-number`],
       );
-      await pool!.query(
+      await database!.query(
         `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, $2, $3, 1, '{}', now())`,
         [`${organization}-health-flow`, organization, `${organization}-health-workspace`],
       );
-      await pool!.query(
+      await database!.query(
         `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
          values ($1, $2, $3, $4, $5, 'CA77777777777777777777777777777777', '+14155550177', now(), now(), now())`,
         [`${organization}-health-call`, organization, `${organization}-health-workspace`, `${organization}-health-assignment`, `${organization}-health-flow`],
       );
     }
     async function recording(organization: string, id: string, values: { stored?: string; failure?: [string, string, string] }) {
-      await pool!.query(
+      await database!.query(
         `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at, failure_stage, failure_reason, created_at, updated_at)
          values ($1, $2, $3, $4, $5, 'voicemail', 1, $6, $7, $8, $9, $10, $11, $12, now(), coalesce($13::timestamptz, now()))`,
         [
@@ -578,7 +575,7 @@ describe.sequential("Organization integrations", () => {
   it("reports the last successful Transcript and Lead Assessment and the Organization's failed analysis without content", async () => {
     async function analyzed(organization: string, id: string, values: { transcript: string; completedAt?: string; leadAssessment?: string; processedAt?: string; failedAt?: string }) {
       const completed = values.transcript === "Completed";
-      await pool!.query(
+      await database!.query(
         `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                                 transcript_state, transcript_failure_reason, transcript_audio_ms, transcript_cost_usd, transcript_completed_at,
                                 lead_assessment_state, lead_assessment_failure_reason, created_at, updated_at)
@@ -590,7 +587,7 @@ describe.sequential("Organization integrations", () => {
         ],
       );
       if (values.processedAt) {
-        await pool!.query(
+        await database!.query(
           `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
            values ($1, $2, $3, $1, 'Good Lead', 80, 'Summary of the call.', 'Rationale.', 'gpt-5-mini', 900, 120, 0.000465, $4)`,
           [id, organization, `${organization}-health-call`, values.processedAt],
@@ -626,12 +623,12 @@ describe.sequential("Organization integrations", () => {
 
   it("reports purged and expired Recordings whose cleanup is still unfinished 26 hours later, or blocked without a Twilio connection, oldest first and Organization-scoped", async () => {
     async function lifecycle(organization: string, id: string, values: { startedAgo?: string; purgedAgo?: string; twilio?: "Pending" | "Deleted"; finished?: boolean }) {
-      await pool!.query(
+      await database!.query(
         `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
          values ($1, $2, $3, $4, $5, $6, '+14155550177', now() - $7::interval, now(), now())`,
         [`${id}-call`, organization, `${organization}-health-workspace`, `${organization}-health-assignment`, `${organization}-health-flow`, `CA${id.padStart(32, "0")}`, values.startedAgo ?? "0 seconds"],
       );
-      await pool!.query(
+      await database!.query(
         `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, twilio_cleanup_state, twilio_deleted_at,
                                 r2_object_key, size_bytes, sha256, stored_at, media_purged_at, media_deleted_at, created_at, updated_at)
          values ($1, $2, $3, $4, $5, 'voicemail', 1, 'Stored', $6, case when $6 = 'Deleted' then now() end,
@@ -652,7 +649,7 @@ describe.sequential("Organization integrations", () => {
     }
     await lifecycle("other-organization-id", "lifecycle-other-stuck", { purgedAgo: "30 hours" });
     await lifecycle("other-organization-id", "lifecycle-other-fresh", { purgedAgo: "1 hour", twilio: "Pending" });
-    const since = async (id: string) => (await pool!.query<{ since: Date }>(
+    const since = async (id: string) => (await database!.query<{ since: Date }>(
       `select coalesce(r.media_purged_at, c.started_at + interval '12 months') as since from recording r join call c on c.id = r.call_id where r.id = $1`,
       [id],
     )).rows[0].since.toISOString();
@@ -685,7 +682,7 @@ describe.sequential("Organization integrations", () => {
 
     const remaining = await createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth();
     expect(remaining.oldestStuck).toHaveLength(5);
-    await pool!.query("update recording set media_deleted_at = now() where id like 'lifecycle-backlog-%'");
+    await database!.query("update recording set media_deleted_at = now() where id like 'lifecycle-backlog-%'");
     await expect(createIntegrations({ database: database!, organizationId, twilio: fakeTwilio, masterKey }).getMediaLifecycleHealth()).resolves.toEqual({
       stuckCount: 3,
       oldestStuck: [

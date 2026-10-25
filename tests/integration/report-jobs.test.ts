@@ -36,11 +36,12 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { Pool, type PoolClient } from "pg";
+import { type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import type { Actor } from "@/data/authorization";
 import { emptyCallFilters } from "@/data/call-list-query";
 import { migrateDatabase } from "@/data/migrate";
@@ -62,7 +63,7 @@ import { ReportRequestError } from "@/data/report-request";
 import { createReadableWorkspaces } from "@/data/workspace-authorization";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 const clients: PoolClient[] = [];
 
 function actor(input: { userId: string; role: Actor["role"]; timezone: string }): Actor {
@@ -73,10 +74,10 @@ const viewer = actor({ userId: "fleet-viewer", role: "Client Viewer", timezone: 
 
 const requestedAt = new Date("2026-10-14T15:37:12.418Z");
 
-const create = (who: Actor, request: ReportJobRequest, now = requestedAt) => createReportJob(pool!, who, createReadableWorkspaces(pool!, who), request, now);
+const create = (who: Actor, request: ReportJobRequest, now = requestedAt) => createReportJob(database!, who, createReadableWorkspaces(database!, who), request, now);
 
 async function seedWorkspace(id: string, name: string, timezone: string): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ($1, 'fleet', $2, $3, 'Active', now(), now())`,
     [id, name, timezone],
   );
@@ -84,16 +85,16 @@ async function seedWorkspace(id: string, name: string, timezone: string): Promis
 
 async function seedCalls(): Promise<void> {
   for (const workspaceId of ["north", "south"]) {
-    await pool!.query(
+    await database!.query(
       `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
        values ($1, 'fleet', $2, $3, 'Call Number', true, now(), now(), now(), now())`,
       [`${workspaceId}-number`, `PN${workspaceId.padEnd(32, "0")}`, workspaceId === "north" ? "+14155550113" : "+14155550127"],
     );
-    await pool!.query(
+    await database!.query(
       "insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at) select $1, 'fleet', $2, $3, phone_number, now(), now() from twilio_number where id = $3",
       [`${workspaceId}-assignment`, workspaceId, `${workspaceId}-number`],
     );
-    await pool!.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, 'fleet', $2, 1, '{}'::jsonb, now())", [`${workspaceId}-flow`, workspaceId]);
+    await database!.query("insert into flow_version (id, organization_id, workspace_id, version, graph, published_at) values ($1, 'fleet', $2, 1, '{}'::jsonb, now())", [`${workspaceId}-flow`, workspaceId]);
   }
   const calls: Array<[string, string, string, string, boolean]> = [
     ["call-1", "north", "2026-10-06T15:47:31.204Z", "Answered", true],
@@ -104,13 +105,13 @@ async function seedCalls(): Promise<void> {
     ["call-unreachable", "south", "2026-09-12T07:58:13.061Z", "Missed", false],
   ];
   for (const [index, [id, workspaceId, startedAt, outcome, recorded]] of calls.entries()) {
-    await pool!.query(
+    await database!.query(
       `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number, state, outcome, outcome_reason, started_at, created_at, updated_at)
        select $1, 'fleet', $2, $2 || '-assignment', $2 || '-flow', $3, phone_number, '+12125550164', 'Completed', $4, 'flow_outcome', $5, now(), now() from number_assignment where id = $2 || '-assignment'`,
       [id, workspaceId, `CA${String(index + 1).padStart(32, "0")}`, outcome, startedAt],
     );
     if (!recorded) continue;
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               mp3_state, mp3_object_key, mp3_size_bytes, mp3_generated_at, created_at, updated_at)
        values ($1 || '-recording', 'fleet', $2, $1, $3, 'connected', 2, 'Stored', $1 || '.wav', 41_873, 'checksum', now(), 'Stored', $1 || '.mp3', 6_917, now(), now(), now())`,
@@ -120,27 +121,27 @@ async function seedCalls(): Promise<void> {
 }
 
 async function seedUser(id: string, timezone: string): Promise<void> {
-  await pool!.query(
+  await database!.query(
     `insert into "user" (id, name, email, email_verified, state, timezone, created_at, updated_at) values ($1, $1, $1 || '@example.com', true, 'Active', $2, now(), now())`,
     [id, timezone],
   );
 }
 
 async function grant(userId: string, workspaceId: string): Promise<void> {
-  await pool!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, $3, now())", [`grant-${userId}-${workspaceId}`, workspaceId, userId]);
+  await database!.query("insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ($1, 'fleet', $2, $3, now())", [`grant-${userId}-${workspaceId}`, workspaceId, userId]);
 }
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
-  pool.on("connect", (client) => {
+  database = createTestDatabase(container.getConnectionUri());
+  database.pool.on("connect", (client) => {
     clients.push(client);
     client.on("error", (error: Error & { code?: string }) => {
       if (error.code !== "57P01") throw error;
     });
   });
   await migrateDatabase(container.getConnectionUri());
-  await pool.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
+  await database.query("insert into organization (id, name, slug, created_at) values ('fleet', 'fleet', 'fleet', now())");
   await seedWorkspace("north", "North Plumbing", "America/New_York");
   await seedWorkspace("south", "South Roofing", "Asia/Tokyo");
   await seedWorkspace("west", "West Electric", "America/Los_Angeles");
@@ -155,7 +156,7 @@ afterAll(async () => {
     const stream = (client as unknown as { connection?: { stream?: { destroyed: boolean; once: (event: "close", listener: () => void) => void } } }).connection?.stream;
     return !stream || stream.destroyed ? Promise.resolve() : new Promise<void>((resolve) => stream.once("close", resolve));
   });
-  await pool?.end();
+  await database?.close();
   await Promise.all(closed);
   await container?.stop();
 });
@@ -168,7 +169,7 @@ describe("Report job creation", () => {
     await expect(create(viewer, { kind: "call_export", scope: { kind: "workspace", workspaceId: "west" }, selection: { kind: "call", callId: "call-1" }, file: "zip" })).rejects.toEqual(
       new ReportRequestError("workspace_unavailable"),
     );
-    expect((await pool!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(0);
+    expect((await database!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(0);
   });
 
   it("queues a report job with its sorted Workspace scope, timezone, resolved period, files, and 90-day metadata expiry", async () => {
@@ -192,9 +193,9 @@ describe("Report job creation", () => {
   });
 
   it("rejects a report request that selects no files and records no job", async () => {
-    const before = (await pool!.query("select count(*)::int as count from report_job")).rows[0].count;
+    const before = (await database!.query("select count(*)::int as count from report_job")).rows[0].count;
     await expect(create(viewer, { kind: "report", scope: { kind: "workspace", workspaceId: "north" }, period: { kind: "previousMonth" }, files: [] })).rejects.toEqual(new ReportRequestError("empty_files"));
-    expect((await pool!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(before);
+    expect((await database!.query("select count(*)::int as count from report_job")).rows[0].count).toBe(before);
   });
 
   it("queues a Calls CSV export and a Recording ZIP export of the same selection as separate jobs", async () => {
@@ -235,7 +236,7 @@ describe("Report job creation", () => {
   it("returns a Completed job while its artifacts are unexpired and creates a new job once they expire", async () => {
     const request: ReportJobRequest = { kind: "report", scope: { kind: "workspace", workspaceId: "south" }, period: { kind: "all" }, files: ["pdf"] };
     const { job } = await create(viewer, request);
-    await completeReportJob(pool!, job.id, [{ file: "pdf", r2Key: `reports/${job.id}/report.pdf`, byteSize: 48_213, contentType: "application/pdf" }], new Date("2026-10-14T15:52:08.213Z"));
+    await completeReportJob(database!, job.id, [{ file: "pdf", r2Key: `reports/${job.id}/report.pdf`, byteSize: 48_213, contentType: "application/pdf" }], new Date("2026-10-14T15:52:08.213Z"));
     const beforeExpiry = await create(viewer, request, new Date("2026-10-21T15:52:08.212Z"));
     expect(beforeExpiry).toMatchObject({ created: false, job: { id: job.id, status: "Completed", completedAt: new Date("2026-10-14T15:52:08.213Z"), artifactsExpireAt: new Date("2026-10-21T15:52:08.213Z") } });
     const atExpiry = await create(viewer, request, new Date("2026-10-21T15:52:08.213Z"));
@@ -246,7 +247,7 @@ describe("Report job creation", () => {
   it("does not let a Failed job block resubmission", async () => {
     const request: ReportJobRequest = { kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection: { kind: "call", callId: "call-2" }, file: "zip" };
     const { job } = await create(viewer, request);
-    await failReportJob(pool!, job.id, "Recording unavailable");
+    await failReportJob(database!, job.id, "Recording unavailable");
     const resubmitted = await create(viewer, request, new Date("2026-10-14T15:43:19.064Z"));
     expect(resubmitted.created).toBe(true);
     expect(resubmitted.job.id).not.toBe(job.id);
@@ -265,7 +266,7 @@ describe("Report generation requests", () => {
     return generation;
   }
 
-  const submit = (request: ReportJobRequest, generation: ReportGeneration) => requestReportJob(pool!, viewer, createReadableWorkspaces(pool!, viewer), request, requestedAt, generation);
+  const submit = (request: ReportJobRequest, generation: ReportGeneration) => requestReportJob(database!, viewer, createReadableWorkspaces(database!, viewer), request, requestedAt, generation);
 
   it("requests generation for a newly queued job and not again for a duplicate submission", async () => {
     const generation = fakeGeneration();
@@ -284,7 +285,7 @@ describe("Report generation requests", () => {
     const unavailable = fakeGeneration(new Error("Trigger.dev is unavailable"));
 
     await expect(submit(request, unavailable)).rejects.toEqual(new ReportGenerationUnavailableError());
-    const failed = (await pool!.query("select status, failure_reason from report_job where id = $1", [unavailable.requests[0]])).rows[0];
+    const failed = (await database!.query("select status, failure_reason from report_job where id = $1", [unavailable.requests[0]])).rows[0];
     expect(failed).toEqual({ status: "Failed", failure_reason: "Report generation could not be started" });
 
     const generation = fakeGeneration();
@@ -309,8 +310,8 @@ describe("Report history", () => {
     const newer = await create(ana, report({ kind: "previousWeek" }), new Date("2026-10-13T20:31:44.087Z"));
     const bens = await create(ben, report({ kind: "previousWeek" }), new Date("2026-10-13T20:31:44.087Z"));
     const now = new Date("2026-10-14T17:05:33.902Z");
-    expect((await listReportJobs(pool!, ana, now)).map(({ id }) => id)).toEqual([newer.job.id, older.job.id]);
-    expect((await listReportJobs(pool!, ben, now)).map(({ id }) => id)).toEqual([bens.job.id]);
+    expect((await listReportJobs(database!, ana, now)).map(({ id }) => id)).toEqual([newer.job.id, older.job.id]);
+    expect((await listReportJobs(database!, ben, now)).map(({ id }) => id)).toEqual([bens.job.id]);
   });
 });
 
@@ -321,7 +322,7 @@ describe("Report downloads", () => {
   async function completedReport(who: Actor, workspaceIds: string[]): Promise<string> {
     const { job } = await create(who, { kind: "report", scope: { kind: "global", workspaceIds, timeZone: "America/Denver" }, period: { kind: "previousMonth" }, files: ["pdf", "csv"] });
     await completeReportJob(
-      pool!,
+      database!,
       job.id,
       [
         { file: "pdf", r2Key: `reports/${job.id}/report.pdf`, byteSize: 61_407, contentType: "application/pdf" },
@@ -332,7 +333,7 @@ describe("Report downloads", () => {
     return job.id;
   }
 
-  const authorize = (who: Actor, jobId: string, file: ReportFileKind, now = duringRetention) => authorizeReportDownload(pool!, who, createReadableWorkspaces(pool!, who), jobId, file, now);
+  const authorize = (who: Actor, jobId: string, file: ReportFileKind, now = duringRetention) => authorizeReportDownload(database!, who, createReadableWorkspaces(database!, who), jobId, file, now);
 
   const cara = actor({ userId: "download-cara", role: "Client Viewer", timezone: "America/Chicago" });
 
@@ -364,7 +365,7 @@ describe("Report downloads", () => {
     const both = await completedReport(eve, ["north", "south"]);
     const northOnly = await completedReport(eve, ["north"]);
     expect(await authorize(eve, both, "pdf")).not.toBeNull();
-    await pool!.query("delete from access_grant where user_id = $1 and workspace_id = 'south'", [eve.userId]);
+    await database!.query("delete from access_grant where user_id = $1 and workspace_id = 'south'", [eve.userId]);
     expect(await authorize(eve, both, "pdf")).toBeNull();
     expect(await authorize(eve, both, "csv")).toBeNull();
     expect(await authorize(eve, northOnly, "pdf")).not.toBeNull();
@@ -383,8 +384,8 @@ describe("Report downloads", () => {
     const selection: CallExportSelection = { kind: "call", callId: "call-4" };
     const csv = await create(cara, { kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection, file: "csv" }, new Date("2026-10-14T16:21:37.582Z"));
     const zip = await create(cara, { kind: "call_export", scope: { kind: "workspace", workspaceId: "south" }, selection, file: "zip" }, new Date("2026-10-14T16:21:37.582Z"));
-    await completeReportJob(pool!, csv.job.id, [{ file: "csv", r2Key: `exports/${csv.job.id}/calls.csv`, byteSize: 2_417, contentType: "text/csv; charset=utf-8" }], completedAt);
-    await completeReportJob(pool!, zip.job.id, [{ file: "zip", r2Key: `exports/${zip.job.id}/recordings.zip`, byteSize: 3_904_118, contentType: "application/zip" }], completedAt);
+    await completeReportJob(database!, csv.job.id, [{ file: "csv", r2Key: `exports/${csv.job.id}/calls.csv`, byteSize: 2_417, contentType: "text/csv; charset=utf-8" }], completedAt);
+    await completeReportJob(database!, zip.job.id, [{ file: "zip", r2Key: `exports/${zip.job.id}/recordings.zip`, byteSize: 3_904_118, contentType: "application/zip" }], completedAt);
     expect(await authorize(cara, csv.job.id, "csv")).toEqual({ r2Key: `exports/${csv.job.id}/calls.csv`, contentType: "text/csv; charset=utf-8", filename: "tracer-calls-2026-10-15.csv" });
     expect(await authorize(cara, zip.job.id, "zip")).toEqual({ r2Key: `exports/${zip.job.id}/recordings.zip`, contentType: "application/zip", filename: "tracer-recordings-2026-10-15.zip" });
   });

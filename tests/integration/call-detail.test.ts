@@ -25,12 +25,11 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
-import type { Database } from "@/data/database";
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { createIntegrations } from "@/data/integrations";
@@ -43,8 +42,7 @@ import { createWorkspacesHandler } from "@/data/workspaces-handler";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let clientId = "";
 let operatorCookie = "";
@@ -91,7 +89,7 @@ const workspacesHandler = () => createWorkspacesHandler({
   recordingTranscription: transcriptionRequests,
   recordingLeadAssessment: leadAssessmentRequests,
   auth: auth(),
-  pool: pool!, database: database!,
+  database: database!,
   twilio: fakeTwilio,
   integrations: (id) => createIntegrations({ database: database!, organizationId: id, twilio: fakeTwilio, masterKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" }),
   baseURL: "http://localhost:3000",
@@ -99,7 +97,7 @@ const workspacesHandler = () => createWorkspacesHandler({
 
 const usersHandler = () => createOperatorAdministrationHandler({
   auth: auth(),
-  pool: pool!,
+  database: database!,
   email,
   emailFrom: "auth@example.com",
   allowedRecipients: recipients,
@@ -175,21 +173,21 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
   seeded += 1;
   const sequence = String(seeded).padStart(32, "0");
   const workspaceId = options.workspaceId ?? "granted-active";
-  const workspace = (await pool!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
+  const workspace = (await database!.query<{ organization_id: string }>("select organization_id from workspace where id = $1", [workspaceId])).rows[0];
   const startedAt = options.startedAt ?? new Date(Date.now() - 600_000 - seeded * 1000);
   const at = (seconds: number) => new Date(startedAt.getTime() + seconds * 1000);
   const trackingNumber = `+1415555${String(seeded).padStart(4, "0")}`;
-  await pool!.query(
+  await database!.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ($1, $2, $3, $4, 'Call Number', true, now(), now(), now(), now())`,
     [`${callId}-number`, workspace.organization_id, `PN${sequence}`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ($1, $2, $3, $4, $5, now(), now(), 'replaced', now())`,
     [`${callId}-assignment`, workspace.organization_id, workspaceId, `${callId}-number`, trackingNumber],
   );
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
      values ($1, $2, $3, $4, $5, now())`,
     [`${callId}-flow`, workspace.organization_id, workspaceId, seeded, JSON.stringify(options.graph ?? graph)],
@@ -198,7 +196,7 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
   const answered = options.answered ?? outcome === "Answered";
   const forwarded = options.forwarded ?? answered;
   const callSid = `CA${sequence}`;
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                        state, outcome, outcome_reason, forward_node_id, forward_started_at, forward_status, started_at, answered_at, ended_at, duration_seconds, created_at, updated_at)
      values ($1, $2, $3, $4, $5, $6, $7, '+13125550142', $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), now())`,
@@ -210,7 +208,7 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
     ],
   );
   for (const [index, event] of (options.events ?? []).entries()) {
-    await pool!.query(
+    await database!.query(
       `insert into provider_event (id, organization_id, number_assignment_id, call_id, idempotency_key, kind, disposition, payload, received_at)
        values ($1, $2, $3, $4, $5, $6, 'accepted', $7, $8)`,
       [`${callId}-event-${index}`, workspace.organization_id, `${callId}-assignment`, callId, event.key?.replace("{sid}", callSid) ?? `${callSid}:${event.kind}:${index}`, event.kind, JSON.stringify({ CallSid: callSid, ...event.payload }), at(event.secondsAfterStart)],
@@ -222,7 +220,7 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
   if (recording) {
     const stored = recording.transferState === "Stored";
     const waveformState = stored ? (recording.waveformState ?? "Stored") : "Pending";
-    await pool!.query(
+    await database!.query(
       `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, r2_object_key, size_bytes, sha256, stored_at,
                               failure_stage, failure_reason, waveform_state, waveform_object_key, waveform_generated_at, waveform_failure_reason, created_at, updated_at)
        values ($1, $2, $3, $4, $5, 'connected', $6, 83, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
@@ -236,7 +234,7 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
     );
     const mp3State = stored ? (recording.mp3State ?? "Stored") : "Pending";
     if (mp3State !== "Pending") {
-      await pool!.query(
+      await database!.query(
         "update recording set mp3_state = $2, mp3_object_key = $3, mp3_size_bytes = $4, mp3_generated_at = $5, mp3_failure_reason = $6 where id = $1",
         [recordingId, mp3State, mp3State === "Stored" ? `recordings/${recordingId}.mp3` : null, mp3State === "Stored" ? 512 : null, at(115), mp3State === "Failed" ? "ffmpeg could not encode the MP3" : null],
       );
@@ -245,7 +243,7 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
   const analysis = options.analysis;
   if (recording && analysis) {
     const completed = analysis.transcript === "Completed";
-    await pool!.query(
+    await database!.query(
       `update recording set transcript_state = $2, transcript_skip_reason = $3, transcript_failure_reason = $4, transcript_audio_ms = $5, transcript_cost_usd = $6,
                             transcript_completed_at = $7, lead_assessment_state = $8, lead_assessment_failure_reason = $9, updated_at = $10
         where id = $1`,
@@ -256,20 +254,20 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
       ],
     );
     if (completed) {
-      await pool!.query("insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, 'whisper-1', $5)", [
+      await database!.query("insert into transcript (recording_id, organization_id, call_id, turns, model, created_at) values ($1, $2, $3, $4, 'whisper-1', $5)", [
         recordingId, workspace.organization_id, callId, JSON.stringify(transcriptTurns), at(130),
       ]);
     }
     if (analysis.leadAssessment === "Completed") {
-      await pool!.query(
+      await database!.query(
         `insert into lead_assessment (id, organization_id, call_id, recording_id, classification, score, summary, rationale, model, input_tokens, output_tokens, cost_usd, processed_at)
          values ($1, $2, $3, $4, 'Good Lead', 86, 'Caller needs a leaking water heater repaired today.', 'Urgent, in-scope service request.', 'gpt-5-mini', 900, 120, 0.000465, $5)`,
         [`${callId}-assessment`, workspace.organization_id, callId, recordingId, at(140)],
       );
-      await pool!.query("insert into lead_assessment_evidence (lead_assessment_id, position, turn_index, start_ms, quote) values ($1, 0, 0, 0, 'my water heater is leaking')", [`${callId}-assessment`]);
+      await database!.query("insert into lead_assessment_evidence (lead_assessment_id, position, turn_index, start_ms, quote) values ($1, 0, 0, 0, 'my water heater is leaking')", [`${callId}-assessment`]);
     }
     if (analysis.reviewed) {
-      await pool!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, 'Not Good Lead', $3)", [callId, workspace.organization_id, at(150)]);
+      await database!.query("insert into lead_review (call_id, organization_id, classification, reviewed_at) values ($1, $2, 'Not Good Lead', $3)", [callId, workspace.organization_id, at(150)]);
     }
   }
   return { callSid, recordingSid, recordingId };
@@ -278,11 +276,10 @@ async function seedCall(callId: string, options: SeedCall = {}): Promise<{ callS
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   database = createTestDatabase(container.getConnectionUri());
-  pool = database.pool;
   await migrateDatabase(container.getConnectionUri());
-  organizationId = (await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
-  await pool.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
-  await pool.query(
+  organizationId = (await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "UTC" })).organizationId;
+  await database.query(`insert into organization (id, name, slug, created_at) values ('other-organization-id', 'Other', 'other', now())`);
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, recording_enabled, created_at, updated_at)
      values ('granted-active', $1, 'Acme Plumbing', 'America/Chicago', 'Active', true, now(), now()),
             ('granted-quiet', $1, 'Quiet Dental', 'UTC', 'Active', true, now(), now()),
@@ -298,7 +295,7 @@ beforeAll(async () => {
   }));
   expect(provisioned.status).toBe(201);
   clientId = ((await provisioned.json()) as { user: { id: string } }).user.id;
-  await pool.query(
+  await database.query(
     `insert into access_grant (id, organization_id, workspace_id, user_id, created_at)
      values ('cross-organization-grant', 'other-organization-id', 'other-organization-workspace', $1, now())`,
     [clientId],
@@ -306,7 +303,7 @@ beforeAll(async () => {
   clientCookie = await signIn("client@example.com");
 }, 120_000);
 
-afterAll(async () => { await pool?.end(); await container?.stop(); });
+afterAll(async () => { await database?.close(); await container?.stop(); });
 
 describe.sequential("Call Detail authorization", () => {
   let seededCall: { callSid: string; recordingSid: string; recordingId: string };
@@ -373,11 +370,11 @@ describe.sequential("Call Detail authorization", () => {
 
   it("answers Not Found to an existing Client Viewer session after its Access Grant is removed", async () => {
     const revokedCookie = await signIn("client@example.com");
-    await pool!.query("delete from access_grant where user_id = $1 and workspace_id = 'granted-active'", [clientId]);
+    await database!.query("delete from access_grant where user_id = $1 and workspace_id = 'granted-active'", [clientId]);
     try {
       expect((await callDetail("granted-active", "answered-call", revokedCookie)).response.status).toBe(404);
     } finally {
-      await pool!.query(`insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('restored-grant', $1, 'granted-active', $2, now())`, [organizationId, clientId]);
+      await database!.query(`insert into access_grant (id, organization_id, workspace_id, user_id, created_at) values ('restored-grant', $1, 'granted-active', $2, now())`, [organizationId, clientId]);
     }
   });
 });
@@ -455,7 +452,7 @@ describe.sequential("Call Detail Recording availability", () => {
     const startedAt = new Date();
     startedAt.setUTCMonth(startedAt.getUTCMonth() - 13);
     const expired = await seedCall("purged-expired-call", { startedAt });
-    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[recordingId, expired.recordingId], purgedAt]);
+    await database!.query("update recording set media_purged_at = $2 where id = any($1)", [[recordingId, expired.recordingId], purgedAt]);
     for (const callId of ["purged-call", "purged-expired-call"]) {
       const { text, body } = await callDetail("granted-active", callId, operatorCookie);
       expect(body.call).toMatchObject({ id: callId, outcome: "Answered", totalDurationSeconds: 95, mp3RecordingId: null });
@@ -535,7 +532,7 @@ describe.sequential("Call Detail spam gate and processing timeline", () => {
     const waveformPending = await seedCall("timeline-purged-waveform-call", { recording: { transferState: "Stored", waveformState: "Pending" }, analysis: { transcript: "Pending" } });
     const assessmentPending = await seedCall("timeline-purged-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Pending" } });
     const purgedAt = new Date();
-    await pool!.query("update recording set media_purged_at = $2 where id = any($1)", [[analyzed.recordingId, transferPending.recordingId, waveformPending.recordingId, assessmentPending.recordingId], purgedAt]);
+    await database!.query("update recording set media_purged_at = $2 where id = any($1)", [[analyzed.recordingId, transferPending.recordingId, waveformPending.recordingId, assessmentPending.recordingId], purgedAt]);
     const timeline = async (callId: string) => (await callDetail("granted-active", callId, operatorCookie)).body.call?.timeline as { label: string; status: string; at: string }[];
     const stages = async (callId: string) => (await timeline(callId)).map(({ label, status }) => [label, status]);
     expect(await stages("timeline-purged-call")).toEqual([
@@ -633,7 +630,7 @@ describe.sequential("Call Detail Transcript and Lead Assessment", () => {
 
   it("marks the Transcript of purged media Purged and keeps the Lead Assessment summary, classification, score, and Lead Review without rationale or evidence", async () => {
     const { recordingId } = await seedCall("purged-analysis-call", { analysis: { ...analyzed, reviewed: true } });
-    await pool!.query("update recording set media_purged_at = now() where id = $1", [recordingId]);
+    await database!.query("update recording set media_purged_at = now() where id = $1", [recordingId]);
     for (const cookie of [operatorCookie, clientCookie]) {
       const { text, body } = await callDetail("granted-active", "purged-analysis-call", cookie);
       expect(body.call?.transcript).toEqual({ state: "Purged" });
@@ -654,7 +651,7 @@ describe.sequential("Call Detail Transcript and Lead Assessment", () => {
   it("reads a pending or failed stage of purged media as Purged or Unavailable, since it will never run", async () => {
     const pending = await seedCall("purged-assessment-pending-call", { analysis: { transcript: "Completed", leadAssessment: "Pending" } });
     const failed = await seedCall("purged-transcript-failed-call", { analysis: { transcript: "Failed" } });
-    await pool!.query("update recording set media_purged_at = now() where id = any($1)", [[pending.recordingId, failed.recordingId]]);
+    await database!.query("update recording set media_purged_at = now() where id = any($1)", [[pending.recordingId, failed.recordingId]]);
     expect((await callDetail("granted-active", "purged-assessment-pending-call", operatorCookie)).body.call).toMatchObject({ transcript: { state: "Purged" }, leadAssessment: { state: "Unavailable" } });
     expect((await callDetail("granted-active", "purged-transcript-failed-call", operatorCookie)).body.call).toMatchObject({ transcript: { state: "Purged" }, leadAssessment: { state: "Unavailable" } });
   });
@@ -718,7 +715,7 @@ describe.sequential("Call analysis Retry", () => {
     expect(body).toEqual({ retry: { stage: "transcription" } });
     expect(transcriptionRequests.requests).toEqual([{ id: recordingId, organizationId, idempotencyKey: `recording-transcription:${recordingId}` }]);
     expect(leadAssessmentRequests.requests).toEqual([]);
-    const stored = (await pool!.query("select transcript_state from recording where id = $1", [recordingId])).rows[0];
+    const stored = (await database!.query("select transcript_state from recording where id = $1", [recordingId])).rows[0];
     expect(stored).toEqual({ transcript_state: "Failed" });
   });
 
@@ -754,7 +751,7 @@ describe.sequential("Call analysis Retry", () => {
     clearRequests();
     const transcript = await seedCall("retry-purged-transcript-call", { analysis: { transcript: "Failed" } });
     const assessment = await seedCall("retry-purged-assessment-call", { analysis: { transcript: "Completed", leadAssessment: "Failed" } });
-    await pool!.query("update recording set media_purged_at = now() where id = any($1)", [[transcript.recordingId, assessment.recordingId]]);
+    await database!.query("update recording set media_purged_at = now() where id = any($1)", [[transcript.recordingId, assessment.recordingId]]);
     for (const callId of ["retry-purged-transcript-call", "retry-purged-assessment-call"]) {
       const { response, body } = await retry("granted-active", callId, operatorCookie);
       expect(response.status).toBe(409);
@@ -797,7 +794,7 @@ describe.sequential("Call analysis Retry", () => {
     expect(response.status).toBe(502);
     expect(body).toEqual({ error: "provider_unavailable" });
     expect(text).not.toContain(triggerSecretKey);
-    expect((await pool!.query("select transcript_state from recording where call_id = 'retry-transcript-call'")).rows[0]).toEqual({ transcript_state: "Failed" });
+    expect((await database!.query("select transcript_state from recording where call_id = 'retry-transcript-call'")).rows[0]).toEqual({ transcript_state: "Failed" });
     clearRequests();
   });
 });
@@ -828,7 +825,7 @@ describe.sequential("Recent Calls", () => {
   });
 
   it("lists no Calls for a Workspace without Calls", async () => {
-    await pool!.query(`insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ('empty-active', $1, 'Empty Office', 'UTC', 'Active', now(), now())`, [organizationId]);
+    await database!.query(`insert into workspace (id, organization_id, name, reporting_timezone, state, created_at, updated_at) values ('empty-active', $1, 'Empty Office', 'UTC', 'Active', now(), now())`, [organizationId]);
     const { response, body } = await recentCalls("empty-active", operatorCookie);
     expect(response.status).toBe(200);
     expect(body).toEqual({ calls: [] });

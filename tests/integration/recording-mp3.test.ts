@@ -26,11 +26,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { FfmpegError, type Mp3Encoder } from "@/data/ffmpeg";
@@ -42,7 +42,7 @@ const now = new Date("2026-10-16T12:00:00.000Z");
 const days = (count: number) => new Date(now.getTime() - count * 24 * 60 * 60 * 1000);
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 
 interface FakeR2 extends RecordingObjects, Pick<ArtifactObjects, "delete"> {
@@ -108,7 +108,7 @@ function fakeEncoder(): FakeEncoder {
 }
 
 function dependencies(r2: FakeR2, encoder: FakeEncoder): RecordingMp3Dependencies {
-  return { pool: pool!, objects: r2, encoder, now: () => now };
+  return { database: database!, objects: r2, encoder, now: () => now };
 }
 
 let sequence = 0;
@@ -125,12 +125,12 @@ async function storedRecording(
   const base = `organizations/${organizationId}/workspaces/mp3-workspace/calls/${callId}/recordings/${id}`;
   const wav = new TextEncoder().encode(`RIFF synthetic recording ${sequence}`);
   const stored = transfer === "Stored";
-  await pool!.query(
+  await database!.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
      values ($1, $2, 'mp3-workspace', 'mp3-assignment', 'mp3-flow-version', $3, '+14155550113', $4, $4, $4)`,
     [callId, organizationId, `CA${String(sequence).padStart(32, "0")}`, options.callStartedAt ?? days(1)],
   );
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, duration_seconds, transfer_state, twilio_cleanup_state,
                             r2_object_key, size_bytes, sha256, stored_at, created_at, updated_at)
      values ($1, $2, 'mp3-workspace', $3, $4, $5, $6, 12, $7, $8, $9, $10, $11, $12, $12, $12)`,
@@ -155,11 +155,11 @@ async function storedRecording(
 }
 
 async function purge(id: string, at: Date): Promise<void> {
-  await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
+  await database!.query("update recording set media_purged_at = $2 where id = $1", [id, at]);
 }
 
 async function mp3Row(id: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select transfer_state, twilio_cleanup_state, channels, duration_seconds, r2_object_key, size_bytes, waveform_state,
             mp3_state, mp3_object_key, mp3_size_bytes, mp3_failure_reason, mp3_generated_at
        from recording where id = $1`,
@@ -170,27 +170,27 @@ async function mp3Row(id: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const operator = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "MP3 Operator", timezone: "UTC" });
+  const operator = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "MP3 Operator", timezone: "UTC" });
   organizationId = operator.organizationId;
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('mp3-number', $1, 'PNffffffffffffffffffffffffffffffff', '+14155550113', 'MP3 Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
      values ('mp3-workspace', $1, 'MP3 Workspace', 'UTC', 'Active', '+14155550199', now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('mp3-assignment', $1, 'mp3-workspace', 'mp3-number', '+14155550113', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('mp3-flow-version', $1, 'mp3-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), operator.userId],
@@ -198,7 +198,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -343,7 +343,7 @@ describe("Recording MP3", () => {
     expect(r2.objects.has(expired.mp3Key)).toBe(false);
     expect(await mp3Row(expired.id)).toEqual(before);
     expect(before).toMatchObject({ channels: 2, duration_seconds: 12, mp3_state: "Pending" });
-    await expect(pool!.query("select id from call where id = $1", [expired.callId])).resolves.toMatchObject({ rowCount: 1 });
+    await expect(database!.query("select id from call where id = $1", [expired.callId])).resolves.toMatchObject({ rowCount: 1 });
     expect(await mp3Row(retained.id)).toMatchObject({ mp3_state: "Stored" });
   });
 

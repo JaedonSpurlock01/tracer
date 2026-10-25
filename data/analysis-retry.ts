@@ -28,7 +28,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import type { Actor } from "@/data/authorization";
 import type { RecordingProcessing } from "@/data/recording";
@@ -51,10 +51,10 @@ export interface AnalysisRetryRequests {
   leadAssessment: RecordingProcessing | undefined;
 }
 
-export async function retryCallAnalysis(pool: Pool, actor: Actor, workspaceId: string, callId: string, requests: AnalysisRetryRequests): Promise<AnalysisRetryResult> {
-  const workspace = await createReadableWorkspaces(pool, actor).find(workspaceId);
+export async function retryCallAnalysis(database: Database, actor: Actor, workspaceId: string, callId: string, requests: AnalysisRetryRequests): Promise<AnalysisRetryResult> {
+  const workspace = await createReadableWorkspaces(database, actor).find(workspaceId);
   if (!workspace) return "not_found";
-  const result = await pool.query<{ recording_id: string | null; transcript_state: string | null; lead_assessment_state: string | null; media_retained: boolean }>(
+  const result = await database.query<{ recording_id: string | null; transcript_state: string | null; lead_assessment_state: string | null; media_retained: boolean }>(
     `select r.id as recording_id, r.transcript_state, r.lead_assessment_state, ${recordingMediaRetainedSql("r", "c.started_at", "now()")} as media_retained
        from call c
        left join lateral (

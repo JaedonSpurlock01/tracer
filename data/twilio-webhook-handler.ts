@@ -26,7 +26,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { openSecret } from "@/data/provider-credential";
 import { createInboundCalls } from "@/data/inbound-calls";
@@ -35,7 +35,7 @@ import { isValidTwilioSignature } from "@/data/twilio-signature";
 import type { VoiceUrls } from "@/data/voice-response";
 
 export interface TwilioWebhookHandlerOptions {
-  pool: Pool;
+  database: Database;
   masterKey: string | undefined;
   baseURL: string;
   recordingProcessing: RecordingProcessing;
@@ -60,7 +60,7 @@ async function readParams(request: Request): Promise<Record<string, string>> {
 
 async function assignmentAuthToken(options: TwilioWebhookHandlerOptions, assignmentId: string): Promise<string | null> {
   if (!options.masterKey) return null;
-  const result = await options.pool.query<{ auth_token_ciphertext: string | null; master_key_fingerprint: string | null }>(
+  const result = await options.database.query<{ auth_token_ciphertext: string | null; master_key_fingerprint: string | null }>(
     `select c.auth_token_ciphertext, c.master_key_fingerprint
        from number_assignment a
        join twilio_connection c on c.organization_id = a.organization_id
@@ -89,7 +89,7 @@ export function createTwilioWebhookHandler(options: TwilioWebhookHandlerOptions)
     if (!authToken || !(await isValidTwilioSignature({ authToken, url: `${baseURL}${url.pathname}${url.search}`, params, signature }))) {
       return forbidden();
     }
-    const calls = createInboundCalls({ pool: options.pool, recordingProcessing: options.recordingProcessing });
+    const calls = createInboundCalls({ database: options.database, recordingProcessing: options.recordingProcessing });
     const nodeId = url.searchParams.get("node") ?? "";
     const urls: VoiceUrls = {
       forwardAction: (node) => `${baseURL}/api/twilio/forward/${assignmentId}?node=${encodeURIComponent(node)}`,

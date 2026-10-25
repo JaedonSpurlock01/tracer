@@ -27,8 +27,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { Pool } from "pg";
 
+import { openDatabase } from "@/data/database";
 import type { ArtifactObjects } from "@/data/r2-objects";
 import { generateReportJob, recordReportGenerationFailure } from "@/data/report-generation";
 
@@ -58,14 +58,14 @@ function localArtifactObjects(directory: string): ArtifactObjects {
 
 const jobId = process.argv[2];
 if (!jobId) throw new Error("A report job id is required");
-const pool = new Pool({ connectionString: databaseUrl });
+const database = openDatabase(databaseUrl, { max: 1 });
 const directory = mkdtempSync(path.join(tmpdir(), "tracer-e2e-report-"));
 try {
-  await generateReportJob({ pool, objects: localArtifactObjects(directory), now: () => new Date() }, jobId);
+  await generateReportJob({ database, objects: localArtifactObjects(directory), now: () => new Date() }, jobId);
 } catch (error) {
-  await recordReportGenerationFailure(pool, jobId, error);
+  await recordReportGenerationFailure(database, jobId, error);
   throw error;
 } finally {
   rmSync(directory, { recursive: true, force: true });
-  await pool.end();
+  await database.close();
 }

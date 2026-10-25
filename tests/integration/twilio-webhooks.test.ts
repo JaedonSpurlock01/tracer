@@ -23,11 +23,11 @@
 import { createHmac } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow, type CallFlowGraph, type WeeklyWindow } from "@/data/call-flow";
 import { encryptSecret } from "@/data/credential-encryption";
@@ -51,13 +51,13 @@ const routingTrackingNumber = "+14155550103";
 const routingTimeZone = "Pacific/Kiritimati";
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 
 const processingRequests: { id: string; organizationId: string; idempotencyKey: string; committed: boolean }[] = [];
 let processingUnavailable = false;
 const recordingProcessing: RecordingProcessing = {
   async request(recording) {
-    const committed = (await pool!.query("select 1 from recording where id = $1", [recording.id])).rowCount === 1;
+    const committed = (await database!.query("select 1 from recording where id = $1", [recording.id])).rowCount === 1;
     processingRequests.push({ ...recording, committed });
     if (processingUnavailable) throw new Error("Trigger.dev unavailable");
   },
@@ -86,7 +86,7 @@ function webhookRequest(path: string, params: Record<string, string>, signature:
 }
 
 function handler() {
-  return createTwilioWebhookHandler({ pool: pool!, masterKey, baseURL, recordingProcessing });
+  return createTwilioWebhookHandler({ database: database!, masterKey, baseURL, recordingProcessing });
 }
 
 async function post(path: string, params: Record<string, string>): Promise<Response> {
@@ -112,7 +112,7 @@ function callStatus(callSid: string, status: string, duration = "42"): Promise<R
 }
 
 async function callState(callSid: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select state, outcome, outcome_reason, answered_at is not null as answered, ended_at is not null as ended, duration_seconds
        from call where twilio_call_sid = $1`,
     [callSid],
@@ -122,26 +122,26 @@ async function callState(callSid: string): Promise<Record<string, unknown>> {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const { organizationId, userId } = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Webhook Operator", timezone: "UTC" });
-  await pool.query(
+  const { organizationId, userId } = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Webhook Operator", timezone: "UTC" });
+  await database.query(
     `insert into twilio_connection (id, organization_id, account_sid, api_key_sid, api_key_secret_ciphertext, auth_token_ciphertext, connected_by_user_id, connected_at, created_at, updated_at)
      values ('webhook-connection', $1, 'ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'SK11111111111111111111111111111111', $2, $3, $4, now(), now(), now())`,
     [organizationId, await encryptSecret(masterKey, "api-key-secret"), await encryptSecret(masterKey, authToken), userId],
   );
-  await pool.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
-  await pool.query(
+  await database.query("update twilio_connection set master_key_fingerprint = $1 where master_key_fingerprint is null", [await masterKeyFingerprint(masterKey)]);
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('webhook-number', $1, 'PNaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2, 'Webhook Number', true, now(), now(), now(), now())`,
     [organizationId, trackingNumber],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
      values ('webhook-workspace', $1, 'Webhook Workspace', 'UTC', 'Active', $2, now(), now())`,
     [organizationId, destinationNumber],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ($1, $2, 'webhook-workspace', 'webhook-number', $3, now(), now())`,
     [assignmentId, organizationId, trackingNumber],
@@ -154,37 +154,37 @@ beforeAll(async () => {
     whisperMessage: null,
     disclosureVoice: "Polly.Joanna",
   });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('webhook-flow-version-1', $1, 'webhook-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), userId],
   );
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('archived-number', $1, 'PNbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '+14155550102', 'Archived Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at, archived_at)
      values ('archived-workspace', $1, 'Archived Workspace', 'UTC', 'Archived', $2, now(), now(), now())`,
     [organizationId, destinationNumber],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, ended_at, ended_reason, created_at)
      values ('archived-assignment', $1, 'archived-workspace', 'archived-number', '+14155550102', now(), now(), 'archived', now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('routing-number', $1, 'PNcccccccccccccccccccccccccccccccc', $2, 'Routing Number', true, now(), now(), now(), now())`,
     [organizationId, routingTrackingNumber],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
      values ('routing-workspace', $1, 'Routing Workspace', $2, 'Active', $3, now(), now())`,
     [organizationId, routingTimeZone, destinationNumber],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ($1, $2, 'routing-workspace', 'routing-number', $3, now(), now())`,
     [routingAssignmentId, organizationId, routingTrackingNumber],
@@ -192,7 +192,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
@@ -222,7 +222,7 @@ describe.sequential("Twilio voice webhook", () => {
         `<Number statusCallback="${baseURL}/api/twilio/forward-status/${assignmentId}?node=forward" statusCallbackEvent="initiated answered completed" statusCallbackMethod="POST">${destinationNumber}</Number>` +
         "</Dial></Response>",
     );
-    const call = await pool!.query("select forward_node_id, outcome from call where twilio_call_sid = $1", [params.CallSid]);
+    const call = await database!.query("select forward_node_id, outcome from call where twilio_call_sid = $1", [params.CallSid]);
     expect(call.rows).toEqual([{ forward_node_id: "forward", outcome: null }]);
   });
 
@@ -231,7 +231,7 @@ describe.sequential("Twilio voice webhook", () => {
     const params = voiceParams(callSid);
     const response = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
     expect(response.status).toBe(200);
-    const calls = await pool!.query(
+    const calls = await database!.query(
       `select workspace_id, number_assignment_id, flow_version_id, tracking_number, caller_number, state, outcome
          from call where twilio_call_sid = $1`,
       [callSid],
@@ -247,7 +247,7 @@ describe.sequential("Twilio voice webhook", () => {
         outcome: null,
       },
     ]);
-    const events = await pool!.query(
+    const events = await database!.query(
       `select e.kind, e.disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1`,
       [callSid],
     );
@@ -261,7 +261,7 @@ describe.sequential("Twilio voice webhook", () => {
     const replay = await handler()(webhookRequest(voicePath, params, sign(`${baseURL}${voicePath}`, params)));
     expect(replay.status).toBe(200);
     expect(await replay.text()).toBe(await first.text());
-    const counts = await pool!.query<{ calls: number; events: number }>(
+    const counts = await database!.query<{ calls: number; events: number }>(
       `select (select count(*)::int from call where twilio_call_sid = $1) as calls,
               (select count(*)::int from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1) as events`,
       [callSid],
@@ -328,7 +328,7 @@ describe.sequential("Call Outcome lifecycle", () => {
     await startCall(callSid);
     const republished = generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
     republished.nodes = republished.nodes.map((node) => (node.id === "outcome-answered" && node.type === "outcome" ? { ...node, outcome: "Missed" } : node));
-    await pool!.query(
+    await database!.query(
       `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
        select 'webhook-flow-version-2', organization_id, 'webhook-workspace', 2, $1, now() from workspace where id = 'webhook-workspace'`,
       [JSON.stringify(republished)],
@@ -337,7 +337,7 @@ describe.sequential("Call Outcome lifecycle", () => {
     await forwardStatus(callSid, "completed");
     await callStatus(callSid, "completed");
     expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Answered" });
-    const pinned = await pool!.query("select flow_version_id from call where twilio_call_sid = $1", [callSid]);
+    const pinned = await database!.query("select flow_version_id from call where twilio_call_sid = $1", [callSid]);
     expect(pinned.rows[0].flow_version_id).toBe("webhook-flow-version-1");
   });
 
@@ -347,13 +347,13 @@ describe.sequential("Call Outcome lifecycle", () => {
     await forwardStatus(callSid, "initiated");
     await forwardStatus(callSid, "completed");
     await callStatus(callSid, "completed", "42");
-    const before = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
-    const eventsBefore = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
+    const before = await database!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    const eventsBefore = await database!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
     await forwardStatus(callSid, "completed");
     await callStatus(callSid, "completed", "42");
     await forwardStatus(callSid, "canceled");
-    const after = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
-    const eventsAfter = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
+    const after = await database!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    const eventsAfter = await database!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1", [callSid]);
     expect(after.rows).toEqual(before.rows);
     expect(eventsAfter.rows[0].count).toBe(eventsBefore.rows[0].count + 1);
   });
@@ -373,18 +373,18 @@ describe.sequential("Inactive Number Assignments", () => {
     const response = await post(path, params);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>');
-    expect((await pool!.query("select count(*)::int as count from call where twilio_call_sid = $1", [callSid])).rows[0].count).toBe(0);
-    const events = await pool!.query("select kind, disposition, detail, call_id, number_assignment_id from provider_event where idempotency_key = $1", [`${callSid}:voice`]);
+    expect((await database!.query("select count(*)::int as count from call where twilio_call_sid = $1", [callSid])).rows[0].count).toBe(0);
+    const events = await database!.query("select kind, disposition, detail, call_id, number_assignment_id from provider_event where idempotency_key = $1", [`${callSid}:voice`]);
     expect(events.rows).toEqual([{ kind: "voice", disposition: "rejected", detail: "inactive_assignment", call_id: null, number_assignment_id: "archived-assignment" }]);
   });
 });
 
 describe.sequential("Staging call smoke", () => {
   it("reports the newest Calls on a Tracking Number with their provider events", async () => {
-    const calls = await reportTrackingNumberCalls(pool!, trackingNumber, 2);
+    const calls = await reportTrackingNumberCalls(database!, trackingNumber, 2);
     expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({ twilioCallSid: expect.any(String), state: expect.any(String), events: expect.any(Array) });
-    const answered = (await reportTrackingNumberCalls(pool!, trackingNumber, 50)).find((call) => call.twilioCallSid === "CA00000000000000000000000000000010");
+    const answered = (await reportTrackingNumberCalls(database!, trackingNumber, 50)).find((call) => call.twilioCallSid === "CA00000000000000000000000000000010");
     expect(answered).toMatchObject({ state: "Completed", outcome: "Answered", durationSeconds: 42 });
     expect(answered?.events.map((event) => `${event.kind}:${event.status}`)).toEqual([
       "voice:ringing",
@@ -396,8 +396,8 @@ describe.sequential("Staging call smoke", () => {
   });
 
   it("replays a completed Call's signed status callbacks without changing it", async () => {
-    const callId = (await pool!.query("select id from call where twilio_call_sid = 'CA00000000000000000000000000000010'")).rows[0].id as string;
-    const result = await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) });
+    const callId = (await database!.query("select id from call where twilio_call_sid = 'CA00000000000000000000000000000010'")).rows[0].id as string;
+    const result = await replayCallCallbacks({ database: database!, callId, baseURL, authToken, send: (request) => handler()(request) });
     expect(result).toEqual({ replayed: 4, rejected: 0, unchanged: true });
   });
 });
@@ -406,7 +406,7 @@ let routingVersion = 0;
 
 async function publishRoutingFlow(graph: CallFlowGraph): Promise<void> {
   routingVersion += 1;
-  await pool!.query(
+  await database!.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
      select $1, organization_id, 'routing-workspace', $2, $3, now() from workspace where id = 'routing-workspace'`,
     [`routing-flow-version-${routingVersion}`, routingVersion, JSON.stringify(graph)],
@@ -501,7 +501,7 @@ function routingForwardStatus(callSid: string, status: string): Promise<Response
 }
 
 async function voicemailState(callSid: string): Promise<Record<string, unknown>> {
-  const result = await pool!.query("select voicemail_recording_sid, voicemail_duration_seconds from call where twilio_call_sid = $1", [callSid]);
+  const result = await database!.query("select voicemail_recording_sid, voicemail_duration_seconds from call where twilio_call_sid = $1", [callSid]);
   return result.rows[0];
 }
 
@@ -548,7 +548,7 @@ describe.sequential("First-release Call routing", () => {
     expect(await (await gatherAction(callSid, "", 2)).text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
     await routingCallStatus(callSid, "completed", "20");
     expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Blocked", outcome_reason: "flow_outcome" });
-    const forward = await pool!.query("select forward_node_id from call where twilio_call_sid = $1", [callSid]);
+    const forward = await database!.query("select forward_node_id from call where twilio_call_sid = $1", [callSid]);
     expect(forward.rows[0].forward_node_id).toBeNull();
   });
 
@@ -557,7 +557,7 @@ describe.sequential("First-release Call routing", () => {
     await startRoutingCall(callSid);
     const first = await (await gatherAction(callSid, "4", 1)).text();
     expect(await (await gatherAction(callSid, "4", 1)).text()).toBe(first);
-    const events = await pool!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
+    const events = await database!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
     expect(events.rows.map((row) => row.kind)).toEqual(["voice", "gather"]);
   });
 
@@ -574,7 +574,7 @@ describe.sequential("First-release Call routing", () => {
     });
     expect(whisper.status).toBe(200);
     expect(await whisper.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna" language="en-US">Tracer lead</Say></Response>');
-    const events = await pool!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
+    const events = await database!.query("select kind from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 order by e.received_at", [callSid]);
     expect(events.rows.map((row) => row.kind)).toEqual(["voice", "whisper"]);
   });
 
@@ -633,19 +633,19 @@ describe.sequential("First-release Call routing", () => {
 
   it("leaves a captured voicemail unchanged when its recording callback is replayed", async () => {
     const callSid = "CA00000000000000000000000000000132";
-    const before = await pool!.query("select * from call where twilio_call_sid = $1", [callSid]);
+    const before = await database!.query("select * from call where twilio_call_sid = $1", [callSid]);
     await recordingStatus(callSid, "completed", "40");
     await routingForwardStatus(callSid, "no-answer");
-    expect((await pool!.query("select * from call where twilio_call_sid = $1", [callSid])).rows).toEqual(before.rows);
+    expect((await database!.query("select * from call where twilio_call_sid = $1", [callSid])).rows).toEqual(before.rows);
   });
 
   it("creates exactly one caller-only voicemail Recording for a captured voicemail in a Workspace that does not record connected conversations", async () => {
     const callSid = "CA00000000000000000000000000000132";
-    expect((await pool!.query("select recording_enabled from workspace where id = 'routing-workspace'")).rows[0].recording_enabled).toBe(false);
+    expect((await database!.query("select recording_enabled from workspace where id = 'routing-workspace'")).rows[0].recording_enabled).toBe(false);
     expect(await callRecordings(callSid)).toEqual([
       { workspace_id: "routing-workspace", twilio_recording_sid: `RE${callSid.slice(2)}`, source: "voicemail", channels: 1, duration_seconds: 40, transfer_state: "Pending", twilio_cleanup_state: "Pending" },
     ]);
-    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
+    const events = await database!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
     expect(events.rows[0].count).toBe(1);
   });
 
@@ -654,7 +654,7 @@ describe.sequential("First-release Call routing", () => {
     ["failed", "CA00000000000000000000000000000134"],
   ])("creates no Recording but keeps the provider event for an %s voicemail recording", async (_status, callSid) => {
     expect(await callRecordings(callSid)).toEqual([]);
-    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
+    const events = await database!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'voicemail_status'", [callSid]);
     expect(events.rows[0].count).toBe(1);
   });
 
@@ -679,7 +679,7 @@ describe.sequential("First-release Call routing", () => {
     await recordingStatus(callSid, "completed", "22");
     await routingCallStatus(callSid, "completed", "50");
     expect(await callState(callSid)).toMatchObject({ state: "Completed", outcome: "Voicemail" });
-    const [reported] = (await reportTrackingNumberCalls(pool!, routingTrackingNumber, 1));
+    const [reported] = (await reportTrackingNumberCalls(database!, routingTrackingNumber, 1));
     expect(reported).toMatchObject({ twilioCallSid: callSid, voicemailDurationSeconds: 22 });
     expect(reported.events.map((event) => `${event.kind}:${event.status}`)).toEqual([
       "voice:ringing",
@@ -689,8 +689,8 @@ describe.sequential("First-release Call routing", () => {
       "voicemail_status:completed",
       "status:completed",
     ]);
-    const callId = (await pool!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
-    expect(await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 5, rejected: 0, unchanged: true });
+    const callId = (await database!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
+    expect(await replayCallCallbacks({ database: database!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 5, rejected: 0, unchanged: true });
   });
 });
 
@@ -699,7 +699,7 @@ function connectedRecordingStatus(callSid: string, payload: Record<string, strin
 }
 
 async function callRecordings(callSid: string): Promise<Record<string, unknown>[]> {
-  const result = await pool!.query(
+  const result = await database!.query(
     `select r.workspace_id, r.twilio_recording_sid, r.source, r.channels, r.duration_seconds, r.transfer_state, r.twilio_cleanup_state
        from recording r join call c on c.id = r.call_id
       where c.twilio_call_sid = $1
@@ -711,7 +711,7 @@ async function callRecordings(callSid: string): Promise<Record<string, unknown>[
 
 describe.sequential("Connected conversation Recording", () => {
   it("records the answered Forward Call leg in dual channel for a recording-enabled Workspace", async () => {
-    await pool!.query("update workspace set recording_enabled = true where id = 'routing-workspace'");
+    await database!.query("update workspace set recording_enabled = true where id = 'routing-workspace'");
     await publishRoutingFlow(generateInitialCallFlow({ destinationNumber, recordingEnabled: true, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" }));
     expect(await startRoutingCall("CA00000000000000000000000000000200")).toContain(
       `timeout="30" record="record-from-answer-dual" recordingStatusCallback="${baseURL}/api/twilio/recording-status/${routingAssignmentId}?node=forward" recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed absent">`,
@@ -732,7 +732,7 @@ describe.sequential("Connected conversation Recording", () => {
     expect(await callRecordings(callSid)).toEqual([
       { workspace_id: "routing-workspace", twilio_recording_sid: `RE${callSid.slice(2)}`, source: "connected", channels: 2, duration_seconds: 96, transfer_state: "Pending", twilio_cleanup_state: "Pending" },
     ]);
-    const events = await pool!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    const events = await database!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
     expect(events.rows).toEqual([{ kind: "recording_status", disposition: "accepted" }]);
   });
 
@@ -740,7 +740,7 @@ describe.sequential("Connected conversation Recording", () => {
     const callSid = "CA00000000000000000000000000000200";
     expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted)).status).toBe(204);
     expect(await callRecordings(callSid)).toHaveLength(1);
-    const events = await pool!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    const events = await database!.query("select count(*)::int as count from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
     expect(events.rows[0].count).toBe(1);
   });
 
@@ -749,7 +749,7 @@ describe.sequential("Connected conversation Recording", () => {
     await startRoutingCall(callSid);
     expect((await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusAbsent)).status).toBe(204);
     expect(await callRecordings(callSid)).toEqual([]);
-    const events = await pool!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
+    const events = await database!.query("select kind, disposition from provider_event e join call c on c.id = e.call_id where c.twilio_call_sid = $1 and e.kind = 'recording_status'", [callSid]);
     expect(events.rows).toEqual([{ kind: "recording_status", disposition: "accepted" }]);
   });
 
@@ -759,7 +759,7 @@ describe.sequential("Connected conversation Recording", () => {
     processingRequests.length = 0;
     await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted);
     await connectedRecordingStatus(callSid, fixtures.dialRecordingStatusCompleted);
-    const recording = (await pool!.query("select r.id, r.organization_id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1", [callSid])).rows[0];
+    const recording = (await database!.query("select r.id, r.organization_id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1", [callSid])).rows[0];
     expect(processingRequests).toEqual([{ id: recording.id, organizationId: recording.organization_id, idempotencyKey: `recording-processing:${recording.id}`, committed: true }]);
   });
 
@@ -777,12 +777,12 @@ describe.sequential("Connected conversation Recording", () => {
 
   it("requests Recording processing for a captured voicemail Recording", async () => {
     const callSid = "CA00000000000000000000000000000204";
-    await pool!.query("update workspace set recording_enabled = false where id = 'routing-workspace'");
+    await database!.query("update workspace set recording_enabled = false where id = 'routing-workspace'");
     await publishRoutingFlow(voicemailFlow("closed"));
     await startRoutingCall(callSid);
     processingRequests.length = 0;
     await recordingStatus(callSid, "completed", "18");
-    const recording = (await pool!.query("select r.id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1 and r.source = 'voicemail'", [callSid])).rows[0];
+    const recording = (await database!.query("select r.id from recording r join call c on c.id = r.call_id where c.twilio_call_sid = $1 and r.source = 'voicemail'", [callSid])).rows[0];
     expect(processingRequests).toEqual([expect.objectContaining({ id: recording.id, idempotencyKey: `recording-processing:${recording.id}`, committed: true })]);
   });
 
@@ -799,13 +799,13 @@ describe.sequential("Connected conversation Recording", () => {
 describe.sequential("Staging Recording smoke", () => {
   it("reports each Call's Recordings with source, channels, transfer and cleanup state, and failure stage without object keys or caller numbers", async () => {
     const connectedSid = "CA00000000000000000000000000000200";
-    await pool!.query(
+    await database!.query(
       `update recording r set transfer_state = 'Stored', r2_object_key = 'organizations/smoke/recordings/connected.wav', size_bytes = 42, sha256 = 'checksum',
               stored_at = now(), twilio_cleanup_state = 'Failed', failure_stage = 'cleanup', failure_reason = 'Twilio request failed (HTTP 500)'
          from call c where c.id = r.call_id and c.twilio_call_sid = $1`,
       [connectedSid],
     );
-    const calls = await reportTrackingNumberCalls(pool!, routingTrackingNumber, 50);
+    const calls = await reportTrackingNumberCalls(database!, routingTrackingNumber, 50);
     expect(calls.find((call) => call.twilioCallSid === connectedSid)?.recordings).toEqual([
       { source: "connected", channels: 2, transferState: "Stored", twilioCleanupState: "Failed", failureStage: "cleanup" },
     ]);
@@ -821,18 +821,18 @@ describe.sequential("Staging Recording smoke", () => {
 
   it("replays a connected Call's signed Recording callback without a second Recording, provider event, or processing request", async () => {
     const callSid = "CA00000000000000000000000000000202";
-    const callId = (await pool!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
-    const eventCount = async () => (await pool!.query("select count(*)::int as count from provider_event where call_id = $1", [callId])).rows[0].count as number;
+    const callId = (await database!.query("select id from call where twilio_call_sid = $1", [callSid])).rows[0].id as string;
+    const eventCount = async () => (await database!.query("select count(*)::int as count from provider_event where call_id = $1", [callId])).rows[0].count as number;
     const before = { recordings: await callRecordings(callSid), events: await eventCount() };
     processingRequests.length = 0;
-    expect(await replayCallCallbacks({ pool: pool!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 1, rejected: 0, unchanged: true });
+    expect(await replayCallCallbacks({ database: database!, callId, baseURL, authToken, send: (request) => handler()(request) })).toEqual({ replayed: 1, rejected: 0, unchanged: true });
     expect({ recordings: await callRecordings(callSid), events: await eventCount() }).toEqual(before);
     expect(processingRequests).toEqual([]);
   });
 });
 
 async function callEvents(callSid: string): Promise<{ kind: string; detail: Record<string, unknown> }[]> {
-  const result = await pool!.query(
+  const result = await database!.query<{ kind: string; detail: Record<string, unknown> }>(
     `select e.kind, e.detail
        from call_event e
        join call c on c.id = e.call_id and c.organization_id = e.organization_id and c.workspace_id = e.workspace_id
@@ -846,7 +846,7 @@ async function callEvents(callSid: string): Promise<{ kind: string; detail: Reco
 describe.sequential("Call event log", () => {
   beforeAll(async () => {
     const graph = generateInitialCallFlow({ destinationNumber, recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-    await pool!.query(
+    await database!.query(
       `insert into flow_version (id, organization_id, workspace_id, version, graph, published_at)
        select 'webhook-flow-version-events', organization_id, 'webhook-workspace', 100, $1, now() from workspace where id = 'webhook-workspace'`,
       [JSON.stringify(graph)],

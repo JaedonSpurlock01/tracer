@@ -27,11 +27,11 @@
 import { randomUUID } from "node:crypto";
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestPool } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
+import type { OpenedDatabase } from "@/data/database";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
 import { generateInitialCallFlow } from "@/data/call-flow";
 import { migrateDatabase } from "@/data/migrate";
@@ -42,7 +42,7 @@ const now = new Date("2026-10-16T12:00:00.000Z");
 const hours = (count: number) => new Date(now.getTime() - count * 60 * 60 * 1000);
 
 let container: StartedPostgreSqlContainer | undefined;
-let pool: Pool | undefined;
+let database: OpenedDatabase | undefined;
 let organizationId = "";
 let sequence = 0;
 
@@ -63,7 +63,7 @@ async function recording(state: {
   const stored = state.transfer === "Stored";
   const waveformStored = state.waveform === "Stored";
   const mp3 = state.mp3 ?? (stored ? "Stored" : "Pending");
-  await pool!.query(
+  await database!.query(
     `insert into recording (id, organization_id, workspace_id, call_id, twilio_recording_sid, source, channels, transfer_state, twilio_cleanup_state,
                             r2_object_key, size_bytes, sha256, stored_at, waveform_state, waveform_object_key, waveform_generated_at,
                             mp3_state, mp3_object_key, mp3_size_bytes, mp3_generated_at, created_at, updated_at)
@@ -92,7 +92,7 @@ async function recording(state: {
   );
   if (state.transcript) {
     const completed = state.transcript === "Completed";
-    await pool!.query(
+    await database!.query(
       `update recording set transcript_state = $2, transcript_failure_reason = $3, transcript_audio_ms = $4, transcript_cost_usd = $5, transcript_completed_at = $6,
                             lead_assessment_state = $7, transcript_skip_reason = $8
         where id = $1`,
@@ -108,7 +108,7 @@ async function recording(state: {
       ],
     );
   }
-  if (state.purgedAt) await pool!.query("update recording set media_purged_at = $2 where id = $1", [id, state.purgedAt]);
+  if (state.purgedAt) await database!.query("update recording set media_purged_at = $2 where id = $1", [id, state.purgedAt]);
   return id;
 }
 
@@ -120,7 +120,7 @@ function sweep(
   mp3: RecordingProcessing = recordingProcessing(),
 ) {
   return sweepStuckRecordings(
-    { pool: pool!, recordingProcessing: processing, recordingWaveform: waveform, recordingTranscription: transcription, recordingLeadAssessment: leadAssessment, recordingMp3: mp3 },
+    { database: database!, recordingProcessing: processing, recordingWaveform: waveform, recordingTranscription: transcription, recordingLeadAssessment: leadAssessment, recordingMp3: mp3 },
     now,
   );
 }
@@ -138,32 +138,32 @@ function recordingProcessing(failingId: string | null = null): RecordingProcessi
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
-  pool = createTestPool(container.getConnectionUri());
+  database = createTestDatabase(container.getConnectionUri());
   await migrateDatabase(container.getConnectionUri());
-  const operator = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Recovery Operator", timezone: "UTC" });
+  const operator = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Recovery Operator", timezone: "UTC" });
   organizationId = operator.organizationId;
-  await pool.query(
+  await database.query(
     `insert into twilio_number (id, organization_id, twilio_sid, phone_number, friendly_name, voice_capable, first_seen_at, last_seen_at, created_at, updated_at)
      values ('recovery-number', $1, 'PNeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', '+14155550112', 'Recovery Number', true, now(), now(), now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at)
      values ('recovery-workspace', $1, 'Recovery Workspace', 'UTC', 'Active', '+14155550199', now(), now())`,
     [organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into number_assignment (id, organization_id, workspace_id, twilio_number_id, phone_number, started_at, created_at)
      values ('recovery-assignment', $1, 'recovery-workspace', 'recovery-number', '+14155550112', now(), now())`,
     [organizationId],
   );
   const graph = generateInitialCallFlow({ destinationNumber: "+14155550199", recordingEnabled: false, spamGateEnabled: false, whisperEnabled: false, whisperMessage: null, disclosureVoice: "Polly.Joanna" });
-  await pool.query(
+  await database.query(
     `insert into flow_version (id, organization_id, workspace_id, version, graph, published_by_user_id, published_at)
      values ('recovery-flow-version', $1, 'recovery-workspace', 1, $2, $3, now())`,
     [organizationId, JSON.stringify(graph), operator.userId],
   );
-  await pool.query(
+  await database.query(
     `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, started_at, created_at, updated_at)
      values ('recovery-call', $1, 'recovery-workspace', 'recovery-assignment', 'recovery-flow-version', 'CArecovery', '+14155550112', $2, $2, $2),
             ('recovery-expired-call', $1, 'recovery-workspace', 'recovery-assignment', 'recovery-flow-version', 'CArecoveryexpired', '+14155550112', $3, $3, $3)`,
@@ -172,12 +172,12 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 
 beforeEach(async () => {
-  await pool!.query("delete from recording");
+  await database!.query("delete from recording");
 });
 
 describe("Recording recovery sweep", () => {

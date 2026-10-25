@@ -20,7 +20,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AuthorizationError, requireActiveActor } from "@/data/authorization";
 import { callListQueryFromSearchParams } from "@/data/call-list-query";
@@ -29,7 +29,7 @@ import type { TracerAuth } from "@/data/tracer-auth";
 
 export interface CallsHandlerOptions {
   auth: TracerAuth;
-  pool: Pool;
+  database: Database;
 }
 
 const privateHeaders = { "cache-control": "private, no-store" };
@@ -37,9 +37,9 @@ const privateHeaders = { "cache-control": "private, no-store" };
 export function createCallsHandler(options: CallsHandlerOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      const actor = await requireActiveActor(options.auth, options.pool, request.headers);
+      const actor = await requireActiveActor(options.auth, options.database, request.headers);
       const params = new URL(request.url).searchParams;
-      const result = await createCallList(options.pool, actor).list({ ...callListQueryFromSearchParams(params), workspaceId: params.get("workspaceId") ?? undefined });
+      const result = await createCallList(options.database, actor).list({ ...callListQueryFromSearchParams(params), workspaceId: params.get("workspaceId") ?? undefined });
       if (!result) return Response.json({ error: "not_found" }, { status: 404, headers: privateHeaders });
       return Response.json(result, { headers: privateHeaders });
     } catch (error) {

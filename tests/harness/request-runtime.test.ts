@@ -5,8 +5,8 @@
  *
  * @description
  *  The actor, the app layout, a Workspace layout, and the page each ask for
- *  the runtime while one page renders. They must share one pool instead of
- *  each opening a connection, and the pool must close once, after the
+ *  the runtime while one page renders. They must share one database instead of
+ *  each opening a connection, and the database must close once, after the
  *  response, with one tracer.request line covering the whole navigation.
  *
  * @remarks
@@ -24,7 +24,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 const afterCallbacks: Array<() => void | Promise<void>> = [];
-const opened: Array<{ runtime: { pool: unknown }; close: ReturnType<typeof vi.fn>; recordFailure: ReturnType<typeof vi.fn> }> = [];
+const opened: Array<{ runtime: { database: unknown }; close: ReturnType<typeof vi.fn>; recordFailure: ReturnType<typeof vi.fn> }> = [];
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -37,7 +37,7 @@ vi.mock("next/server", () => ({ after: (callback: () => void | Promise<void>) =>
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ "cf-ray": "ray-9" }) }));
 vi.mock("@/data/tracer-runtime", () => ({
   openTracerRuntime: vi.fn(async () => {
-    const scope = { runtime: { pool: { id: opened.length + 1 } }, close: vi.fn(), recordFailure: vi.fn() };
+    const scope = { runtime: { database: { id: opened.length + 1 } }, close: vi.fn(), recordFailure: vi.fn() };
     opened.push(scope);
     return scope;
   }),
@@ -52,14 +52,14 @@ afterEach(() => {
 it("shares one runtime across the actor, layouts, and page and closes it once after the response", async () => {
   const { withRequestRuntime } = await import("@/app/(app)/runtime");
 
-  const pools: unknown[] = await Promise.all([
-    withRequestRuntime(async ({ pool }) => pool),
-    withRequestRuntime(async ({ pool }) => pool),
-    withRequestRuntime(async ({ pool }) => pool),
+  const databases: unknown[] = await Promise.all([
+    withRequestRuntime(async ({ database }) => database),
+    withRequestRuntime(async ({ database }) => database),
+    withRequestRuntime(async ({ database }) => database),
   ]);
 
   expect(opened).toHaveLength(1);
-  expect(pools.every((pool) => pool === opened[0].runtime.pool)).toBe(true);
+  expect(databases.every((database) => database === opened[0].runtime.database)).toBe(true);
   expect(opened[0].close).not.toHaveBeenCalled();
   for (const callback of afterCallbacks) await callback();
   expect(opened[0].close).toHaveBeenCalledTimes(1);

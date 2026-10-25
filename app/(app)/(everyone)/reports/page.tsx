@@ -30,6 +30,6 @@ import { withRequestRuntime } from "@/app/(app)/runtime";
 export default async function ReportsPage() {
   const actor = await resolveRequestActor();
   if (actor?.state !== "Active") notFound();
-  const workspaces = await withRequestRuntime(({ pool }) => createCallList(pool, actor).workspaceOptions());
+  const workspaces = await withRequestRuntime(({ database }) => createCallList(database, actor).workspaceOptions());
   return <ReportsView scope={{ kind: "global", workspaces, accountTimeZone: actor.timezone }} />;
 }

@@ -32,7 +32,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { addCalendarDays, calendarDateInTimeZone } from "@/data/analytics-range";
 import { searchVisibility } from "@/data/search-visibility";
@@ -78,13 +78,13 @@ const rankDayTimeZone = "UTC";
 type KeywordRow = { id: string; phrase: string; weight: number };
 type RankRow = { site_keyword_id: string; day: string; position: number | null; ranking_url: string | null; top_results: SearchTopResult[]; checked_at: Date; check_status: "checked" | "failed"; failure_reason: string | null; matched_type: string | null };
 
-export async function siteSearch(pool: Pool, siteId: string, _timeZone: string, now: Date = new Date()): Promise<SiteSearch | null> {
+export async function siteSearch(database: Database, siteId: string, _timeZone: string, now: Date = new Date()): Promise<SiteSearch | null> {
   const today = calendarDateInTimeZone(now, rankDayTimeZone);
   const firstDay = addCalendarDays(today, -(searchTrendDays - 1));
   const [site, keywords, ranks] = await Promise.all([
-    pool.query<Parameters<typeof toServiceArea>[0]>(`select ${serviceAreaColumns} from site where id = $1`, [siteId]),
-    pool.query<KeywordRow>("select id, phrase, weight from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]),
-    pool.query<RankRow>(
+    database.query<Parameters<typeof toServiceArea>[0]>(`select ${serviceAreaColumns} from site where id = $1`, [siteId]),
+    database.query<KeywordRow>("select id, phrase, weight from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]),
+    database.query<RankRow>(
       `select r.site_keyword_id, r.day::text as day, r.position, r.ranking_url, r.top_results, r.checked_at, r.check_status, r.failure_reason, r.matched_type
          from keyword_rank_day r join site_keyword k on k.id = r.site_keyword_id
         where k.site_id = $1 and k.removed_at is null and r.day >= $2::date and r.day <= $3::date

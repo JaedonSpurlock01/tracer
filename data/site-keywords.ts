@@ -29,7 +29,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable } from "@/data/database";
 
 import { AuthorizationError, type Actor } from "@/data/authorization";
 import { withoutTrackedPhrases, type KeywordSuggestionSet } from "@/data/keyword-discovery";
@@ -128,29 +128,14 @@ export function readableSiteSql(actor: Actor, siteAlias: string, scope: unknown[
   return `exists (select 1 from site_link l join workspace w on w.id = l.workspace_id where l.site_id = ${siteAlias}.id and l.ended_at is null and ${readableWorkspaceSql(actor, scope)})`;
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
+export function createSiteKeywords(database: Database, actor: Actor): SiteKeywords {
   const organizationId = actor.organizationId;
 
   function requireOperator(): void {
     if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   }
 
-  async function requireOperatorSite(client: Pool | PoolClient, siteId: string): Promise<void> {
+  async function requireOperatorSite(client: Queryable, siteId: string): Promise<void> {
     requireOperator();
     const site = await client.query("select 1 from site where id = $1 and organization_id = $2 and removed_at is null", [siteId, organizationId]);
     if (!site.rowCount) throw new SiteKeywordsError("not_found");
@@ -158,7 +143,7 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
 
   async function requireKeyword(siteId: string, keywordId: string): Promise<void> {
     requireOperator();
-    const result = await pool.query(
+    const result = await database.query(
       `select 1 from site_keyword k join site s on s.id = k.site_id
         where k.id = $1 and k.site_id = $2 and s.organization_id = $3 and k.removed_at is null`,
       [keywordId, siteId, organizationId],
@@ -169,12 +154,12 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
   return {
     async list(siteId) {
       const scope: unknown[] = [siteId];
-      const site = await pool.query<ServiceAreaRow & { keyword_suggestions: KeywordSuggestionSet | null }>(
+      const site = await database.query<ServiceAreaRow & { keyword_suggestions: KeywordSuggestionSet | null }>(
         `select s.service_area_city, s.service_area_region, s.service_area_country, s.service_area_location_code, s.service_area_location_name, s.keyword_suggestions from site s where s.id = $1 and s.removed_at is null and ${readableSiteSql(actor, "s", scope)}`,
         scope,
       );
       if (!site.rows[0]) throw new SiteKeywordsError("not_found");
-      const keywords = await pool.query<KeywordRow>("select id, phrase, weight, created_at from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
+      const keywords = await database.query<KeywordRow>("select id, phrase, weight, created_at from site_keyword where site_id = $1 and removed_at is null order by created_at, id", [siteId]);
       const stored = site.rows[0].keyword_suggestions;
       return {
         serviceArea: toServiceArea(site.rows[0]),
@@ -187,8 +172,7 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
       requireOperator();
       const phrase = parsePhrase(input.phrase);
       const weight = parseWeight(input.weight, 1);
-      return withTransaction(pool, async (client) => {
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`tracer:site-keywords:${siteId}`]);
+      return database.transaction(async (client) => {
         await requireOperatorSite(client, siteId);
         const live = await client.query<{ count: string; duplicate: boolean }>(
           "select count(*)::text as count, bool_or(lower(phrase) = lower($2)) as duplicate from site_keyword where site_id = $1 and removed_at is null",
@@ -202,13 +186,13 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
           [randomUUID(), siteId, phrase, weight, now],
         );
         return toKeyword(inserted.rows[0]);
-      });
+      }, { lock: `tracer:site-keywords:${siteId}` });
     },
 
     async update(siteId, keywordId, input) {
       const weight = parseWeight(input.weight);
       await requireKeyword(siteId, keywordId);
-      const updated = await pool.query<KeywordRow>("update site_keyword set weight = $2, updated_at = $3 where id = $1 and removed_at is null returning id, phrase, weight, created_at", [keywordId, weight, new Date()]);
+      const updated = await database.query<KeywordRow>("update site_keyword set weight = $2, updated_at = $3 where id = $1 and removed_at is null returning id, phrase, weight, created_at", [keywordId, weight, new Date()]);
       if (!updated.rows[0]) throw new SiteKeywordsError("not_found");
       return toKeyword(updated.rows[0]);
     },
@@ -216,15 +200,15 @@ export function createSiteKeywords(pool: Pool, actor: Actor): SiteKeywords {
     async remove(siteId, keywordId) {
       await requireKeyword(siteId, keywordId);
       const now = new Date();
-      const removed = await pool.query("update site_keyword set removed_at = $2, updated_at = $2 where id = $1 and removed_at is null", [keywordId, now]);
+      const removed = await database.query("update site_keyword set removed_at = $2, updated_at = $2 where id = $1 and removed_at is null", [keywordId, now]);
       if (!removed.rowCount) throw new SiteKeywordsError("not_found");
     },
 
     async setServiceArea(siteId, input) {
-      await requireOperatorSite(pool, siteId);
+      await requireOperatorSite(database, siteId);
       const location = parseLocation(input);
       const parts = splitLocationName(location.name);
-      const updated = await pool.query<ServiceAreaRow>(
+      const updated = await database.query<ServiceAreaRow>(
         `update site set service_area_city = $2, service_area_region = $3, service_area_country = $4, service_area_location_code = $5, service_area_location_name = $6, updated_at = $7
           where id = $1 and organization_id = $8 returning ${serviceAreaColumns}`,
         [siteId, parts.city, parts.region, parts.country, location.code, location.name, new Date(), organizationId],

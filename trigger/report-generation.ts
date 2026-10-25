@@ -36,7 +36,7 @@ import { task } from "@trigger.dev/sdk";
 import { createR2RecordingObjects } from "@/data/r2-objects";
 import { generateReportJob, recordReportGenerationFailure } from "@/data/report-generation";
 import { reportGenerationTaskId } from "@/data/report-jobs";
-import { requiredEnvironment, taskPool } from "@/trigger/environment";
+import { requiredEnvironment, taskDatabase } from "@/trigger/environment";
 
 export const reportGeneration = task({
   id: reportGenerationTaskId,
@@ -44,11 +44,11 @@ export const reportGeneration = task({
   maxDuration: 3600,
   machine: "small-2x",
   run: async (payload: { jobId: string }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
       await generateReportJob(
         {
-          pool,
+          database,
           objects: createR2RecordingObjects({
             accountId: requiredEnvironment("R2_ACCOUNT_ID"),
             accessKeyId: requiredEnvironment("R2_ACCESS_KEY_ID"),
@@ -60,15 +60,15 @@ export const reportGeneration = task({
         payload.jobId,
       );
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
   onFailure: async ({ payload, error }) => {
-    const pool = taskPool();
+    const database = taskDatabase();
     try {
-      await recordReportGenerationFailure(pool, payload.jobId, error);
+      await recordReportGenerationFailure(database, payload.jobId, error);
     } finally {
-      await pool.end();
+      await database.close();
     }
   },
 });

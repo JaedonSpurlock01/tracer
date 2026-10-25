@@ -45,7 +45,7 @@
  */
 import { createHash } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { sha256Hex, type ArtifactObjects, type RecordingObjects } from "@/data/r2-objects";
 import { recordingMediaExpiredSql } from "@/data/recording-media";
@@ -158,7 +158,7 @@ function monthsBefore(now: Date, months: number): Date {
 export function createRetentionFixtures(options: {
   databaseUrl: string;
   bucket: string;
-  pool: Pool;
+  database: Database;
   objects: RetentionFixtureObjects;
   organizationId: string;
   workspaceId: string;
@@ -180,7 +180,7 @@ export function createRetentionFixtures(options: {
     environment,
 
     async seed(now: Date): Promise<SeededRetentionFixture[]> {
-      const workspace = (await options.pool.query<{ assignment_id: string | null; tracking_number: string | null; flow_version_id: string | null; reviewer_id: string | null }>(
+      const workspace = (await options.database.query<{ assignment_id: string | null; tracking_number: string | null; flow_version_id: string | null; reviewer_id: string | null }>(
         `select na.id as assignment_id, na.phone_number as tracking_number, fv.id as flow_version_id,
                 (select m.user_id from member m join "user" u on u.id = m.user_id
                   where m.organization_id = w.organization_id and m.role = 'owner' and u.state = 'Active'
@@ -200,7 +200,7 @@ export function createRetentionFixtures(options: {
       const mp3 = silentMp3();
       const seeded: SeededRetentionFixture[] = [];
       for (const fixture of fixtures) {
-        const exists = await options.pool.query("select 1 from call where id = $1", [fixture.callId]);
+        const exists = await options.database.query("select 1 from call where id = $1", [fixture.callId]);
         if (exists.rowCount) {
           seeded.push({ fixture: fixture.fixture, callId: fixture.callId, created: false });
           continue;
@@ -213,9 +213,7 @@ export function createRetentionFixtures(options: {
           await options.objects.put(fixture.keys.peaks, peaks, { sizeBytes: peaks.byteLength, sha256: await sha256Hex(peaks) }, "application/json");
           await options.objects.put(fixture.keys.mp3, mp3, { sizeBytes: mp3.byteLength, sha256: await sha256Hex(mp3) }, "audio/mpeg");
         }
-        const client = await options.pool.connect();
-        try {
-          await client.query("begin");
+        await options.database.transaction(async (client) => {
           await client.query(
             `insert into call (id, organization_id, workspace_id, number_assignment_id, flow_version_id, twilio_call_sid, tracking_number, caller_number,
                                state, outcome, outcome_reason, started_at, answered_at, ended_at, duration_seconds, created_at, updated_at)
@@ -270,13 +268,7 @@ export function createRetentionFixtures(options: {
               [fixture.callId, options.organizationId, workspace.reviewer_id, startedAt],
             );
           }
-          await client.query("commit");
-        } catch (error) {
-          await client.query("rollback");
-          throw error;
-        } finally {
-          client.release();
-        }
+        });
         seeded.push({ fixture: fixture.fixture, callId: fixture.callId, created: true });
       }
       return seeded;
@@ -285,7 +277,7 @@ export function createRetentionFixtures(options: {
     async verify(): Promise<VerifiedRetentionFixture[]> {
       const report: VerifiedRetentionFixture[] = [];
       for (const fixture of fixtures) {
-        const row = (await options.pool.query<{
+        const row = (await options.database.query<{
           media_deleted_at: Date | null;
           cleanup_due: boolean;
           twilio_cleanup_state: string;
@@ -335,7 +327,7 @@ export function createRetentionFixtures(options: {
         await options.objects.delete(key);
         objects += 1;
       }
-      const calls = await options.pool.query("delete from call where id = any($1::text[]) and organization_id = $2", [fixtures.map((fixture) => fixture.callId), options.organizationId]);
+      const calls = await options.database.query("delete from call where id = any($1::text[]) and organization_id = $2", [fixtures.map((fixture) => fixture.callId), options.organizationId]);
       return { calls: calls.rowCount ?? 0, objects };
     },
   };

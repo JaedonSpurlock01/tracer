@@ -25,7 +25,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { PoolClient } from "pg";
+import type { Queryable } from "@/data/database";
 
 import type { callEventKinds } from "@/data/schema";
 
@@ -42,7 +42,7 @@ export interface CallEvent {
   actorUserId?: string | null;
 }
 
-export async function appendCallEvent(client: Pick<PoolClient, "query">, event: CallEvent): Promise<void> {
+export async function appendCallEvent(client: Queryable, event: CallEvent): Promise<void> {
   await client.query(
     `insert into call_event (organization_id, workspace_id, call_id, kind, occurred_at, detail, actor_user_id, idempotency_key)
      select c.organization_id, c.workspace_id, c.id, $2, coalesce($3::timestamptz, now()), $4, $5, $6

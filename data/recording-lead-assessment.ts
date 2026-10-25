@@ -38,7 +38,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { appendCallEvent } from "@/data/call-events";
 import { LeadAssessmentError, leadAssessmentCostUsd, leadAssessmentModel, leadAssessmentRequest, parseLeadAssessment, type LeadAssessmentResult } from "@/data/lead-assessment";
@@ -47,7 +47,7 @@ import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { parseTranscriptTurns, TranscriptError } from "@/data/transcript";
 
 export interface RecordingLeadAssessmentDependencies {
-  pool: Pool;
+  database: Database;
   responder: StructuredResponder;
   now: () => Date;
 }
@@ -74,9 +74,7 @@ async function complete(
   result: LeadAssessmentResult,
   usage: { inputTokens: number; outputTokens: number },
 ): Promise<void> {
-  const client = await deps.pool.connect();
-  try {
-    await client.query("begin");
+  await deps.database.transaction(async (client) => {
     const now = deps.now();
     const locked = await client.query<{ lead_assessment_state: string | null; media_retained: boolean }>(
       `select r.lead_assessment_state, ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
@@ -88,7 +86,6 @@ async function complete(
     );
     const current = locked.rows[0];
     if (!current?.media_retained || !runnableStates.includes(current.lead_assessment_state ?? "")) {
-      await client.query("rollback");
       return;
     }
     const id = randomUUID();
@@ -125,17 +122,11 @@ async function complete(
       occurredAt: now,
       detail: { classification: result.classification, score: result.score },
     });
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function assessRecordingLead(deps: RecordingLeadAssessmentDependencies, recordingId: string): Promise<void> {
-  const result = await deps.pool.query<AssessmentRow>(
+  const result = await deps.database.query<AssessmentRow>(
     `select r.id, r.organization_id, r.call_id, r.lead_assessment_state, w.name as workspace_name, t.turns,
             ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
@@ -152,7 +143,7 @@ export async function assessRecordingLead(deps: RecordingLeadAssessmentDependenc
     const response = await deps.responder.respond(leadAssessmentRequest(row.workspace_name, turns));
     await complete(deps, row, parseLeadAssessment(response.text, turns), response);
   } catch (error) {
-    const failed = await deps.pool.query<{ media_retained: boolean }>(
+    const failed = await deps.database.query<{ media_retained: boolean }>(
       `with failed as (
          update recording r set lead_assessment_state = 'Failed', lead_assessment_failure_reason = $2, updated_at = $3
            from call c

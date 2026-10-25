@@ -26,10 +26,9 @@
  * -------------------------------------------------------------------------
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "./test-pool";
+import { createTestDatabase } from "./test-database";
 
 import { activityFiltersFromSearchParams } from "@/data/activity-query";
 import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
@@ -53,7 +52,7 @@ import {
 } from "@/data/page-loaders";
 import type { ProviderConfiguration } from "@/data/provider-health";
 import { createTracerAuth } from "@/data/tracer-auth";
-import { openDatabase, type Database, type DatabaseStats, type Queryable } from "@/data/database";
+import { openDatabase, type Database, type DatabaseStats, type OpenedDatabase, type Queryable } from "@/data/database";
 import type { TransactionalEmailMessage } from "@/data/transactional-email";
 import type { TwilioClient } from "@/data/twilio-client";
 import { findUserAvatarSeed } from "@/data/user-avatar";
@@ -62,8 +61,7 @@ import { workspaceListQueryFromSearchParams } from "@/data/workspaces";
 
 let container: StartedPostgreSqlContainer | undefined;
 let connectionUri = "";
-let pool: Pool | undefined;
-let database: Database | undefined;
+let database: OpenedDatabase | undefined;
 let actor: Actor;
 const workspaceId = "workspace-budget";
 const masterKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
@@ -122,7 +120,7 @@ async function signIn(): Promise<string> {
 }
 
 function runtimeFor(connection: Database): PageRuntime {
-  return { database: connection, pool: connection.pool, masterKey, baseURL: "http://localhost:3000", providerConfiguration };
+  return { database: connection, masterKey, baseURL: "http://localhost:3000", providerConfiguration };
 }
 
 /** Everything the shell reads for a navigation besides the actor: the Organization and the avatar seed. */
@@ -156,26 +154,25 @@ beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:17-alpine").start();
   connectionUri = container.getConnectionUri();
   database = createTestDatabase(connectionUri);
-  pool = database.pool;
   await migrateDatabase(connectionUri);
-  const bootstrapped = await bootstrapInitialOperator(pool, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
+  const bootstrapped = await bootstrapInitialOperator(database, { email: "operator@example.com", name: "Example Operator", timezone: "America/Chicago" });
   actor = { userId: bootstrapped.userId, organizationId: bootstrapped.organizationId, name: "Example Operator", email: "operator@example.com", timezone: "America/Chicago", state: "Active", role: "Operator" };
-  await pool.query(
+  await database.query(
     `insert into workspace (id, organization_id, name, reporting_timezone, state, destination_number, created_at, updated_at) values
        ($1, $2, 'Pocatello Paving', 'America/Boise', 'Active', '+12085550100', now(), now()),
        ('workspace-budget-setup', $2, 'Blackfoot Paving', 'America/Boise', 'Setup Required', null, now(), now())`,
     [workspaceId, actor.organizationId],
   );
-  await pool.query(
+  await database.query(
     `insert into site (id, organization_id, script_name, primary_hostname, zone_id, service_area_city, service_area_region, service_area_country, first_seen_at, last_seen_at, created_at, updated_at)
      values ('site-budget', $1, 'asphalt-paving-pocatello', 'pocatelloasphaltpaving.com', 'zone-1', 'Pocatello', 'Idaho', 'United States', now(), now(), now(), now())`,
     [actor.organizationId],
   );
-  await pool.query(
+  await database.query(
     "insert into site_link (id, organization_id, workspace_id, site_id, started_by_user_id, started_at) values ('link-budget', $1, $2, 'site-budget', $3, now())",
     [actor.organizationId, workspaceId, actor.userId],
   );
-  await pool.query(
+  await database.query(
     `insert into site_keyword (id, site_id, phrase, weight, created_at, updated_at) values
        ('keyword-1', 'site-budget', 'asphalt paving pocatello', 5, now(), now()),
        ('keyword-2', 'site-budget', 'driveway repair pocatello', 3, now(), now())`,
@@ -183,7 +180,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
+  await database?.close();
   await container?.stop();
 });
 

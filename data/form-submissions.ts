@@ -39,7 +39,7 @@
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import type { Pool, PoolClient } from "pg";
+import type { Database, Queryable } from "@/data/database";
 
 import { normalizeIdentityEmail } from "@/data/auth-policy";
 import { AuthorizationError, type Actor } from "@/data/authorization";
@@ -193,23 +193,23 @@ function normalizeHostname(value: unknown): string {
   return text;
 }
 
-export function createFormsKey(pool: Pool, actor: Actor, options: { now?: () => Date } = {}): FormsKey {
+export function createFormsKey(database: Database, actor: Actor, options: { now?: () => Date } = {}): FormsKey {
   if (!canManageWorkspaces(actor)) throw new AuthorizationError(403);
   const now = options.now ?? (() => new Date());
   return {
     async status() {
-      const result = await pool.query<{ forms_key_created_at: Date | null }>("select forms_key_created_at from organization where id = $1", [actor.organizationId]);
+      const result = await database.query<{ forms_key_created_at: Date | null }>("select forms_key_created_at from organization where id = $1", [actor.organizationId]);
       const createdAt = result.rows[0]?.forms_key_created_at ?? null;
       return createdAt ? { createdAt: createdAt.toISOString() } : null;
     },
     async generate() {
       const key = newFormsKey();
       const at = now();
-      await pool.query("update organization set forms_key_hash = $2, forms_key_created_at = $3 where id = $1", [actor.organizationId, hashFormsKey(key), at]);
+      await database.query("update organization set forms_key_hash = $2, forms_key_created_at = $3 where id = $1", [actor.organizationId, hashFormsKey(key), at]);
       return { key, createdAt: at.toISOString() };
     },
     async revoke() {
-      await pool.query("update organization set forms_key_hash = null, forms_key_created_at = null where id = $1", [actor.organizationId]);
+      await database.query("update organization set forms_key_hash = null, forms_key_created_at = null where id = $1", [actor.organizationId]);
     },
   };
 }
@@ -295,23 +295,6 @@ export function forwardingMessage(input: { workspaceName: string; hostname: stri
   };
 }
 
-async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    const result = await operation(client);
-    await client.query("commit");
-    return result;
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-type Queryable = Pick<Pool, "query">;
-
 async function selectSubmission(db: Queryable, id: string): Promise<FormSubmissionRecord | null> {
   const result = await db.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.id = $1`, [id]);
   return result.rows[0] ? toRecord(result.rows[0]) : null;
@@ -337,35 +320,35 @@ async function forwardContext(db: Queryable, submissionId: string): Promise<Forw
 }
 
 /** Sends the forwarding email for a committed submission and records the outcome on its row. */
-async function forward(pool: Pool, email: TransactionalEmail, submission: FormSubmissionRecord, now: Date): Promise<FormSubmissionRecord> {
-  const context = await forwardContext(pool, submission.id);
+async function forward(database: Database, email: TransactionalEmail, submission: FormSubmissionRecord, now: Date): Promise<FormSubmissionRecord> {
+  const context = await forwardContext(database, submission.id);
   if (context.recipients.length === 0) {
-    await pool.query("update form_submission set forward_status = 'Not configured', forward_to = '{}', forward_error = null, updated_at = $2 where id = $1", [submission.id, now]);
-    return (await selectSubmission(pool, submission.id))!;
+    await database.query("update form_submission set forward_status = 'Not configured', forward_to = '{}', forward_error = null, updated_at = $2 where id = $1", [submission.id, now]);
+    return (await selectSubmission(database, submission.id))!;
   }
   const message = forwardingMessage({ workspaceName: context.workspaceName, hostname: context.hostname, recipients: context.recipients, submission });
   try {
     const result = await email.send(message);
-    await pool.query(
+    await database.query(
       "update form_submission set forward_status = 'Sent', forward_to = $2, forward_error = null, forwarded_at = $3, forward_message_id = $4, updated_at = $3 where id = $1",
       [submission.id, context.recipients, now, result.messageId],
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message.slice(0, 500) : "Email Service error";
-    await pool.query("update form_submission set forward_status = 'Failed', forward_to = $2, forward_error = $3, updated_at = $4 where id = $1", [submission.id, context.recipients, reason, now]);
+    await database.query("update form_submission set forward_status = 'Failed', forward_to = $2, forward_error = $3, updated_at = $4 where id = $1", [submission.id, context.recipients, reason, now]);
   }
-  return (await selectSubmission(pool, submission.id))!;
+  return (await selectSubmission(database, submission.id))!;
 }
 
 /** What `POST /api/forms` does: authenticate the key, resolve the Site and Workspace, store once, apply the hold rule, forward. */
-export async function ingestFormSubmission(pool: Pool, email: TransactionalEmail, input: FormIngestInput): Promise<{ submission: FormSubmissionRecord; created: boolean }> {
+export async function ingestFormSubmission(database: Database, email: TransactionalEmail, input: FormIngestInput): Promise<{ submission: FormSubmissionRecord; created: boolean }> {
   const key = typeof input.key === "string" ? input.key.trim() : "";
   if (!key) throw new FormSubmissionsError("unauthorized_key");
-  const organization = await pool.query<{ id: string }>("select id from organization where forms_key_hash = $1", [hashFormsKey(key)]);
+  const organization = await database.query<{ id: string }>("select id from organization where forms_key_hash = $1", [hashFormsKey(key)]);
   if (!organization.rows[0]) throw new FormSubmissionsError("unauthorized_key");
   const hostname = normalizeHostname(input.site);
   if (!hostname) throw new FormSubmissionsError("invalid_input");
-  const site = await pool.query<{ id: string; organization_id: string }>(
+  const site = await database.query<{ id: string; organization_id: string }>(
     `select s.id, s.organization_id
        from site s
       where s.organization_id = $1 and s.removed_at is null
@@ -375,12 +358,12 @@ export async function ingestFormSubmission(pool: Pool, email: TransactionalEmail
     [organization.rows[0].id, hostname],
   );
   if (!site.rows[0]) throw new FormSubmissionsError("site_unknown");
-  const link = await pool.query<{ id: string; workspace_id: string }>("select id, workspace_id from site_link where site_id = $1 and ended_at is null", [site.rows[0].id]);
+  const link = await database.query<{ id: string; workspace_id: string }>("select id, workspace_id from site_link where site_id = $1 and ended_at is null", [site.rows[0].id]);
   if (!link.rows[0]) throw new FormSubmissionsError("site_not_linked");
   const parsed = parseSubmission(input);
   const now = input.now ?? new Date();
 
-  const stored = await withTransaction(pool, async (client) => {
+  const stored = await database.transaction(async (client) => {
     await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`form-submission:${site.rows[0].id}`]);
     const existing = await client.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.site_id = $1 and fs.submission_id = $2`, [site.rows[0].id, parsed.submissionId]);
     if (existing.rows[0]) return { submission: toRecord(existing.rows[0]), created: false };
@@ -402,11 +385,11 @@ export async function ingestFormSubmission(pool: Pool, email: TransactionalEmail
     return { submission: (await selectSubmission(client, id))!, created: true };
   });
   if (!stored.created || stored.submission.held) return stored;
-  return { submission: await forward(pool, email, stored.submission, now), created: true };
+  return { submission: await forward(database, email, stored.submission, now), created: true };
 }
 
-export function createFormSubmissions(pool: Pool, actor: Actor, email: TransactionalEmail, options: { now?: () => Date } = {}): FormSubmissions {
-  const workspaces = createReadableWorkspaces(pool, actor);
+export function createFormSubmissions(database: Database, actor: Actor, email: TransactionalEmail, options: { now?: () => Date } = {}): FormSubmissions {
+  const workspaces = createReadableWorkspaces(database, actor);
   const now = options.now ?? (() => new Date());
   const operator = canManageWorkspaces(actor);
 
@@ -422,13 +405,13 @@ export function createFormSubmissions(pool: Pool, actor: Actor, email: Transacti
 
   async function requireSubmission(workspaceId: string, submissionId: string): Promise<FormSubmissionRecord> {
     const workspace = await requireWorkspace(workspaceId);
-    const result = await pool.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.id = $1 and fs.workspace_id = $2 and fs.organization_id = $3`, [submissionId, workspace.id, actor.organizationId]);
+    const result = await database.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.id = $1 and fs.workspace_id = $2 and fs.organization_id = $3`, [submissionId, workspace.id, actor.organizationId]);
     if (!result.rows[0]) throw new FormSubmissionsError("not_found");
     return toRecord(result.rows[0]);
   }
 
   async function linkedSite(workspaceId: string): Promise<{ id: string; primaryHostname: string } | null> {
-    const result = await pool.query<{ id: string; primary_hostname: string }>(
+    const result = await database.query<{ id: string; primary_hostname: string }>(
       "select s.id, s.primary_hostname from site_link l join site s on s.id = l.site_id where l.workspace_id = $1 and l.organization_id = $2 and l.ended_at is null",
       [workspaceId, actor.organizationId],
     );
@@ -441,9 +424,9 @@ export function createFormSubmissions(pool: Pool, actor: Actor, email: Transacti
       const workspace = await workspaces.find(workspaceId);
       if (!workspace) return null;
       const [rows, site, forwarding] = await Promise.all([
-        pool.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.workspace_id = $1 and fs.organization_id = $2 order by fs.received_at desc, fs.id desc limit 500`, [workspace.id, actor.organizationId]),
+        database.query<SubmissionRow>(`select ${submissionColumns} from ${submissionFrom} where fs.workspace_id = $1 and fs.organization_id = $2 order by fs.received_at desc, fs.id desc limit 500`, [workspace.id, actor.organizationId]),
         linkedSite(workspace.id),
-        operator ? pool.query<{ form_forward_to: string[] }>("select form_forward_to from workspace where id = $1", [workspace.id]) : null,
+        operator ? database.query<{ form_forward_to: string[] }>("select form_forward_to from workspace where id = $1", [workspace.id]) : null,
       ]);
       const submissions = rows.rows.map(toRecord);
       const list: FormSubmissionList = {
@@ -461,8 +444,8 @@ export function createFormSubmissions(pool: Pool, actor: Actor, email: Transacti
       const submission = await requireSubmission(workspaceId, submissionId);
       if (!submission.held) throw new FormSubmissionsError("not_held");
       const at = now();
-      await pool.query("update form_submission set held = false, updated_at = $2 where id = $1", [submission.id, at]);
-      return forward(pool, email, { ...submission, held: false }, at);
+      await database.query("update form_submission set held = false, updated_at = $2 where id = $1", [submission.id, at]);
+      return forward(database, email, { ...submission, held: false }, at);
     },
 
     async reject(workspaceId, submissionId) {
@@ -470,20 +453,20 @@ export function createFormSubmissions(pool: Pool, actor: Actor, email: Transacti
       const submission = await requireSubmission(workspaceId, submissionId);
       if (!submission.held) throw new FormSubmissionsError("not_held");
       const at = now();
-      await pool.query(
+      await database.query(
         `update form_submission set held = false, forward_status = 'Rejected', forward_to = '{}', forward_error = null,
                 review_classification = 'Not Good Lead', review_note = 'Rejected', reviewer_user_id = $2, reviewed_at = $3, updated_at = $3
           where id = $1`,
         [submission.id, actor.userId, at],
       );
-      return (await selectSubmission(pool, submission.id))!;
+      return (await selectSubmission(database, submission.id))!;
     },
 
     async resend(workspaceId, submissionId) {
       requireOperator();
       const submission = await requireSubmission(workspaceId, submissionId);
       if (submission.held || submission.forward.status === "Rejected") throw new FormSubmissionsError("held");
-      return forward(pool, email, submission, now());
+      return forward(database, email, submission, now());
     },
 
     async review(workspaceId, submissionId, input) {
@@ -495,25 +478,25 @@ export function createFormSubmissions(pool: Pool, actor: Actor, email: Transacti
       const note = typeof input.note === "string" ? input.note.trim() : "";
       if (note.length > leadReviewNoteMaxLength) throw new FormSubmissionsError("invalid_input");
       const at = now();
-      await pool.query(
+      await database.query(
         "update form_submission set review_classification = $2, review_note = $3, reviewer_user_id = $4, reviewed_at = $5, updated_at = $5 where id = $1",
         [submission.id, input.classification, note || null, actor.userId, at],
       );
-      return (await selectSubmission(pool, submission.id))!;
+      return (await selectSubmission(database, submission.id))!;
     },
 
     async clearReview(workspaceId, submissionId) {
       requireOperator();
       const submission = await requireSubmission(workspaceId, submissionId);
-      await pool.query("update form_submission set review_classification = null, review_note = null, reviewer_user_id = null, reviewed_at = null, updated_at = $2 where id = $1", [submission.id, now()]);
-      return (await selectSubmission(pool, submission.id))!;
+      await database.query("update form_submission set review_classification = null, review_note = null, reviewer_user_id = null, reviewed_at = null, updated_at = $2 where id = $1", [submission.id, now()]);
+      return (await selectSubmission(database, submission.id))!;
     },
 
     async setForwarding(workspaceId, emails) {
       requireOperator();
       const workspace = await requireWorkspace(workspaceId);
       const recipients = parseForwardingRecipients(emails);
-      await pool.query("update workspace set form_forward_to = $2, updated_at = $3 where id = $1", [workspace.id, recipients, now()]);
+      await database.query("update workspace set form_forward_to = $2, updated_at = $3 where id = $1", [workspace.id, recipients, now()]);
       return recipients;
     },
   };

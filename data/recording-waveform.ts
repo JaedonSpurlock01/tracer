@@ -43,7 +43,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import type { Pool } from "pg";
+import type { Database } from "@/data/database";
 
 import { AudiowaveformError, type AudiowaveformData, type WaveformPeakGenerator } from "@/data/audiowaveform";
 import { R2ObjectError, sha256Hex, type ArtifactObjects, type RecordingObjects } from "@/data/r2-objects";
@@ -51,7 +51,7 @@ import { recordingMediaRetainedSql } from "@/data/recording-media";
 import { recordingObjectKey } from "@/data/recording-transfer";
 
 export interface RecordingWaveformDependencies {
-  pool: Pool;
+  database: Database;
   objects: RecordingObjects & Pick<ArtifactObjects, "delete">;
   peaks: WaveformPeakGenerator;
   now: () => Date;
@@ -125,7 +125,7 @@ async function storePeaks(deps: RecordingWaveformDependencies, row: WaveformRow,
 }
 
 export async function generateRecordingWaveform(deps: RecordingWaveformDependencies, recordingId: string): Promise<void> {
-  const result = await deps.pool.query<WaveformRow>(
+  const result = await deps.database.query<WaveformRow>(
     `select r.id, r.organization_id, r.workspace_id, r.call_id, r.channels, r.r2_object_key, r.waveform_state,
             ${recordingMediaRetainedSql("r", "c.started_at", "$2")} as media_retained
        from recording r
@@ -140,7 +140,7 @@ export async function generateRecordingWaveform(deps: RecordingWaveformDependenc
   try {
     await storePeaks(deps, row, key);
   } catch (error) {
-    const failed = await deps.pool.query(
+    const failed = await deps.database.query(
       `update recording r set waveform_state = 'Failed', waveform_failure_reason = $2, updated_at = $3
          from call c
         where r.id = $1 and c.id = r.call_id and ${recordingMediaRetainedSql("r", "c.started_at", "$3")}`,
@@ -150,7 +150,7 @@ export async function generateRecordingWaveform(deps: RecordingWaveformDependenc
     throw error;
   }
   const now = deps.now();
-  const stored = await deps.pool.query(
+  const stored = await deps.database.query(
     `update recording r
         set waveform_state = 'Stored', waveform_object_key = $2, waveform_generated_at = $3, waveform_failure_reason = null, updated_at = $3
        from call c
