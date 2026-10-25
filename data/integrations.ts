@@ -222,6 +222,7 @@ const unavailableDataForSeo: DataForSeoClient = {
   async verify() { throw new DataForSeoClientError("provider_unavailable", null); },
   async serp() { throw new DataForSeoClientError("provider_unavailable", null); },
   async listLocations() { throw new DataForSeoClientError("provider_unavailable", null); },
+  async keywordOverview() { throw new DataForSeoClientError("provider_unavailable", null); },
 };
 
 export function createIntegrations(options: IntegrationsOptions): Integrations {

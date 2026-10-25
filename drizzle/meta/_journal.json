@@ -204,6 +204,13 @@
       "when": 1792893506519,
       "tag": "0028_site-sync-outcomes-and-search-locations",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792902610256,
+      "tag": "0029_keyword-suggestions",
+      "breakpoints": true
     }
   ]
 }

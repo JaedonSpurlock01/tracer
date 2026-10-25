@@ -112,6 +112,10 @@ _Avoid_: Query
 A Site's 0 to 100 score summarizing its weighted Keyword positions through a click-through curve.
 _Avoid_: Ranking, SEO score
 
+**Keyword Suggestion**:
+A city-qualified search phrase Tracer proposes for a Site from its Business niche and Service Area, measured by monthly search volume, difficulty, and intent, and kept as the Site's last suggestion set until an Operator asks again or adds it as a Keyword.
+_Avoid_: Recommendation, idea, AI keyword
+
 **Form Submission**:
 A contact form posted by a linked Site to Tracer, stored under the Site's Workspace with its fields, forwarding result, and optional Lead Review; a Lead by default unless Held or reviewed otherwise.
 _Avoid_: Email, Call, Lead

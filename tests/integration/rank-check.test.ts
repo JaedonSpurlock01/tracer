@@ -68,6 +68,7 @@ const dataforseo: DataForSeoClient = {
     return { items: results[query.keyword] ?? [] };
   },
   async listLocations() { throw new Error("not implemented"); },
+  async keywordOverview() { throw new Error("not implemented"); },
 };
 
 function utcDay(at: Date): string {

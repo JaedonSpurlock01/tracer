@@ -64,6 +64,7 @@ const locationLookups: string[] = [];
 const fakeDataForSeo: DataForSeoClient = {
   async verify(credential) { return { login: credential.login }; },
   async serp() { throw new Error("not implemented"); },
+  async keywordOverview() { throw new Error("not implemented"); },
   async listLocations(_credential, countryIso) {
     locationLookups.push(countryIso);
     return [

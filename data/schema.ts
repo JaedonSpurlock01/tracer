@@ -781,6 +781,7 @@ export const sites = pgTable(
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     lastSyncStage: text("last_sync_stage"),
     lastSyncError: text("last_sync_error"),
+    keywordSuggestions: jsonb("keyword_suggestions"),
     domainRegistrar: text("domain_registrar"),
     domainRenewalCents: integer("domain_renewal_cents"),
     domainRenewsOn: date("domain_renews_on"),

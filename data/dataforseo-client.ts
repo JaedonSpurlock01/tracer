@@ -7,8 +7,9 @@
  *  Verifies an API login and password against the user data endpoint,
  *  runs one Google organic live advanced SERP task per Keyword, returning
  *  the organic, featured snippet, local pack, and map items with their
- *  type and absolute position, and lists a country's SERP locations, all
- *  without exposing provider response bodies or the credential through
+ *  type and absolute position, lists a country's SERP locations, and
+ *  measures a batch of phrases through the Labs keyword overview endpoint,
+ *  all without exposing provider response bodies or the credential through
  *  errors.
  *
  * @remarks
@@ -28,6 +29,7 @@
  *  tests/contracts/dataforseo-client.test.ts
  *  https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/
  *  https://docs.dataforseo.com/v3/serp/google/locations/
+ *  https://docs.dataforseo.com/v3/dataforseo_labs/google/keyword_overview/live/
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -62,6 +64,23 @@ export interface DataForSeoLocation {
   kind: string;
 }
 
+/** Up to 700 phrases measured for one location; DataForSEO lowercases them and omits any it has no data for. */
+export interface DataForSeoKeywordOverviewQuery {
+  keywords: string[];
+  locationCode: number;
+  languageCode: "en";
+}
+
+export type DataForSeoSearchIntent = "informational" | "navigational" | "commercial" | "transactional";
+
+export interface DataForSeoKeywordOverview {
+  phrase: string;
+  /** Average monthly searches; zero when DataForSEO knows the phrase but has no volume for it. */
+  monthlyVolume: number;
+  difficulty: number | null;
+  intent: DataForSeoSearchIntent | null;
+}
+
 export type DataForSeoClientErrorCode = "authentication_failed" | "provider_unavailable" | "invalid_response" | "task_failed";
 
 export class DataForSeoClientError extends Error {
@@ -82,6 +101,7 @@ export interface DataForSeoClient {
   serp(credential: DataForSeoCredential, query: DataForSeoSerpQuery): Promise<{ items: DataForSeoSerpItem[] }>;
   /** Every Google SERP location DataForSEO knows for a country (ISO 3166-1 alpha-2, lower case). */
   listLocations(credential: DataForSeoCredential, countryIso: string): Promise<DataForSeoLocation[]>;
+  keywordOverview(credential: DataForSeoCredential, query: DataForSeoKeywordOverviewQuery): Promise<DataForSeoKeywordOverview[]>;
 }
 
 interface Envelope<T> {
@@ -101,6 +121,21 @@ interface LocationResult {
   location_code?: number;
   location_name?: string;
   location_type?: string;
+}
+
+interface KeywordOverviewResult {
+  items?: {
+    keyword?: string;
+    keyword_info?: { search_volume?: number | null } | null;
+    keyword_properties?: { keyword_difficulty?: number | null } | null;
+    search_intent_info?: { main_intent?: string | null } | null;
+  }[] | null;
+}
+
+const searchIntents: readonly DataForSeoSearchIntent[] = ["informational", "navigational", "commercial", "transactional"];
+
+function isSearchIntent(value: unknown): value is DataForSeoSearchIntent {
+  return typeof value === "string" && (searchIntents as readonly string[]).includes(value);
 }
 
 const serpItemTypes: readonly DataForSeoSerpItemType[] = ["organic", "featured_snippet", "local_pack", "map"];
@@ -178,6 +213,26 @@ export function createDataForSeoClient(options: { fetch?: typeof fetch; baseUrl?
         return [{ position: item.rank_absolute, type: item.type, domain, url: item.url, title: item.title ?? "" }];
       });
       return { items };
+    },
+
+    async keywordOverview(credential, query) {
+      const result = await send<KeywordOverviewResult>("/dataforseo_labs/google/keyword_overview/live", credential, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify([{ keywords: query.keywords, location_code: query.locationCode, language_code: query.languageCode }]),
+      });
+      return (result.items ?? []).flatMap((item): DataForSeoKeywordOverview[] => {
+        if (typeof item.keyword !== "string") return [];
+        const volume = item.keyword_info?.search_volume;
+        const difficulty = item.keyword_properties?.keyword_difficulty;
+        const intent = item.search_intent_info?.main_intent;
+        return [{
+          phrase: item.keyword,
+          monthlyVolume: typeof volume === "number" && volume > 0 ? volume : 0,
+          difficulty: typeof difficulty === "number" ? difficulty : null,
+          intent: isSearchIntent(intent) ? intent : null,
+        }];
+      });
     },
 
     async listLocations(credential, countryIso) {
