@@ -49,8 +49,18 @@ export type SocketConnect = (address: string, options?: { secureTransport?: "sta
 /** Resolves the connect function once per pool, so `cloudflare:sockets` loads only inside a Worker. */
 export type SocketLoader = () => Promise<SocketConnect>;
 
+/**
+ * Only workerd can resolve this module, so its name is a run-time value
+ * that Turbopack and OpenNext's esbuild leave alone, as Next's lazy-loading
+ * guide shows for runtime-only modules; both fold a string constant back
+ * into a literal they then refuse to bundle.
+ */
+function cloudflareSocketsModule(): string {
+  return `${isCloudflareWorker() ? "cloudflare" : "unavailable"}:sockets`;
+}
+
 export const loadCloudflareSockets: SocketLoader = async () => {
-  const { connect } = await import("cloudflare:sockets");
+  const { connect } = (await import(/* turbopackIgnore: true */ /* webpackIgnore: true */ cloudflareSocketsModule())) as typeof import("cloudflare:sockets");
   return (address, options) => connect(address, { allowHalfOpen: false, ...options }) as unknown as StuckSocket;
 };
 
