@@ -25,6 +25,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createRequestPool } from "@/data/tracer-runtime";
+import type { SocketLoader, StuckSocket } from "@/data/request-socket";
 
 let server: Server | undefined;
 const sockets: Socket[] = [];
@@ -54,6 +55,89 @@ it("fails a query when the database connection never answers instead of hanging"
 
   await outcome;
   await pool.end();
+});
+
+function stuckCloudflareSockets() {
+  const sockets: StuckSocket[] = [];
+  const loader: SocketLoader = async () => () => {
+    const socket: StuckSocket = {
+      readable: new ReadableStream<Uint8Array>(),
+      writable: new WritableStream<Uint8Array>(),
+      closed: new Promise<void>(() => undefined),
+      close: vi.fn(() => new Promise<void>(() => undefined)),
+      startTls: () => socket,
+    };
+    sockets.push(socket);
+    return socket;
+  };
+  return { loader, sockets };
+}
+
+it("fails a query within the connect timeout when the Cloudflare socket never answers", async () => {
+  const { loader, sockets } = stuckCloudflareSockets();
+  const pool = createRequestPool("postgresql://tracer_app:unused@db.hyperdrive.local:5432/tracer", loader);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  const query = pool.query("select 1");
+  const outcome = expect(query).rejects.toThrow(/timeout/i);
+  await vi.waitFor(() => expect(sockets).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  await outcome;
+  await pool.end();
+});
+
+it("drives the Cloudflare request socket inside a Worker and a Node socket elsewhere", async () => {
+  const node = createRequestPool("postgresql://tracer_app:unused@127.0.0.1:1/tracer");
+  expect(node.options.stream).toBeUndefined();
+  await node.end();
+
+  vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+  try {
+    const worker = createRequestPool("postgresql://tracer_app:unused@db.hyperdrive.local:5432/tracer");
+    expect(worker.options.stream).toBeTypeOf("function");
+    await worker.end();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("tells pg at once when the socket is ended or destroyed, even though the Cloudflare close never answers", async () => {
+  const { RequestSocket } = await import("@/data/request-socket");
+  const { loader, sockets } = stuckCloudflareSockets();
+
+  const ended = new RequestSocket(false, loader).connect(5432, "db.hyperdrive.local");
+  await new Promise<void>((resolve) => ended.once("connect", resolve));
+  const closed = new Promise<void>((resolve) => ended.once("close", resolve));
+  ended.end();
+  await closed;
+  expect(sockets[0].close).toHaveBeenCalledTimes(1);
+  expect(ended.writable).toBe(false);
+
+  const destroyed = new RequestSocket(false, loader).connect(5432, "db.hyperdrive.local");
+  await new Promise<void>((resolve) => destroyed.once("connect", resolve));
+  const events: string[] = [];
+  destroyed.on("error", (error: Error) => events.push(`error:${error.message}`));
+  destroyed.on("close", () => events.push("close"));
+  destroyed.destroy(new Error("timeout expired"));
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  expect(events).toEqual(["error:timeout expired", "close"]);
+  expect(destroyed.destroyed).toBe(true);
+});
+
+it("names a stalled database so the page can say so, and leaves other errors alone", async () => {
+  const { asRequestFailure, databaseUnavailableDigest } = await import("@/data/database-unavailable");
+
+  const stalled = asRequestFailure(new Error("timeout expired"));
+  expect(stalled).toMatchObject({ name: "DatabaseUnavailableError", digest: databaseUnavailableDigest });
+  expect((stalled as Error).cause).toMatchObject({ message: "timeout expired" });
+
+  const wrapped = new Error("Failed query", { cause: new Error("Connection terminated due to connection timeout") });
+  expect(asRequestFailure(wrapped)).toMatchObject({ digest: databaseUnavailableDigest });
+
+  const other = new Error("relation does not exist");
+  expect(asRequestFailure(other)).toBe(other);
+  expect(asRequestFailure(stalled)).toBe(stalled);
 });
 
 it("counts the timed-out query and flags the timeout on the observed pool", async () => {

@@ -28,6 +28,7 @@ import { headers } from "next/headers";
 import { after } from "next/server";
 import { cache } from "react";
 
+import { asRequestFailure } from "@/data/database-unavailable";
 import { openTracerRuntime, type TracerRuntime } from "@/data/tracer-runtime";
 
 const openRequestRuntime = cache(async () => {
@@ -47,7 +48,9 @@ export async function withRequestRuntime<T>(run: (runtime: TracerRuntime) => Pro
   try {
     return await run(scope.runtime);
   } catch (error) {
-    if (!isNextControlFlow(error)) scope.recordFailure(error);
-    throw error;
+    if (isNextControlFlow(error)) throw error;
+    const failure = asRequestFailure(error);
+    scope.recordFailure(failure);
+    throw failure;
   }
 }
