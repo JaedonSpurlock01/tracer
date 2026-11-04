@@ -167,6 +167,8 @@ describe.sequential("Business", () => {
     }
     const missing = await json(send(cookie, "PUT", "workspace-x/business", { name: "Nobody" }));
     expect(missing.response.status).toBe(404);
+    const missingRead = await json(send(cookie, "GET", "workspace-x/business"));
+    expect(missingRead.response.status).toBe(404);
   });
 
   it("looks cities up through the Places client for Operators only and reports a geocoder failure as 502", async () => {

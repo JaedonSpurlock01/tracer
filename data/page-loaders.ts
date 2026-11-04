@@ -32,6 +32,7 @@ import { createActivity } from "@/data/activity";
 import { createAnalytics, withWorkspaceListStats, type AnalyticsSummary, type WorkspaceListWithStats, type WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
+import { createBusinesses, type BusinessRecord } from "@/data/business";
 import { createCallDetails } from "@/data/call-details";
 import { defaultCallSort, emptyCallFilters, type CallFilters, type CallListQuery } from "@/data/call-list-query";
 import { createCallList, type CallListResult } from "@/data/calls";
@@ -142,9 +143,10 @@ export interface WorkspaceOverviewPageData {
     searchScore: number | null;
   } | null;
   money: WorkspaceMoneyData | null | undefined;
+  business: BusinessRecord | null | undefined;
 }
 
-/** Workspace Overview: six independent reads at once; only the Site's summary and score wait for the Site Link. */
+/** Workspace Overview: seven independent reads at once; only the Site's summary and score wait for the Site Link. */
 export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Actor, workspace: WorkspaceRecord, range: AnalyticsRange, twilio: TwilioClient): Promise<WorkspaceOverviewPageData> {
   const organizationId = actor.organizationId;
   const workspaces = createWorkspaces(runtime.database, organizationId);
@@ -160,7 +162,7 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
   const sites = createSites(runtime.database, actor);
   const operator = canManageWorkspaces(actor);
   const month = calendarMonth(new Date(), workspace.reportingTimezone);
-  const [flow, recentCalls, summary, routingHealth, site, money] = await Promise.all([
+  const [flow, recentCalls, summary, routingHealth, site, money, business] = await Promise.all([
     routing.getFlow(workspace.id),
     orNull(createCallDetails(runtime.database, actor).listRecent(workspace.id).then((calls) => calls ?? [])),
     orNull(analytics.summary({ workspaceId: workspace.id, range })),
@@ -185,8 +187,9 @@ export async function loadWorkspaceOverviewPage(runtime: PageRuntime, actor: Act
           return row ? { month: monthLabel(month), costCents: row.costCents, profitCents: row.profitCents, deal: row.deal } : null;
         }))
       : undefined,
+    operator ? orNull(createBusinesses(runtime.database, actor).find(workspace.id)) : undefined,
   ]);
-  return { flow: { published: flow.published }, recentCalls, summary, routingHealth, site, money };
+  return { flow: { published: flow.published }, recentCalls, summary, routingHealth, site, money, business };
 }
 
 export interface SitePageData {

@@ -13,11 +13,13 @@
  *  its usage policy, so there is no map library and no credential; the
  *  map is a still picture rather than a pannable one. Under the dark
  *  theme the tiles are inverted so the map sits with the page. The Site
- *  settings Business section uses it for the Business's city, and a
- *  Google Business Profile location can reuse it.
+ *  settings Business section and the Workspace Overview Business panel
+ *  use it for the Business's city, and a Google Business Profile
+ *  location can reuse it.
  *
  * @see
  *  components/tracer/site-deal-settings.tsx
+ *  components/tracer/workspace-overview.tsx
  *  https://operations.osmfoundation.org/policies/tiles/
  *
  * @author Jaedon Spurlock

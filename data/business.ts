@@ -151,9 +151,14 @@ export function createBusinesses(database: Database, actor: Actor): Businesses {
 
   return {
     async find(workspaceId) {
-      await requireWorkspace(workspaceId);
-      const result = await database.query<BusinessRow>(`select ${columns} from business where workspace_id = $1 and organization_id = $2`, [workspaceId, organizationId]);
-      return result.rows[0] ? toBusiness(result.rows[0]) : null;
+      const result = await database.query<BusinessRow & { found_workspace_id: string }>(
+        `select workspace.id as found_workspace_id, ${columns.split(", ").map((column) => `business.${column}`).join(", ")}
+         from workspace left join business on business.workspace_id = workspace.id and business.organization_id = workspace.organization_id
+         where workspace.organization_id = $1 and workspace.id = $2`,
+        [organizationId, workspaceId],
+      );
+      if (!result.rowCount) throw new BusinessError("not_found");
+      return result.rows[0].workspace_id ? toBusiness(result.rows[0]) : null;
     },
 
     async save(workspaceId, input) {

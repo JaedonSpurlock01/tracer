@@ -57,6 +57,7 @@ Semantic versioning is deferred until Tracer exposes a separately supported exte
 
 ### Added
 
+- Added M18 scope on 2026-11-04 at the Product Owner's request: the Workspace Overview shows Operators the Business and its city's location map below Leads generated, with the same data as Site settings. The Overview's query budget rose from 33 to 34 with the Product Owner's approval.
 - Added M24 - Keyword Discovery on 2026-10-24 at the Product Owner's request, placed before M19: an Operator asks Tracer to suggest city-qualified Keywords for a Site from the Business niche and Service Area, OpenAI proposes the phrases and DataForSEO Labs measures their monthly volume, and the Operator ticks the ones to track. It depends on M18's validated Service Area.
 - Added M18 scope on 2026-10-24 after an architecture review of the Production failures: a request-scoped runtime with a six-connection pool, loading boundaries, and a tested performance budget per page; one Provider Credential module with a stored master key fingerprint, an Unreadable connection state, Re-enter credential, and Disconnect anyway; per-Site sync outcomes shown on the Site page; and Search adapters that report why a check failed, count local pack results, and take the Service Area as a picked DataForSEO location.
 - Added `docs/SPECIFICATION.md` on 2026-10-21 to hold the product, architecture, security, and testing specification formerly in the README, which now covers setup, environment variables in plain language, and deployment, with `.env.example` and `.env.trigger.example` templates.

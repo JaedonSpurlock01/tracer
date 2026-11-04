@@ -8,8 +8,8 @@
  *  overview with its analytics over the range in the URL, its linked Site
  *  with the Site's traffic over the same range, its routing health, its
  *  Recent Calls, and for Operators this month's cost and profit with the
- *  open Deal. Client Viewers see a read-only Overview of granted
- *  Workspaces without cost or Deal.
+ *  open Deal and the Business with its city map. Client Viewers see a
+ *  read-only Overview of granted Workspaces without cost, Deal, or Business.
  *
  * @remarks
  *  Organization and Access Grant scoping are enforced by the central
@@ -54,6 +54,7 @@ export default async function WorkspacePage({ params, searchParams }: { params: 
       routingHealth={data.routingHealth}
       site={data.site}
       money={data.money}
+      business={data.business}
       analytics={{
         range,
         summary: data.summary,

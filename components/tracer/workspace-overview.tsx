@@ -15,7 +15,8 @@
  *  Badge (Operators of an Active Workspace get Open Flow in the panel),
  *  and the five Recent Calls linking to Call
  *  Detail, with View Calls opening Workspace Calls over the same range.
- *  Operators get Edit Flow and
+ *  Below Leads generated, Operators see the Business from Site settings
+ *  beside its city's location map. Operators get Edit Flow and
  *  Workspace Settings; Client Viewers get Generate Report, scoped to this
  *  Workspace and its reporting timezone, and Workspace Reports.
  *
@@ -58,12 +59,14 @@ import {
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
 import { formatCallDate, formatCallTime, formatClock } from "@/components/tracer/call-format";
 import { EmptyState } from "@/components/tracer/empty-state";
+import LocationMap from "@/components/tracer/location-map";
 import FlowSpine from "@/components/tracer/flow/flow-spine";
 import GenerateReportButton from "@/components/tracer/generate-report-dialog";
 import { describeDeal } from "@/components/tracer/deal-editor";
 import { previewImageSrc, SitePickerDialog, SitePreviewThumbnail, siteHealthBadges, type SiteResponse } from "@/components/tracer/site-picker";
 import type { AnalyticsSummary, WebhookHealth, WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
+import type { BusinessRecord } from "@/data/business";
 import type { RecentCall } from "@/data/call-details";
 import type { CallFlowGraph } from "@/data/call-flow";
 import type { DealRecord } from "@/data/deals";
@@ -81,6 +84,7 @@ interface WorkspaceOverviewProps {
   analytics?: { range: AnalyticsRange; summary: AnalyticsSummary | null; callsHref: string };
   site?: { record: SiteResponse | null; summary: SiteSummary | ClientViewerSiteSummary | null; searchScore?: number | null } | null;
   money?: WorkspaceMoney | null;
+  business?: BusinessRecord | null;
 }
 
 export interface WorkspaceMoney {
@@ -280,6 +284,45 @@ function SiteSummaryPanel({ workspace, site, operator, pending, onRetry, onLink 
   );
 }
 
+function BusinessPanel({ workspace, business }: { workspace: WorkspaceRecord; business: BusinessRecord | null }) {
+  const contact = [business?.firstName, business?.lastName].filter(Boolean).join(" ");
+  return (
+    <Frame>
+      <FramePanel role="region" aria-labelledby="business-title" className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="business-title" className="font-semibold">Business</h2>
+          <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings/site`} prefetch />}>
+            Edit Business
+          </Button>
+        </div>
+        {business ? (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+            <dl className="grid content-start gap-3 sm:grid-cols-2">
+              <Fact label="Business name">{business.name ?? "-"}</Fact>
+              <Fact label="Contact">{contact || "-"}</Fact>
+              <Fact label="Email">{business.email ?? "-"}</Fact>
+              <Fact label="Niche">{business.niche ?? "-"}</Fact>
+              <Fact label="Website">
+                {business.website ? (
+                  <a href={business.website} target="_blank" rel="noreferrer" className="hover:underline">
+                    {business.website}
+                  </a>
+                ) : (
+                  "-"
+                )}
+              </Fact>
+              <Fact label="City">{business.city ?? "-"}</Fact>
+            </dl>
+            <LocationMap point={business.cityPoint} zoom={11} label={business.city ? `Map of ${business.city}` : "Map"} className="h-64" placeholder="Pick a city in Site settings to place this Business on the map." />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No Business details yet.</p>
+        )}
+      </FramePanel>
+    </Frame>
+  );
+}
+
 function Analytics({ analytics, pending, onRetry }: { analytics: NonNullable<WorkspaceOverviewProps["analytics"]>; pending: boolean; onRetry: () => void }) {
   const { summary } = analytics;
   if (!pending && !summary) {
@@ -307,7 +350,7 @@ function Analytics({ analytics, pending, onRetry }: { analytics: NonNullable<Wor
   );
 }
 
-export default function WorkspaceOverview({ workspace, flow, readOnly = false, recentCalls, routingHealth, analytics, site, money }: WorkspaceOverviewProps) {
+export default function WorkspaceOverview({ workspace, flow, readOnly = false, recentCalls, routingHealth, analytics, site, money, business }: WorkspaceOverviewProps) {
   const { pending, changeRange, retry } = useAnalyticsNavigation();
   const [linkSiteOpen, setLinkSiteOpen] = useState(false);
   const checklist = describeSetupChecklist(workspace);
@@ -384,6 +427,7 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
         <SiteSummaryPanel workspace={workspace} site={site} operator={operator} pending={pending} onRetry={retry} onLink={() => setLinkSiteOpen(true)} />
       ) : null}
       {analytics && !setupRequired ? <Analytics analytics={analytics} pending={pending} onRetry={retry} /> : null}
+      {operator && business !== undefined ? <BusinessPanel workspace={workspace} business={business} /> : null}
       <RoutingHealth workspace={workspace} health={routingHealth} operator={operator && !archived} pending={pending} onRetry={retry} />
       <Frame>
         <FramePanel>
