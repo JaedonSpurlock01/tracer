@@ -639,7 +639,7 @@ If the Workspace record is created but external configuration does not complete,
 2. **Archetype:** Dashboard grid
 3. **Container family:** Frame-led
 4. **Density:** Dense
-5. **Regions:** Workspace header, KPI row, trend chart, routing health and Call Flow summary, recent Calls
+5. **Regions:** Workspace header, KPI row, trend chart, Business (Operator only), routing health and Call Flow summary, recent Calls
 6. **States:** Region-level Skeleton, Empty, and Retry states
 7. **Motion:** None
 
@@ -682,6 +682,10 @@ Use the same definitions and visual order as Home:
 4. Average Connected Duration
 
 The three-series chart shows Total Calls, Answered Calls, and Good Leads. Workspace Overview does not include the fleet-level Workspace performance grid.
+
+### Business
+
+Operators see one panel below Leads generated with the same Business fields as Site settings (name, contact, email, niche, website, and city) beside the city's location map, with Edit Business opening Site settings. Without a Business it shows a one-line explanation. Client Viewers never see it.
 
 ### Routing health
 

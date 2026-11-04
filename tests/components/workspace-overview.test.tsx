@@ -11,7 +11,8 @@
  *  Workspace timezone with date controls, a failed analytics region that
  *  keeps every other region, the Archived label, the Recent Calls list with
  *  its links to Call Detail, View Calls carrying the range, and Empty
- *  state, and the Workspace tabs below the header.
+ *  state, the Operator-only Business panel with its city map, and the
+ *  Workspace tabs below the header.
  *
  * @remarks
  *  Overview tests use the public component boundary. Navigation is faked at
@@ -370,5 +371,46 @@ describe("WorkspaceOverview money tiles", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} readOnly site={{ record: linkedSite, summary: siteSummary }} />);
     expect(screen.queryByRole("group", { name: "Monthly Cost" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Profit" })).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceOverview Business", () => {
+  const business = {
+    workspaceId: "workspace-1",
+    name: "Pocatello Asphalt Paving",
+    firstName: "Dana",
+    lastName: "Reyes",
+    email: "dana@example.com",
+    niche: "Asphalt paving",
+    website: "https://pocatelloasphaltpaving.com",
+    city: "Pocatello, Idaho",
+    cityPoint: { latitude: 42.8713, longitude: -112.4455 },
+    updatedAt: "2026-10-20T00:00:00.000Z",
+  };
+
+  it("shows the Business and its city map to Operators below Leads generated", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} business={business} />);
+    const region = screen.getByRole("region", { name: "Business" });
+    const panel = within(region);
+    expect(panel.getByText("Pocatello Asphalt Paving")).toBeVisible();
+    expect(panel.getByText("Dana Reyes")).toBeVisible();
+    expect(panel.getByText("dana@example.com")).toBeVisible();
+    expect(panel.getByText("Asphalt paving")).toBeVisible();
+    expect(panel.getByRole("link", { name: "https://pocatelloasphaltpaving.com" })).toHaveAttribute("href", "https://pocatelloasphaltpaving.com");
+    expect(panel.getByText("Pocatello, Idaho")).toBeVisible();
+    expect(panel.getByRole("img", { name: "Map of Pocatello, Idaho" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Leads generated" }).compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("points an Operator without a Business at Site settings", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} business={null} />);
+    const panel = within(screen.getByRole("region", { name: "Business" }));
+    expect(panel.getByText("No Business details yet.")).toBeVisible();
+    expect(panel.getByRole("link", { name: "Edit Business" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/site");
+  });
+
+  it("never shows the Business to a Client Viewer", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} readOnly business={business} />);
+    expect(screen.queryByRole("region", { name: "Business" })).not.toBeInTheDocument();
   });
 });

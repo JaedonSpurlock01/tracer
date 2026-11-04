@@ -88,7 +88,7 @@ const budgets = {
   actor: { waves: 3, queries: 3 },
   home: { waves: 4, queries: 21 },
   workspaces: { waves: 3, queries: 10 },
-  overview: { waves: 4, queries: 33 },
+  overview: { waves: 4, queries: 34 },
   site: { waves: 4, queries: 25 },
   integrations: { waves: 2, queries: 12 },
   calls: { waves: 3, queries: 8 },
