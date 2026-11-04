@@ -9,7 +9,8 @@
  *  pool, transaction runs a callback inside begin and commit on a client
  *  that can only query, taking the named advisory lock first when asked,
  *  stats counts the queries, waves, slowest statement, failures, and
- *  timeouts the owner paid, and close ends the pool in the background
+ *  timeouts the owner paid, the Worker sockets opened and connected, and
+ *  the statements still waiting, and close ends the pool in the background
  *  with a deadline. A connect or query that hits the pool's timeout fails
  *  as DatabaseUnavailableError, the error the failure page names.
  *
@@ -53,6 +54,11 @@ export interface DatabaseStats {
   timedOut: boolean;
   /** Times the pool went from idle to busy: the sequential depth the owner paid. */
   waves: number;
+  /** Worker sockets opened toward Hyperdrive, and how many of them connected. */
+  socketsOpened: number;
+  socketsConnected: number;
+  /** Statements sent and not yet answered, by their first 80 characters. */
+  pending: Array<{ text: string; startedAt: number }>;
 }
 
 /** What a transaction callback can do: query on the transaction's own client, nothing else. */
@@ -90,6 +96,11 @@ function isPoolTimeout(error: unknown): boolean {
   return /connection timeout|timeout exceeded when trying to connect|timeout expired|query read timeout/i.test(message);
 }
 
+function statementText(statement: unknown): string {
+  const text = typeof statement === "string" ? statement : (statement as { text?: unknown } | null)?.text;
+  return typeof text === "string" ? text.replace(/\s+/g, " ").trim().slice(0, 80) : "unknown";
+}
+
 type Instrumented = { query: (...args: unknown[]) => unknown };
 
 /** What openDatabase returns: the Database plus its pg pool, which only this module's own tests reach. */
@@ -97,10 +108,17 @@ export type OpenedDatabase = Database & { readonly pool: Pool };
 
 export function openDatabase(connectionString: string, options: DatabaseOptions): OpenedDatabase {
   const sockets = options.sockets ?? (isCloudflareWorker() ? loadCloudflareSockets : undefined);
-  const stream = sockets ? (config: { ssl?: unknown }) => new RequestSocket(Boolean(config.ssl), sockets) : undefined;
+  const stats: DatabaseStats = { connectMs: null, queries: 0, slowestQueryMs: 0, failedQueries: 0, timedOut: false, waves: 0, socketsOpened: 0, socketsConnected: 0, pending: [] };
+  const stream = sockets
+    ? (config: { ssl?: unknown }) => {
+        const socket = new RequestSocket(Boolean(config.ssl), sockets);
+        stats.socketsOpened += 1;
+        socket.once("connect", () => (stats.socketsConnected += 1));
+        return socket;
+      }
+    : undefined;
   const pool = new Pool({ connectionString, max: options.max, connectionTimeoutMillis: connectTimeoutMs, query_timeout: queryTimeoutMs, stream: stream as PoolConfig["stream"] });
   const opened = Date.now();
-  const stats: DatabaseStats = { connectMs: null, queries: 0, slowestQueryMs: 0, failedQueries: 0, timedOut: false, waves: 0 };
   let ending = false;
   let inFlight = 0;
 
@@ -112,16 +130,19 @@ export function openDatabase(connectionString: string, options: DatabaseOptions)
     client.on("error", () => undefined);
   });
 
-  function begin(): number {
+  function begin(text: string): DatabaseStats["pending"][number] {
     if (inFlight === 0) stats.waves += 1;
     inFlight += 1;
-    return Date.now();
+    const statement = { text, startedAt: Date.now() };
+    stats.pending.push(statement);
+    return statement;
   }
 
-  function record(started: number, error?: unknown): unknown {
+  function record(statement: DatabaseStats["pending"][number], error?: unknown): unknown {
     inFlight -= 1;
+    stats.pending.splice(stats.pending.indexOf(statement), 1);
     stats.queries += 1;
-    stats.slowestQueryMs = Math.max(stats.slowestQueryMs, Date.now() - started);
+    stats.slowestQueryMs = Math.max(stats.slowestQueryMs, Date.now() - statement.startedAt);
     if (error === undefined) return undefined;
     stats.failedQueries += 1;
     if (!isPoolTimeout(error)) return error;
@@ -129,8 +150,8 @@ export function openDatabase(connectionString: string, options: DatabaseOptions)
     return new DatabaseUnavailableError(error);
   }
 
-  function counted(run: () => unknown): unknown {
-    const started = begin();
+  function counted(statement: unknown, run: () => unknown): unknown {
+    const started = begin(statementText(statement));
     let result: unknown;
     try {
       result = run();
@@ -159,13 +180,13 @@ export function openDatabase(connectionString: string, options: DatabaseOptions)
     if (wrapped.has(target)) return;
     wrapped.add(target);
     const original = target.query.bind(target);
-    target.query = (...args: unknown[]) => (servingPoolQuery.has(target) ? original(...args) : counted(() => original(...args)));
+    target.query = (...args: unknown[]) => (servingPoolQuery.has(target) ? original(...args) : counted(args[0], () => original(...args)));
   }
 
   function query(text: string, params?: unknown[]): Promise<QueryResult<QueryResultRow>> {
     servingPoolQuery.add(pool);
     try {
-      return counted(() => pool.query(text, params)) as Promise<QueryResult<QueryResultRow>>;
+      return counted(text, () => pool.query(text, params)) as Promise<QueryResult<QueryResultRow>>;
     } finally {
       servingPoolQuery.delete(pool);
     }

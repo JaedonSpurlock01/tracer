@@ -30,7 +30,9 @@
  *  Closing is never awaited by the response. Every request writes one
  *  tracer.request log line with its Cloudflare ray, duration, outcome,
  *  and database timing so a slow or failed page can be read back from
- *  Workers Logs instead of guessed at.
+ *  Workers Logs instead of guessed at, and a request still open 8, 20,
+ *  and 60 seconds in writes a tracer.request.stalled line on the way, so
+ *  a request that never finishes still names what it waits on.
  *
  * @see
  *  app/(app)/runtime.ts
@@ -44,7 +46,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
 import { openDatabase, type Database } from "@/data/database";
 
-import { logRequest } from "@/data/request-log";
+import { logRequest, watchStalledRequest } from "@/data/request-log";
 
 import { rememberE2eOtp } from "@/data/e2e-auth-fake";
 import { createTracerAuth, type TracerAuth } from "@/data/tracer-auth";
@@ -149,8 +151,10 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
     throw new Error("HYPERDRIVE is required");
   }
   const database = openDatabase(connectionString, { max: 6 });
+  const stopStallWatch = watchStalledRequest({ ray: await currentRay(), started, db: database.stats });
   let failure: unknown;
   const close = (ray: string | null) => {
+    stopStallWatch();
     ctx.waitUntil(database.close());
     logRequest({ ray, durationMs: Date.now() - started, db: database.stats, error: failure });
   };

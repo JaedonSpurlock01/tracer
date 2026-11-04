@@ -72,6 +72,23 @@ it("fails a query as DatabaseUnavailableError within the connect timeout when th
   await expect(database.close()).resolves.toBe("closed");
 });
 
+it("counts the Worker sockets opened and connected and names each statement still waiting until it settles", async () => {
+  const { loader } = stuckCloudflareSockets();
+  const database = openDatabase("postgresql://tracer_app:unused@db.hyperdrive.local:5432/tracer", { max: 6, sockets: loader });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  const query = database.query("select id, name\n  from workspace where organization_id = $1", ["org-1"]);
+  const outcome = expect(query).rejects.toBeInstanceOf(DatabaseUnavailableError);
+  await vi.waitFor(() => expect(database.stats.socketsConnected).toBe(1));
+
+  expect(database.stats).toMatchObject({ socketsOpened: 1, socketsConnected: 1, pending: [{ text: "select id, name from workspace where organization_id = $1", startedAt: expect.any(Number) }] });
+  await vi.advanceTimersByTimeAsync(10_000);
+  await outcome;
+  expect(database.stats.pending).toEqual([]);
+  vi.useRealTimers();
+  await database.close();
+});
+
 it("fails a query within the connect timeout when a Node socket never answers", async () => {
   const database = openDatabase(await silentDatabase(), { max: 6 });
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
