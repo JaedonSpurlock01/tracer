@@ -11,7 +11,7 @@
  *  as one JSON line, which Workers Logs stores beside the invocation it
  *  belongs to. watchStalledRequest writes a tracer.request.stalled line
  *  while a request is still open 8, 20, and 60 seconds after it started,
- *  with the sockets opened and connected and each statement still
+ *  with the step it is in, the sockets opened and connected and each statement still
  *  waiting, so a request that never finishes still says where it is
  *  stuck.
  *
@@ -73,6 +73,8 @@ export interface StalledRequestWatch {
   ray: string | null;
   started: number;
   db: DatabaseStats;
+  /** The step the request is in, such as auth.session, read when each line is written. */
+  phase: () => string;
 }
 
 /** Writes a tracer.request.stalled line at each check the request is still open for; call the result when it closes. */
@@ -85,6 +87,7 @@ export function watchStalledRequest(watch: StalledRequestWatch): () => void {
           event: "tracer.request.stalled",
           ray: watch.ray,
           elapsedMs: now - watch.started,
+          phase: watch.phase(),
           dbSocketsOpened: watch.db.socketsOpened,
           dbSocketsConnected: watch.db.socketsConnected,
           dbConnectMs: watch.db.connectMs,

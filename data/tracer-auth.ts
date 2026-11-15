@@ -12,7 +12,9 @@
  *  Better Auth's session cookie cache is on for 60 seconds so a navigation
  *  does not read the session from the database every time; a user set to
  *  Disabled keeps a working session for at most that minute, which the
- *  Product Owner accepted on 2026-10-24 for an internal tool.
+ *  Product Owner accepted on 2026-10-24 for an internal tool. A before
+ *  hook reports auth.handler to onPhase so a stalled session check shows
+ *  whether it stopped in Better Auth's setup or inside the endpoint.
  *
  * @see
  *  docs/adr/0003-map-better-auth-membership-roles-to-canonical-roles.md
@@ -21,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP, organization } from "better-auth/plugins";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -43,6 +46,8 @@ export interface TracerAuthOptions {
   backgroundTask?: (promise: Promise<unknown>) => void;
   secret?: string;
   baseURL?: string;
+  /** Told auth.handler when a call has passed Better Auth's setup and reaches an endpoint. */
+  onPhase?: (phase: string) => void;
 }
 
 export function createTracerAuth(options: TracerAuthOptions) {
@@ -83,6 +88,11 @@ export function createTracerAuth(options: TracerAuthOptions) {
     },
     emailAndPassword: { enabled: false },
     session: { cookieCache: { enabled: true, maxAge: sessionCookieCacheSeconds } },
+    hooks: {
+      before: createAuthMiddleware(async () => {
+        options.onPhase?.("auth.handler");
+      }),
+    },
     databaseHooks: {
       user: {
         delete: { before: async () => false },

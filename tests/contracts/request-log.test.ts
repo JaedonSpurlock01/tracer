@@ -8,8 +8,8 @@
  *  outcome, and the Database module's stats, as an info line on success
  *  and an error line with the error's name and message on failure, and
  *  that a request still open after 8, 20, and 60 seconds writes a
- *  tracer.request.stalled line while it is stuck, naming what the
- *  database is waiting on.
+ *  tracer.request.stalled line while it is stuck, naming the step it
+ *  is in and what the database is waiting on.
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -38,7 +38,7 @@ it("writes a tracer.request.stalled line while a request is still open after 8, 
   const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const db: DatabaseStats = { connectMs: null, queries: 0, slowestQueryMs: 0, failedQueries: 0, timedOut: false, waves: 1, socketsOpened: 1, socketsConnected: 0, pending: [{ text: "select organization_id, role from member where user_id = $1 limit 1", startedAt: 1_000_500 }] };
 
-  const stop = watchStalledRequest({ ray: "ray-stuck", started: 1_000_000, db });
+  const stop = watchStalledRequest({ ray: "ray-stuck", started: 1_000_000, db, phase: () => "auth.session" });
   vi.advanceTimersByTime(7_999);
   expect(error).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
@@ -47,6 +47,7 @@ it("writes a tracer.request.stalled line while a request is still open after 8, 
     event: "tracer.request.stalled",
     ray: "ray-stuck",
     elapsedMs: 8_000,
+    phase: "auth.session",
     dbSocketsOpened: 1,
     dbSocketsConnected: 0,
     dbConnectMs: null,

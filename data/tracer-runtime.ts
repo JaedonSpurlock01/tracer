@@ -96,6 +96,8 @@ export interface TracerRuntime {
   reportGeneration: ReportGeneration | undefined;
   /** Structured output for request-time OpenAI use such as Suggest Keywords; absent without a key. */
   openai: StructuredResponder | undefined;
+  /** Names the step the request is in, which a tracer.request.stalled line reports. */
+  markPhase(phase: string): void;
 }
 
 function requiredBinding(bindings: AuthBindings, name: keyof AuthBindings): string {
@@ -151,7 +153,11 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
     throw new Error("HYPERDRIVE is required");
   }
   const database = openDatabase(connectionString, { max: 6 });
-  const stopStallWatch = watchStalledRequest({ ray: await currentRay(), started, db: database.stats });
+  let phase = "runtime.open";
+  const markPhase = (next: string) => {
+    phase = next;
+  };
+  const stopStallWatch = watchStalledRequest({ ray: await currentRay(), started, db: database.stats, phase: () => phase });
   let failure: unknown;
   const close = (ray: string | null) => {
     stopStallWatch();
@@ -202,6 +208,7 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
       secret: requiredBinding(bindings, "BETTER_AUTH_SECRET"),
       baseURL,
       backgroundTask: (promise) => ctx.waitUntil(promise),
+      onPhase: markPhase,
     });
     const runtime: TracerRuntime = {
       auth,
@@ -219,7 +226,9 @@ export async function openTracerRuntime(): Promise<TracerRuntimeScope> {
       recordingBucket: bindings.R2,
       reportGeneration: createRuntimeReportGeneration(triggerSecretKey),
       openai: createRuntimeStructuredResponder(bindings.OPENAI_API_KEY ?? process.env.OPENAI_API_KEY),
+      markPhase,
     };
+    markPhase("runtime.ready");
     return {
       runtime,
       recordFailure: (error) => {
