@@ -6,8 +6,8 @@
  * @description
  *  Opens the real request runtime with stand-in Cloudflare bindings and
  *  checks that a request still open after 8 seconds writes a
- *  tracer.request.stalled line with its Cloudflare ray, and that closing
- *  the runtime stops further stall lines.
+ *  tracer.request.stalled line with its Cloudflare ray and the step the
+ *  request is in, and that closing the runtime stops further stall lines.
  *
  * @see
  *  data/tracer-runtime.ts
@@ -47,8 +47,11 @@ it("writes a tracer.request.stalled line with the ray while the request is open 
   vi.advanceTimersByTime(8_000);
 
   const stalled = error.mock.calls.map(([line]) => JSON.parse(String(line))).filter((line) => line.event === "tracer.request.stalled");
-  expect(stalled).toEqual([expect.objectContaining({ ray: "ray-7", elapsedMs: 8_000, dbSocketsOpened: 0, dbPending: [] })]);
+  expect(stalled).toEqual([expect.objectContaining({ ray: "ray-7", elapsedMs: 8_000, phase: "runtime.ready", dbSocketsOpened: 0, dbPending: [] })]);
+  scope.runtime.markPhase("auth.session");
+  vi.advanceTimersByTime(12_000);
+  expect(JSON.parse(String(error.mock.calls.at(-1)?.[0]))).toMatchObject({ event: "tracer.request.stalled", elapsedMs: 20_000, phase: "auth.session" });
   scope.close("ray-7");
   vi.advanceTimersByTime(60_000);
-  expect(error.mock.calls.filter(([line]) => String(line).includes("tracer.request.stalled"))).toHaveLength(1);
+  expect(error.mock.calls.filter(([line]) => String(line).includes("tracer.request.stalled"))).toHaveLength(2);
 });
