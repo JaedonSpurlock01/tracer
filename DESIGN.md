@@ -14,13 +14,13 @@ This document defines Tracer's product experience, page architecture, visual sys
 
 ### Brand idea
 
-Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity is a terminal-styled, minimalist interface: flat matte surfaces, hairline borders, monospace identifiers, and the Spurlock Labs ibex shield as the mark. It should feel technical without stopping being customer-facing.
+Tracer follows a call from first contact through routing, recording, transcription, and lead judgment. The visual identity is a terminal-styled, minimalist interface: flat matte surfaces, hairline borders, monospace identifiers, and the Waveform mark, a T drawn in call audio bars. It should feel technical without stopping being customer-facing.
 
 ### Mark
 
-- The mark is the Spurlock Labs ibex shield: a monochrome mask (`public/brand-mark.png`) painted with the current foreground color by `BrandMark` in `components/tracer/brand.tsx`, so it reads on every theme without a second asset.
+- The mark is the Waveform: five bars that share a top edge and form a T, echoing the Recording waveform on Call Detail. `BrandMark` in `components/tracer/brand.tsx` draws it inline in the current foreground color, so it reads on every theme without an image asset. The logo kit, construction, and usage rules are in `docs/brand`.
 - The lockup pairs the mark with the `Tracer` wordmark in Instrument Sans Semibold on authentication screens and report covers.
-- The mark alone appears in the Sidebar account menu trigger and as the favicon (`app/icon.png`, white on the zinc-950 ground).
+- The mark alone appears in the Sidebar account menu trigger and as the favicon (`app/icon.png`, the three-bar cut in white on the zinc-950 ground).
 - Use at most one mark per view, never behind tables, charts, transcripts, forms, or other data-heavy regions.
 - Treat the orb as decorative, hidden from assistive technology, with no perpetual animation.
 - Do not place a tagline in application chrome.

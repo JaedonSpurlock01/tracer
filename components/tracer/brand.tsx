@@ -1,23 +1,24 @@
 /**
  * -------------------------------------------------------------------------
  * @file   brand.tsx
- * @brief  Renders the Spurlock Labs ibex mark and the Tracer wordmark lockup.
+ * @brief  Renders the Tracer Waveform mark and the Tracer wordmark lockup.
  *
  * @description
- *  BrandMark draws the ibex shield at a given size. BrandLockup pairs it
- *  with the Tracer wordmark for authentication screens.
+ *  BrandMark draws the Waveform mark, a T made of five call audio bars, at
+ *  a given size. BrandLockup pairs it with the Tracer wordmark for
+ *  authentication screens.
  *
  * @remarks
- *  The mark is a monochrome alpha mask (public/brand-mark.png) painted with
- *  currentColor through CSS masking, so one asset reads correctly on every
- *  theme: dark strokes on light surfaces, light strokes on dark ones, and
- *  the constellation lines keep their lighter weight through partial alpha.
- *  It is decorative beside its wordmark or the account name and is hidden
- *  from assistive technology. The favicon in app/icon.png is the same mark
- *  in white on the zinc-950 shield ground.
+ *  The mark is drawn inline and filled with currentColor, so one drawing
+ *  reads correctly on every theme and needs no image request. The bars use
+ *  the geometry of docs/brand/tracer-symbol.svg. It is decorative beside
+ *  its wordmark or the account name and is hidden from assistive
+ *  technology. The favicon in app/icon.png is the three-bar cut of the same
+ *  mark in white on the zinc-950 ground.
  *
  * @see
  *  DESIGN.md
+ *  docs/brand/README.md
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -29,19 +30,22 @@ interface BrandMarkProps {
   className?: string;
 }
 
-const maskStyle = {
-  maskImage: "url(/brand-mark.png)",
-  WebkitMaskImage: "url(/brand-mark.png)",
-  maskSize: "contain",
-  WebkitMaskSize: "contain",
-  maskRepeat: "no-repeat",
-  WebkitMaskRepeat: "no-repeat",
-  maskPosition: "center",
-  WebkitMaskPosition: "center",
-} as const;
+const bars = [
+  { x: 24, height: 52 },
+  { x: 68, height: 76 },
+  { x: 112, height: 184 },
+  { x: 156, height: 76 },
+  { x: 200, height: 52 },
+];
 
 export function BrandMark({ size = 24, className }: BrandMarkProps) {
-  return <span aria-hidden="true" style={{ width: size, height: size, ...maskStyle }} className={cn("inline-block shrink-0 bg-current", className)} />;
+  return (
+    <svg aria-hidden="true" viewBox="0 0 256 256" width={size} height={size} fill="currentColor" className={cn("inline-block shrink-0", className)}>
+      {bars.map((bar) => (
+        <rect key={bar.x} x={bar.x} y={36} width={32} height={bar.height} rx={6} />
+      ))}
+    </svg>
+  );
 }
 
 export function BrandLockup({ className }: { className?: string }) {

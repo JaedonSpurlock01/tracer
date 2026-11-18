@@ -5,7 +5,7 @@
  *
  * @description
  *  Applies Instrument Sans and Geist Mono, the chosen color theme, metadata, and
- *  semantic theme classes globally. The ibex favicon comes from app/icon.png.
+ *  semantic theme classes globally. The Waveform favicon comes from app/icon.png.
  *
  * @remarks
  *  The color theme comes from the theme cookie, so the first response is
