@@ -40,6 +40,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { CanonicalRole, UserState } from "@/data/auth-policy";
 import type { OperatorRecord } from "@/data/operator-administration";
 
@@ -100,7 +101,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
   const [manageUser, setManageUser] = useState<OperatorRecord | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useStatusMessage();
   const [deliveryWarning, setDeliveryWarning] = useState<OperatorRecord | null>(null);
   const [provisionRole, setProvisionRole] = useState<CanonicalRole>("Operator");
   const [provisionWorkspaceIds, setProvisionWorkspaceIds] = useState<string[]>([]);
@@ -341,7 +342,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
             </Field>
             <Button type="button" onClick={() => { setProvisionOpen(true); setActionError(""); setProvisionRole("Operator"); setProvisionWorkspaceIds([]); }}>Provision User</Button>
           </div>
-          {status ? <p role="status">{status}</p> : null}
+          <StatusMessage status={status} />
           {deliveryWarning ? <div className="flex items-center gap-3"><p role="alert">Access email could not be delivered.</p><Button type="button" variant="outline" onClick={() => void resend(deliveryWarning)}>Resend</Button></div> : null}
           {fetchError ? <div className="flex items-center gap-3"><p role="alert">Users are unavailable.</p><Button type="button" variant="outline" onClick={() => void loadUsers()}>Retry</Button></div> : null}
           {!fetchError && !loading && !filteredUsers.length ? <div className="flex items-center gap-3"><p>No matching users.</p><Button type="button" variant="outline" onClick={() => { setSearch(""); setStateFilter("All"); }}>Clear Filters</Button></div> : null}

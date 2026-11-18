@@ -510,6 +510,52 @@ describe("WorkspacesView", () => {
     );
   });
 
+  it("slides each later setup step in from the direction of travel, and not the step the wizard opens on", async () => {
+    const graph = generateInitialCallFlow({
+      destinationNumber: "+14155550101",
+      recordingEnabled: false,
+      spamGateEnabled: false,
+      whisperEnabled: false,
+      whisperMessage: null,
+      disclosureVoice: "Polly.Joanna",
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      if (url.endsWith("/routing") && init?.method === "PATCH")
+        return new Response(JSON.stringify({ workspace: { ...workspace, destinationNumber: "+14155550101" } }), { status: 200 });
+      if (url.endsWith("/flow"))
+        return new Response(
+          JSON.stringify({
+            draft: { graph, basedOnVersion: null, updatedAt: "2026-01-01T00:00:00.000Z" },
+            validation: { valid: true, issues: [] },
+            versions: [],
+            published: null,
+            recordingEnabled: false,
+            workspaceState: "Setup Required",
+          }),
+          { status: 200 },
+        );
+      if (url.endsWith("/activate") && init?.method === "POST") return new Response(JSON.stringify({}), { status: 502 });
+      return new Response(JSON.stringify(result), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" cloudflareConnected={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("button", { name: "Skip" })).toBeVisible();
+    expect(dialog.querySelector("[data-step-direction]")).toBeNull();
+    await skipSite();
+    const numberStep = (await screen.findByRole("radio", { name: /\+14155550100/ })).closest("[data-step-direction]");
+    expect(numberStep).toHaveAttribute("data-step-direction", "forward");
+    fireEvent.click(screen.getByRole("radio", { name: /\+14155550100/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create and Activate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose another number" }));
+    expect((await screen.findByRole("radio", { name: /\+14155550100/ })).closest("[data-step-direction]")).toHaveAttribute("data-step-direction", "back");
+  });
+
   it("offers the Site step after Basics and reaches Number on Skip", async () => {
     const created = { ...workspace, id: "workspace-new", name: "New Office" };
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {

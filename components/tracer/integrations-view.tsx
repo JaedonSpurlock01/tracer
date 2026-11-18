@@ -54,6 +54,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { ProviderLogo } from "@/components/tracer/provider-logo";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import { callDetailHref } from "@/data/call-source";
 import type { CloudflareConnectionRecord, CloudflareSiteListEntry } from "@/data/cloudflare-connection";
 import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
@@ -464,7 +465,7 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
   const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
   const [refreshError, setRefreshError] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useStatusMessage();
   const [twilioAction, setTwilioAction] = useState<Action>(null);
   const [providerAction, setProviderAction] = useState<Action>(null);
   const [twilioError, setTwilioError] = useState("");
@@ -941,7 +942,7 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
           {readyCount} of {providers.length} providers ready
         </p>
       </div>
-      {status ? <p role="status" className="text-sm">{status}</p> : null}
+      <StatusMessage status={status} className="text-sm" />
       {refreshError ? <div className="flex items-center gap-3"><p role="alert" className="text-sm">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
 
       {attention.length ? (

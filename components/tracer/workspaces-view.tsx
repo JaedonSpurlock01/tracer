@@ -43,6 +43,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCallTime } from "@/components/tracer/call-format";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { WorkspaceAttention, WorkspaceListStats, WorkspaceListWithStats } from "@/data/analytics";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
 import { nextSetupStep, type WorkspaceState } from "@/data/workspace-policy";
@@ -201,7 +202,7 @@ export default function WorkspacesView({
   const [page, setPage] = useState(initialQuery.page);
   const mounted = useRef(false);
   const requestId = useRef(0);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useStatusMessage();
   const [resumeHandled, setResumeHandled] = useState(false);
   const [wizard, setWizard] = useState<{ key: number; workspace: WorkspaceRecord | null; open: boolean } | null>(null);
 
@@ -349,7 +350,7 @@ export default function WorkspacesView({
               />
             </div>
           </div>
-          {status ? <p role="status" className="px-(--frame-panel-px) text-sm">{status}</p> : null}
+          <StatusMessage status={status} className="px-(--frame-panel-px) text-sm" />
           {fetchError ? (
             <div className="flex items-center gap-3 px-(--frame-panel-px) pb-(--frame-panel-py)">
               <p role="alert">Workspaces are unavailable.</p>

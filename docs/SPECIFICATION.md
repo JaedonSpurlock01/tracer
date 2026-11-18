@@ -231,6 +231,7 @@ See [DESIGN.md](../DESIGN.md) for page composition, states, responsive behavior,
 - React
 - TypeScript
 - Tailwind CSS
+- tw-animate-css for the shadcn/ui overlay enter and exit animations
 - shadcn/ui
 - ReUI
 - React Flow
