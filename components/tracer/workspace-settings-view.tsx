@@ -62,6 +62,7 @@ import SiteSearchSettings, { type SiteSearchSettingsData } from "@/components/tr
 import WorkspaceAccessSection from "@/components/tracer/workspace-access-section";
 import { workspaceSettingsSections, type WorkspaceSettingsSection } from "@/components/tracer/workspace-settings-sections";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { BusinessRecord } from "@/data/business";
 import type { DealRecord } from "@/data/deals";
 import type { FormSubmissionList } from "@/data/form-submissions";
@@ -99,7 +100,7 @@ export default function WorkspaceSettingsView({
   const [siteError, setSiteError] = useState("");
   const [name, setName] = useState(initialWorkspace.name);
   const [timezone, setTimezone] = useState(initialWorkspace.reportingTimezone);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useStatusMessage();
   const [error, setError] = useState("");
   const [dangerError, setDangerError] = useState("");
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -283,7 +284,7 @@ export default function WorkspaceSettingsView({
           >
             {workspace.state}
           </Badge>
-          {message ? <p role="status" className="text-sm">{message}</p> : null}
+          <StatusMessage status={message} className="text-sm" />
         </div>
       </div>
       <Frame>

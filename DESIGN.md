@@ -88,6 +88,10 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 - Clear the browser's client cache after every successful write, so a prefetched or previously visited page never shows data from before the change; a reload is never required to see it.
 - Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
+- Installed overlays (Dialog, AlertDialog, Popover, DropdownMenu, Select, Tooltip, Cascader) open and close through the `animate-in` and `animate-out` utilities from `tw-animate-css`, imported in `app/globals.css`. For viewers who prefer reduced motion, `globals.css` pins their slide and zoom to neutral so they only fade.
+- Show action confirmations with `StatusMessage`. Each confirmation fades in over 200ms with a 2px rise (opacity only for reduced motion) and replays when the same message repeats, so every save is visibly acknowledged.
+- `CollapsibleContent` grows and shrinks between zero and its measured height over 200ms with a fade, instead of snapping open (a fade alone for reduced motion). The panel clips its overflow while it moves, so keep padding and borders on an inner element and leave focus rings at least 3px of room from the panel edge.
+- A pressed Button shrinks to 97% over 150ms on the same curve and springs back on release, so every click is felt. Popup triggers (`aria-haspopup`) do not shrink, so their popup stays anchored. The Button transitions colors and `scale` only; focus rings and disabled opacity change instantly.
 - Never nest a Card inside a Frame or a Frame inside a Card.
 
 ## Application shell
@@ -268,7 +272,7 @@ Selecting a row opens Call Detail. A `View Calls` secondary action opens the Cal
 4. **Density:** Dense
 5. **Regions:** Header and freshness status, filter toolbar, day-grouped Call timeline
 6. **States:** Timeline Skeletons, no-results Empty state, and inline Retry
-7. **Motion:** No entrance; changed data appears without positional animation
+7. **Motion:** No entrance; changed data appears without positional animation. An expanded Call's steps open and close with the shared Collapsible height transition
 
 ### Header and filters
 
@@ -402,7 +406,7 @@ Provider-specific status remains diagnostic metadata and does not appear as a co
 4. **Density:** Default for reading, dense for metadata and controls
 5. **Regions:** Header, verdict strip, Transcript, rail of Call facts and processing timeline, now-playing bar
 6. **States:** Independent media, Transcript, analysis, and timeline states
-7. **Motion:** No entrance; only playhead, seek, and installed control feedback
+7. **Motion:** No entrance; only playhead, seek, installed control feedback, and the shared Collapsible height transition on the rail sections and lead details
 
 ### Header
 
@@ -570,6 +574,8 @@ Tracer has no Paused state in the first release.
 ### Create Workspace wizard
 
 Use a focused wizard Dialog with ReUI Stepper, owned by `components/tracer/workspace-setup-wizard.tsx` and mounted fresh by the list for each creation or resume. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to five labeled steps: Basics, Site, Number, Routing, Review.
+
+Each step after the one the wizard opens on slides 8px in from the side it travels from over 200ms with a fade: forward steps from the right, and Choose another number back from the left (a fade alone for reduced motion). The opening step does not move, so the wizard has one entrance.
 
 #### Step 1: Basics
 

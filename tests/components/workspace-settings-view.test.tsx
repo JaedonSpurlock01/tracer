@@ -156,6 +156,21 @@ describe("WorkspaceSettingsView", () => {
     );
   });
 
+  it("shows a fresh confirmation for every save, even when the message repeats", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ workspace }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="general" />);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const first = await screen.findByRole("status");
+    expect(first).toHaveTextContent("Workspace settings saved.");
+    expect(first).toHaveClass("status-reveal");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("status")).not.toBe(first));
+    expect(screen.getByRole("status")).toHaveTextContent("Workspace settings saved.");
+    expect(screen.getByRole("status")).toHaveClass("status-reveal");
+  });
+
   it("requires confirmation before archiving", async () => {
     const fetch = vi.fn(
       async () =>

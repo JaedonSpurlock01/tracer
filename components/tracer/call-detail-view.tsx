@@ -266,25 +266,27 @@ function Verdict({ call, operator, analysis }: { call: CallDetail; operator: boo
           ) : (
             <p className="text-xs text-muted-foreground">Automated estimate, not yet reviewed.</p>
           )}
-          <CollapsibleContent className="grid gap-6 border-t border-border pt-3 md:grid-cols-2">
-            {showReview ? (
-              <section aria-labelledby="call-lead-review-title" className="flex flex-col gap-2">
-                <h2 id="call-lead-review-title" className="text-xs font-medium text-muted-foreground">Lead Review</h2>
-                <LeadReviewBody call={call} operator={operator} />
+          <CollapsibleContent className="-mx-1 -mb-1 px-1 pb-1">
+            <div className="grid gap-6 border-t border-border pt-3 md:grid-cols-2">
+              {showReview ? (
+                <section aria-labelledby="call-lead-review-title" className="flex flex-col gap-2">
+                  <h2 id="call-lead-review-title" className="text-xs font-medium text-muted-foreground">Lead Review</h2>
+                  <LeadReviewBody call={call} operator={operator} />
+                </section>
+              ) : null}
+              <section aria-labelledby="call-lead-assessment-title" className="flex flex-col gap-2">
+                <h2 id="call-lead-assessment-title" className="text-xs font-medium text-muted-foreground">Lead Assessment</h2>
+                <AssessmentBody
+                  assessment={assessment}
+                  operator={operator}
+                  retry={analysis.retry}
+                  timeZone={timeZone}
+                  reviewed={call.leadReview !== null}
+                  contentRemoval={analysis.contentRemoval}
+                  onEvidence={analysis.selectEvidence}
+                />
               </section>
-            ) : null}
-            <section aria-labelledby="call-lead-assessment-title" className="flex flex-col gap-2">
-              <h2 id="call-lead-assessment-title" className="text-xs font-medium text-muted-foreground">Lead Assessment</h2>
-              <AssessmentBody
-                assessment={assessment}
-                operator={operator}
-                retry={analysis.retry}
-                timeZone={timeZone}
-                reviewed={call.leadReview !== null}
-                contentRemoval={analysis.contentRemoval}
-                onEvidence={analysis.selectEvidence}
-              />
-            </section>
+            </div>
           </CollapsibleContent>
         </FramePanel>
       </Frame>

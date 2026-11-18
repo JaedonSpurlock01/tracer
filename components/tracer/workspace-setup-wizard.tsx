@@ -123,6 +123,12 @@ export function activationFailureMessage(status: number, body: { error?: unknown
 export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: initialWorkspace, initialTimezone, cloudflareConnected, onCreated, onActivated }: WorkspaceSetupWizardProps) {
   const [workspace, setWorkspace] = useState<WorkspaceRecord | null>(initialWorkspace);
   const [step, setStep] = useState(initialWorkspace ? 2 : 1);
+  const [shownStep, setShownStep] = useState(step);
+  const [stepDirection, setStepDirection] = useState<"forward" | "back">();
+  if (step !== shownStep) {
+    setShownStep(step);
+    setStepDirection(step > shownStep ? "forward" : "back");
+  }
   const [actionError, setActionError] = useState("");
   const [numbers, setNumbers] = useState<AvailableNumber[]>([]);
   const [numbersLoading, setNumbersLoading] = useState(false);
@@ -292,7 +298,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             ))}
           </StepperNav>
           {step === 1 && (
-            <div>
+            <div data-step-direction={stepDirection}>
               <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void createWorkspace(event)}>
                 <Field data-invalid={Boolean(actionError)}>
                   <FieldLabel htmlFor="workspace-name">Workspace name</FieldLabel>
@@ -322,7 +328,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             </div>
           )}
           {step === 2 && workspace && (
-            <div className="mt-5 flex flex-col gap-4">
+            <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
               {!cloudflareConnected ? (
                 <>
                   <p className="text-sm">
@@ -381,7 +387,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             </div>
           )}
           {step === 3 && (
-            <div className="mt-5 flex flex-col gap-4">
+            <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
               <p>Tracer will manage the selected number&apos;s voice webhook and keep its current configuration for restoration.</p>
               {numbersError ? (
                 <p role="alert">
@@ -434,7 +440,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             </div>
           )}
           {step === 4 && (
-            <div className="mt-5 flex flex-col gap-4">
+            <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
               <Field data-invalid={Boolean(actionError)}>
                 <FieldLabel htmlFor="destination-number">Destination Number</FieldLabel>
                 <Input
@@ -514,7 +520,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             </div>
           )}
           {step === 5 && (
-            <div className="mt-5 flex flex-col gap-4">
+            <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
               <dl className="grid gap-2 text-sm">
                 <div>
                   <dt className="font-medium">Site</dt>
