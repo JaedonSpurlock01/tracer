@@ -1,14 +1,17 @@
 /**
  * -------------------------------------------------------------------------
  * @file   workspace-overview.test.tsx
- * @brief  Verifies Workspace routing health and Call Flow summary.
+ * @brief  Verifies the Workspace Overview Briefing layout and its regions.
  *
  * @description
  *  Covers routing health with webhook health and the last successful
  *  inbound Call, a webhook Warning isolated in routing health with an
  *  Operator-only recovery action, published flow steps, the header actions
- *  for Operators and Client Viewers, the KPI row and Leads generated in the
- *  Workspace timezone with date controls, a failed analytics region that
+ *  for Operators and Client Viewers, the one stat strip with Visit-to-Call
+ *  and Operator-only Profit and the Monthly Cost line, the main column and
+ *  right rail order, the Site panel with Visits and Search Visibility or a
+ *  one-line Link Site, the Setup Required checklist icons, Leads generated
+ *  in the Workspace timezone with date controls, a failed analytics region that
  *  keeps every other region, the Archived label, the Recent Calls list with
  *  its links to Call Detail, View Calls carrying the range, and Empty
  *  state, the Operator-only Business panel with its city map, and the
@@ -122,39 +125,62 @@ function routingHealth(): HTMLElement {
 }
 
 describe("WorkspaceOverview", () => {
-  it("shows the Scorecard and the Site summary when a Site is linked", () => {
+  it("puts Leads generated and Recent Calls in the main column and Routing health, Site, Call Flow, and Business in the rail", () => {
+    render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} recentCalls={[]} routingHealth={healthy} site={{ record: linkedSite, summary: siteSummary }} business={null} />);
+    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label") ?? document.getElementById(region.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual([
+      "Leads generated",
+      "Recent Calls",
+      "Routing health",
+      "Site",
+      "Call Flow",
+      "Business",
+    ]);
+  });
+
+  it("merges the Scorecard into one stat strip with Visit-to-Call when a Site is linked", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: linkedSite, summary: siteSummary }} />);
-    const tile = (name: string) => within(screen.getByRole("group", { name }));
-    expect(tile("Visits").getByText("1,234")).toBeVisible();
-    expect(tile("Calls").getByText("17")).toBeVisible();
-    expect(tile("Visit-to-Call").getByText("1.4%")).toHaveClass("text-[var(--chart-1)]");
-    expect(screen.queryByRole("group", { name: "Search Visibility" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("17")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Visit-to-Call" })).getByText("1.4%")).toBeVisible();
+    expect(screen.getByRole("group", { name: "Visit-to-Call" })).toHaveAccessibleDescription("17 Calls from 1,234 Visits");
+    expect(screen.queryByRole("group", { name: "Calls" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Visits" })).not.toBeInTheDocument();
+  });
+
+  it("shows the linked Site with its Visits in the Site panel", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: linkedSite, summary: siteSummary }} />);
     const site = screen.getByRole("region", { name: "Site" });
+    expect(within(site).getByText("Visits").nextElementSibling).toHaveTextContent("1,234");
+    expect(within(site).getByText("Search Visibility").nextElementSibling).toHaveTextContent("No score yet");
     expect(within(site).getByRole("img", { name: "Preview of pocatelloasphaltpaving.com" })).toHaveAttribute("src", expect.stringMatching(/\/api\/workspaces\/workspace-1\/site\/preview\?v=1792328400000$/));
     expect(within(site).getByText("pocatelloasphaltpaving.com")).toBeVisible();
     expect(within(site).getByText("Healthy")).toBeVisible();
-    expect(within(site).getByText(/200, 312 ms/)).toBeVisible();
-    expect(within(site).getByText("Oct 11, 2026, 6:12:59 PM")).toBeVisible();
+    expect(within(site).getByText("Last check").nextElementSibling).toHaveTextContent("200, 312 ms, Oct 18");
+    expect(within(site).getByText("Last deploy").nextElementSibling).toHaveTextContent("Oct 11");
+    expect(within(site).getByTitle("Oct 11, 2026, 6:12:59 PM")).toBeVisible();
     expect(within(site).getByRole("link", { name: "View Site" })).toHaveAttribute("href", "/workspaces/workspace-1/site");
   });
 
-  it("adds the Search Visibility tile to the Scorecard when the linked Site has a score", () => {
+  it("shows the Search Visibility score in the Site panel when the linked Site has one", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: linkedSite, summary: siteSummary, searchScore: 42 }} />);
-    const tile = within(screen.getByRole("group", { name: "Search Visibility" }));
-    expect(tile.getByText("42")).toBeVisible();
-    expect(tile.getByText("of 100")).toBeVisible();
-    cleanup();
-    render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: linkedSite, summary: siteSummary, searchScore: null }} />);
-    expect(screen.queryByRole("group", { name: "Search Visibility" })).not.toBeInTheDocument();
+    const site = within(screen.getByRole("region", { name: "Site" }));
+    expect(site.getByText("Search Visibility").nextElementSibling).toHaveTextContent("42 of 100");
   });
 
-  it("omits the Scorecard without a Site and offers Link Site to Operators", async () => {
+  it("omits Visit-to-Call without a Site and offers Link Site to Operators", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ sites: [], total: 0, page: 1, pageSize: 5 }), { status: 200 })));
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: null, summary: null }} />);
-    expect(screen.queryByRole("group", { name: "Visits" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Visit-to-Call" })).not.toBeInTheDocument();
     const site = screen.getByRole("region", { name: "Site" });
     fireEvent.click(within(site).getByRole("button", { name: "Link Site" }));
     expect(await screen.findByRole("heading", { name: "Link Site" })).toBeVisible();
+  });
+
+  it("reduces an unlinked Site to one line", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: null, summary: null }} />);
+    const site = screen.getByRole("region", { name: "Site" });
+    expect(within(site).queryByRole("heading")).not.toBeInTheDocument();
+    expect(within(site).getByText("No Site is linked to this Workspace.")).toBeVisible();
+    expect(within(site).getByRole("button", { name: "Link Site" })).toBeVisible();
   });
 
   it("explains the missing Site to a Client Viewer and shows Retry when the Site region fails", () => {
@@ -248,7 +274,8 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(rows[0]).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-2");
     expect(rows[0]).toHaveTextContent("+13125550142");
     expect(rows[0]).toHaveTextContent("Answered");
-    expect(rows[0]).toHaveTextContent("Oct 16, 2026, 3:04:05 PM");
+    expect(rows[0]).toHaveTextContent("Oct 16");
+    expect(within(rows[0]).getByTitle("Oct 16, 2026, 3:04:05 PM")).toBeVisible();
     expect(rows[0]).toHaveTextContent("1:23");
     expect(rows[1]).toHaveTextContent("Unknown caller");
     expect(rows[1]).toHaveTextContent("In Progress");
@@ -265,7 +292,9 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} routingHealth={healthy} />);
     const health = routingHealth();
     expect(within(health).getByText("Healthy")).toBeVisible();
-    expect(within(health).getByText("Last successful inbound Call").nextElementSibling).toHaveTextContent("Oct 18, 2026, 10:04:05 AM");
+    expect(within(health).getByText("Last inbound Call").nextElementSibling).toHaveTextContent("Oct 18");
+    expect(within(health).getByTitle("Oct 18, 2026, 10:04:05 AM")).toBeVisible();
+    expect(within(health).getByText("Recording on · Spam gate on · Whisper off")).toBeVisible();
     expect(screen.queryByText(/later milestone/)).not.toBeInTheDocument();
   });
 
@@ -282,10 +311,10 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     expect(screen.queryByRole("link", { name: "Review Number Settings" })).not.toBeInTheDocument();
   });
 
-  it("shows the KPI row and Leads generated in the Workspace reporting timezone with date controls", () => {
+  it("shows the stat strip and Leads generated in the Workspace reporting timezone with date controls", () => {
     render(<WorkspaceOverview workspace={workspace} flow={{ published: null }} analytics={analytics} recentCalls={[]} />);
-    expect(screen.getAllByText("America/Chicago").length).toBeGreaterThan(0);
-    expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("-11.4 pts vs previous period")).toBeVisible();
+    expect(screen.getByText("the last 30 days in America/Chicago")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("-11.4 pts")).toBeVisible();
     expect(within(screen.getByRole("region", { name: "Leads generated" })).getByRole("list", { name: "Chart legend" })).toBeVisible();
     fireEvent.click(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "7 Days" }));
     expect(router.push).toHaveBeenCalledWith("/workspaces/workspace-1?range=7d", { scroll: false });
@@ -323,6 +352,7 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
     render(<WorkspaceOverview workspace={archived} flow={{ published: null }} analytics={analytics} routingHealth={{ ...healthy, webhook: { status: "Not applicable", lastAcceptedVoiceWebhookAt: null } }} />);
     expect(screen.getByText("Archived Oct 1, 2026. Historical analytics and Calls stay readable; routing is read-only.")).toBeVisible();
     expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("17")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Restore" })).toHaveAttribute("href", "/workspaces/workspace-1/settings/danger");
     expect(screen.queryByRole("link", { name: "Edit Flow" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Review Number Settings" })).not.toBeInTheDocument();
   });
@@ -337,6 +367,23 @@ it("shows a read-only Overview without Operator actions for a Client Viewer", ()
   });
 });
 
+describe("WorkspaceOverview Setup Required checklist", () => {
+  it("shows each requirement's state as an icon with accessible text", () => {
+    const setup = { ...workspace, state: "Setup Required" as const, trackingNumber: null, publishedFlowVersion: null };
+    render(<WorkspaceOverview workspace={setup} flow={{ published: null }} analytics={analytics} />);
+    const items = within(screen.getByRole("region", { name: "Setup Required" })).getAllByRole("listitem");
+    expect(items.map((item) => [item.querySelector("[data-requirement]")?.textContent, within(item).getByText(/^(Complete|Incomplete)$/).textContent])).toEqual([
+      ["Tracking Number", "Incomplete"],
+      ["Destination Number", "Complete"],
+      ["Published Call Flow", "Incomplete"],
+    ]);
+    for (const item of items) {
+      expect(item.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      expect(within(item).getByText(/^(Complete|Incomplete)$/)).toHaveClass("sr-only");
+    }
+  });
+});
+
 describe("WorkspaceOverview voice restore notice", () => {
   it("names the number whose Twilio voice settings were not restored while setup is incomplete", () => {
     const setup = { ...workspace, state: "Setup Required" as const, trackingNumber: null, publishedFlowVersion: null, voiceRestoreNeeded: "+14155550101" };
@@ -345,32 +392,30 @@ describe("WorkspaceOverview voice restore notice", () => {
   });
 });
 
-describe("WorkspaceOverview money tiles", () => {
+describe("WorkspaceOverview money", () => {
   const money = { month: "October 2026", costCents: 878, profitCents: 4122, deal: { id: "deal-1", workspaceId: "workspace-1", kind: "Per Lead" as const, amountCents: 2500, startedOn: "2026-10-01", endedOn: null, createdAt: "", updatedAt: "" } };
 
-  it("adds Monthly Cost with the yearly projection and Profit with the Deal to the Scorecard for Operators", () => {
+  it("adds Profit to the stat strip for Operators with the Monthly Cost and Deal on one line beneath it", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: linkedSite, summary: siteSummary, searchScore: 42 }} money={money} />);
-    const cost = within(screen.getByRole("group", { name: "Monthly Cost" }));
-    expect(cost.getByText("$8.78")).toBeVisible();
-    expect(cost.getByText("Projected $105.36 per year")).toBeVisible();
-    const profit = within(screen.getByRole("group", { name: "Profit" }));
-    expect(profit.getByText("$41.22")).toHaveClass("text-success");
-    expect(profit.getByText("Per Lead, $25.00 per Good Lead, since Oct 1, 2026")).toBeVisible();
-    expect(screen.getByRole("group", { name: "Visits" })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Profit" })).getByText("$41.22")).toHaveClass("text-success");
+    expect(screen.getByText("Monthly Cost $8.78, projected $105.36 per year. Deal: Per Lead, $25.00 per Good Lead, since Oct 1, 2026.")).toBeVisible();
+    expect(screen.getAllByRole("group").map((group) => group.getAttribute("aria-labelledby") && document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent)).toEqual(
+      expect.arrayContaining(["Total Calls", "Answer Rate", "Good Leads", "Average Duration", "Visit-to-Call", "Profit"]),
+    );
   });
 
-  it("shows the money tiles without a Site and a loss in the destructive color", () => {
+  it("shows Profit without a Site and a loss in the destructive color", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} site={{ record: null, summary: null }} money={{ ...money, profitCents: -878, deal: null }} />);
-    expect(screen.queryByRole("group", { name: "Visits" })).not.toBeInTheDocument();
-    const profit = within(screen.getByRole("group", { name: "Profit" }));
-    expect(profit.getByText("-$8.78")).toHaveClass("text-destructive");
-    expect(profit.getByText("No Deal")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Visit-to-Call" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Profit" })).getByText("-$8.78")).toHaveClass("text-destructive");
+    expect(screen.getByText("Monthly Cost $8.78, projected $105.36 per year. Deal: No Deal.")).toBeVisible();
   });
 
-  it("never shows money to a Client Viewer", () => {
-    render(<WorkspaceOverview workspace={workspace} analytics={analytics} readOnly site={{ record: linkedSite, summary: siteSummary }} />);
-    expect(screen.queryByRole("group", { name: "Monthly Cost" })).not.toBeInTheDocument();
+  it("never shows cost, profit, or the Deal to a Client Viewer", () => {
+    render(<WorkspaceOverview workspace={workspace} analytics={analytics} readOnly site={{ record: linkedSite, summary: siteSummary }} money={money} />);
     expect(screen.queryByRole("group", { name: "Profit" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Monthly Cost/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Per Lead/)).not.toBeInTheDocument();
   });
 });
 
@@ -388,15 +433,13 @@ describe("WorkspaceOverview Business", () => {
     updatedAt: "2026-10-20T00:00:00.000Z",
   };
 
-  it("shows the Business and its city map to Operators below Leads generated", () => {
+  it("shows the Business and its city map to Operators in the rail", () => {
     render(<WorkspaceOverview workspace={workspace} analytics={analytics} business={business} />);
     const region = screen.getByRole("region", { name: "Business" });
     const panel = within(region);
     expect(panel.getByText("Pocatello Asphalt Paving")).toBeVisible();
     expect(panel.getByText("Dana Reyes")).toBeVisible();
-    expect(panel.getByText("dana@example.com")).toBeVisible();
     expect(panel.getByText("Asphalt paving")).toBeVisible();
-    expect(panel.getByRole("link", { name: "https://pocatelloasphaltpaving.com" })).toHaveAttribute("href", "https://pocatelloasphaltpaving.com");
     expect(panel.getByText("Pocatello, Idaho")).toBeVisible();
     expect(panel.getByRole("img", { name: "Map of Pocatello, Idaho" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Leads generated" }).compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

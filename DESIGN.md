@@ -607,89 +607,55 @@ If the Workspace record is created but external configuration does not complete,
 
 ## Workspace Overview
 
+Workspace Overview answers how one Workspace is doing and whether it is routing. It was rebuilt in M28 as the Briefing layout scoped to one Workspace, with a right rail the Product Owner chose from a three-way prototype (Briefing, Health first, Side rail), from the parts in Foundations, capped at `max-w-6xl`.
+
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Dashboard grid
-3. **Container family:** Frame-led
+2. **Archetype:** Briefing with a right rail
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Workspace header, KPI row, trend chart, Business (Operator only), routing health and Call Flow summary, recent Calls
+5. **Regions:** `PageHeader`, one `StatStrip`, then a main column (Leads generated, Recent Calls) two thirds wide beside a rail (Routing health, Site, Call Flow, Business)
 6. **States:** Region-level Skeleton, Empty, and Retry states
 7. **Motion:** None
 
 ### Header
 
-- Workspace name
-- Workspace State Badge
-- Tracking Number
-- Destination Number
-- Reporting timezone
-- Date controls: 7 Days, 30 Days, 90 Days, All Time, and Custom
-- Operator primary action: Edit Flow
-- Client Viewer primary action: Generate Report
-- Secondary action: Workspace Settings for Operators or Reports for Client Viewers
+- Title: the Workspace name
+- Description: the Workspace State Badge and one phrase naming the range and reporting timezone, such as `the last 30 days in America/Chicago`; while setup is incomplete, the timezone alone
+- Controls on the same row: the date range (7 Days, 30 Days, 90 Days, All Time, and Custom), hidden while setup is incomplete
+- Operators: Workspace Settings, then Edit Flow (Active), Resume Setup (Setup Required), or Restore (Archived)
+- Client Viewers: Reports and Generate Report scoped to this Workspace and its reporting timezone
 
-### Scorecard
+### Stat strip
 
-Above the Call analytics, one row of six dense tiles summarizes the business (the row the shell prototype settled on). Tiles whose milestone has not shipped are omitted, never shown empty:
+1. **Total Calls**
+2. **Answer Rate**
+3. **Good Leads**, with the Forms share in the hover definition
+4. **Average Duration**
+5. **Visit-to-Call** when a Site is linked: Calls divided by the Site's Visits, with both counts in the hover definition
+6. **Profit** (Operator only), in the success color when positive and the destructive color when negative
 
-1. **Visits** over the range, from the linked Site
-2. **Calls**
-3. **Visit-to-Call:** Calls divided by Visits, in the brand accent
-4. **Search Visibility** (M21), with `of 100`
-5. **Monthly Cost** (M22, Operator only), with the yearly projection beneath
-6. **Profit** (M22, Operator only), with the Deal beneath
+The Call stats use Home's definitions and show their change against the preceding period. For Operators, one muted line beneath the strip names the Monthly Cost with its yearly projection and the Deal. Client Viewers never see cost, profit, or the Deal.
 
-Without a linked Site the row shows only the tiles that need no Site, and the Site summary panel offers Link Site.
+### Main column
 
-### Site summary
+- **Leads generated:** the same four-series chart as Home in the Workspace reporting timezone. Workspace Overview does not include the fleet-level Workspace performance grid.
+- **Recent Calls:** the five newest Calls, each a `ListRow` with the caller number (or `Unknown caller`), the short start time with the full timestamp on hover, the connected duration, and the Call Outcome badge. A row opens Call Detail; the panel action `View Calls` opens Workspace Calls over the current range.
 
-One compact panel between the Scorecard and the analytics: the preview thumbnail, primary hostname, Site Health Badge, uptime over 30 days, and last deployment, linking to the Site page. Without a Site Link it is an Empty state with Link Site for Operators and a one-line explanation for Client Viewers.
+### Rail
 
-### Analytics
-
-Use the same definitions and visual order as Home:
-
-1. Total Calls
-2. Answer Rate
-3. Good Leads
-4. Average Connected Duration
-
-The three-series chart shows Total Calls, Answered Calls, and Good Leads. Workspace Overview does not include the fleet-level Workspace performance grid.
-
-### Business
-
-Operators see one panel below Leads generated with the same Business fields as Site settings (name, contact, email, niche, website, and city) beside the city's location map, with Edit Business opening Site settings. Without a Business it shows a one-line explanation. Client Viewers never see it.
-
-### Routing health
-
-Show one compact Frame with:
-
-- Current Tracking Number and Number Assignment start
-- Destination Number
-- Twilio webhook health
-- Last successful inbound Call
-- Recording setting
-- Spam gate setting
-- Whisper setting
-- Active Call Flow publication time
-
-Lifecycle state and health remain separate. An Active Workspace can still show an integration warning that needs attention.
-
-### Call Flow summary
-
-Render the published graph read-only as a spine rather than the editable canvas: the main path (next, Open, Pass, Answered) runs top to bottom, each step with its icon, title, and detail line, and every other branch hangs beneath its step as an exit chip naming the branch in its tone and where it leads (the Outcome, or the steps on the way to it). The panel heading carries the version Badge and, for Operators of an Active Workspace, Open Flow.
-
-### Recent Calls
-
-Show the five newest Calls with Call Outcome, caller, start time, connected duration, and effective lead classification. Selecting a row opens Call Detail. `View Calls` opens Workspace Calls with the active date range preserved.
+- **Routing health:** the Twilio webhook health Badge in the panel header; the Tracking Number, Destination Number, last successful inbound Call, and Number Assignment start as a two-column fact list; and the Recording, Spam gate, and Whisper settings on one muted line. A webhook Warning appears inside the panel with an Operator-only Review Number Settings action. Lifecycle state and health remain separate.
+- **Site:** the preview thumbnail, primary hostname, and Site Health Badge, then Visits, Search Visibility (`42 of 100`, or `No score yet`), the last check, and the last deploy. The panel action `View Site` opens the Site page. Without a Site Link the panel is one line, `No Site is linked to this Workspace.`, with Link Site for Operators.
+- **Call Flow:** the published graph read-only as a spine: the main path (next, Open, Pass, Answered) runs top to bottom, each step with its icon, title, and detail line, and every other branch hangs beneath its step as an exit chip naming the branch in its tone and where it leads. The panel header carries the version Badge and, for Operators of an Active Workspace, Open Flow.
+- **Business** (Operator only): the Business name, contact, niche, and city above the city's location map, with Edit Business opening Site settings. Without a Business it shows a one-line explanation.
 
 ### States
 
-- **Setup Required:** Replace live analytics emphasis with a Resume Setup action and a checklist of incomplete requirements.
-- **No Calls:** Keep configuration visible and show zero-value analytics with an explanatory Empty state.
+- **Setup Required:** No stat strip or chart. A Setup Required panel lists each requirement with a check icon when complete and an empty circle when not, each with its state as screen-reader text, above the rail panels.
+- **No Calls:** Keep configuration visible and explain that Calls appear after the first inbound Call.
 - **Routing warning:** Keep analytics usable and isolate the warning in routing health with an Operator-only recovery action.
-- **Archived:** Keep historical analytics and Calls readable, label the archived period, and remove live-routing actions.
+- **Archived:** Keep historical analytics and Calls readable, label the archived date beneath the header, offer Restore only to Operators, and remove live-routing actions.
 
 ## Site
 
