@@ -296,7 +296,8 @@ test.describe.serial("simulated Twilio lifecycle", () => {
         for (const tile of tiles) await expect(tile).toBeVisible();
         const tops = await Promise.all(tiles.map(async (tile) => (await tile.boundingBox())!.y));
         const columns = tops.filter((top) => Math.abs(top - tops[0]) < 1).length;
-        expect(columns).toBe(viewport.width < 640 ? 1 : viewport.width < 1280 ? 2 : 4);
+        const homeColumns = viewport.width < 640 ? 2 : viewport.width < 1280 ? 3 : 4;
+        expect(columns).toBe(path === "/" ? homeColumns : viewport.width < 640 ? 1 : viewport.width < 1280 ? 2 : 4);
         await expect(page.getByRole("region", { name: "Leads generated" }).getByRole("list", { name: "Chart legend" })).toBeVisible();
         await expectReachable(page.getByRole("link", { name: "View Calls" }));
         await expectNoHorizontalPageScroll(page);

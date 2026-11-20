@@ -124,7 +124,7 @@ export function Panel({ title, action, children, className, ...props }: Omit<Com
     <section
       role={title ? "region" : undefined}
       aria-labelledby={title ? id : undefined}
-      className={cn("flex flex-col rounded-lg border border-border bg-card", className)}
+      className={cn("relative flex flex-col overflow-hidden rounded-lg border border-border bg-card", className)}
       {...props}
     >
       {title ? (

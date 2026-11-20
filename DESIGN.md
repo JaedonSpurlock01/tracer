@@ -188,7 +188,7 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 ### Responsive behavior
 
 - At widths below `md`, the Sidebar becomes a Sheet.
-- KPI grids collapse to one column, then two columns, before reaching four columns at wide sizes.
+- KPI grids collapse to one column, then two columns, before reaching four columns at wide sizes. A `StatStrip` shows two columns, three from `sm`, and every stat in one row from `xl`.
 - Record-detail side columns stack below the main content.
 - Data grids scroll within their Frame and never create horizontal page scrolling.
 - Every action remains reachable at 390px; actions removed from a toolbar move into an overflow menu.
@@ -233,44 +233,38 @@ Workspace creation, user provisioning, report generation, and export requests us
 
 ## Home
 
+Home answers one question: how is every Workspace doing in this range. It was rebuilt in M26 as the Briefing layout the Product Owner chose from a three-way prototype, from the parts in Foundations, capped at `max-w-6xl`.
+
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Dashboard grid
-3. **Container family:** Frame-led
+2. **Archetype:** Briefing
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Header and date controls, KPI row, trend chart, Workspace performance, recent Calls
+5. **Regions:** `PageHeader`, one `StatStrip`, Leads generated beside Recent Calls, then Workspaces
 6. **States:** Region-level Skeleton, Empty, and Retry states
 7. **Motion:** None
 
 ### Header
 
 - Title: `Home`
-- Description: one clause describing the active scope
-- Scope indicator: All Workspaces or the accessible Workspace count
-- Date controls: 7 Days, 30 Days, 90 Days, All Time, and Custom
-- Primary action: Generate Report
+- Description: one sentence naming the scope and the range, such as `All Workspaces, the last 7 days.` or `3 Workspaces, all time.`
+- Controls on the same row: the date range (7 Days, 30 Days, 90 Days, All Time, and Custom) and Generate Report
 
-### KPI row
+### Stat strip
 
-1. **Total Calls:** Count in the selected period
+1. **Total Calls:** count in the selected period
 2. **Answer Rate:** Answered Calls divided by eligible forwarding attempts
-3. **Good Leads:** Calls and Form Submissions classified as Good Lead, using Lead Review before Lead Assessment, with a muted `N from Forms` line beneath the value when any are Form Submissions
-4. **Average Duration:** Average connected talk time, excluding prompts and ringing
+3. **Good Leads:** Calls and Form Submissions classified as Good Lead, using Lead Review before Lead Assessment; the hover definition says how many came from Forms
+4. **Average Duration:** average connected talk time, excluding prompts and ringing
+5. **Monthly Revenue** (Operator only): the projected revenue of open Deals in scope this calendar month
+6. **Profit** (Operator only): revenue minus cost, in the success color when positive and the destructive color when negative
 
-Each KPI includes a comparison with the immediately preceding period of equal length. The value is the focal point; comparison and definition remain secondary.
-
-### Money row (M22, Operator only)
-
-A second row of three tiles below the KPI row, hidden from Client Viewers:
-
-1. **Monthly Cost:** this calendar month's projected cost across the Workspaces in scope, with the yearly projection beneath
-2. **Monthly Revenue:** the projected revenue of open Deals in scope
-3. **Profit:** revenue minus cost, shown in the success color when positive and the destructive color when negative
-
-Workspace performance gains Cost and Revenue columns for Operators.
+Each Call stat shows its change against the immediately preceding period of equal length when one exists. For Operators, one muted line beneath the strip names the Monthly Cost with its yearly projection and links the Pricing guide. Client Viewers never see cost, revenue, or profit.
 
 ### Leads generated
+
+Two thirds of the row at `lg` and wider, full width below.
 
 - Four line series: Total Calls, Answered Calls, Good Leads (Calls and Form Submissions together), and Forms (every Form Submission received, M23)
 - Daily points for 7-day and 30-day ranges
@@ -280,40 +274,20 @@ Workspace performance gains Cost and Revenue columns for Operators.
 - Tooltip values always include the period label and explicit series name
 - Legend remains visible and does not rely on color alone
 
-### Workspace performance
-
-Show this region only when the user can access more than one Workspace.
-
-Columns:
-
-- Workspace
-- Tracking Number
-- Total Calls
-- Answer Rate
-- Good Leads
-- Lead Rate
-
-Rows sort by Total Calls by default. Selecting a row opens that Workspace Overview.
-
 ### Recent Calls
 
-Show the five newest Calls in scope with:
+The remaining third beside the chart. The five newest Calls in scope, each a `ListRow`: the caller number (or `Unknown caller`), then the Workspace, the short start time with the full timestamp on hover, and the connected duration on the detail line. The badge on the right is the effective Lead classification, or the Call Outcome when there is none. A row opens Call Detail with the global Calls list as its source. The panel action `View Calls` opens Calls with the current range as the Started filter.
 
-- Outcome
-- Caller number
-- Workspace
-- Start time
-- Connected duration
-- Effective lead classification
+### Workspaces
 
-Selecting a row opens Call Detail. A `View Calls` secondary action opens the Calls page with the current scope and date range preserved.
+Shown only when the user can access more than one Workspace. One `ListRow` per Workspace: the name, the Tracking Number (or `No Tracking Number`) beneath it, and on the right the Calls, then the Good Leads and the answer rate when there were Calls (both hidden below `sm` so the name stays readable), and, for Operators, this month's profit. A row opens that Workspace Overview. The panel action `View all` opens Workspaces.
 
 ### States
 
 - **No Workspaces, Operator:** Explain that Tracer needs an imported Twilio number and offer `Create Workspace`.
-- **No Calls:** Keep KPI values at zero and explain that activity appears after the first inbound Call.
-- **Loading:** Use KPI, chart, and row Skeletons in their final layouts.
-- **Partial error:** Fail only the affected region and show Retry without blanking the page.
+- **No Calls:** Keep the stats at zero (`None` where a rate or average cannot be computed) and explain that activity appears after the first inbound Call.
+- **Loading:** A range change shows the strip and chart as Skeletons in their final layout.
+- **Partial error:** Fail only the affected region and show Retry without blanking the page. Without analytics, Recent Calls spans the full width.
 
 ## Activity
 

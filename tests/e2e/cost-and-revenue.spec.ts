@@ -1,11 +1,12 @@
 /**
  * -------------------------------------------------------------------------
  * @file   cost-and-revenue.spec.ts
- * @brief  Covers the Deal editor, the Home Money row, and the Client Viewer boundary.
+ * @brief  Covers the Deal editor, the money on Home, and the Client Viewer boundary.
  *
  * @description
  *  An Operator activates a Workspace, adds a Monthly Deal from Site
- *  settings, and reads Monthly Cost, Monthly Revenue, and Profit on Home,
+ *  settings, and reads Monthly Revenue and Profit in the Home stat strip
+ *  with the Monthly Cost line beneath it,
  *  the Profit tile with the Deal on the Workspace Overview, and the
  *  Pricing guide. A Client Viewer granted that Workspace then sees none
  *  of cost, revenue, or profit, gets 403 from the Deal route, and Not
@@ -62,8 +63,7 @@ test.describe.serial("Cost and revenue", () => {
 
     await page.goto("/");
     const money = /-?\$[\d,]+\.\d{2}/;
-    await expect(page.getByRole("group", { name: "Monthly Cost" })).toContainText(money);
-    await expect(page.getByRole("group", { name: "Monthly Cost" })).toContainText(/Projected \$[\d,]+\.\d{2} per year/);
+    await expect(page.getByText(/Monthly Cost \$[\d,]+\.\d{2}, projected \$[\d,]+\.\d{2} per year\./)).toBeVisible();
     await expect(page.getByRole("group", { name: "Monthly Revenue" })).toContainText(money);
     await expect(page.getByRole("group", { name: "Profit" })).toContainText(money);
     await page.getByRole("link", { name: "Pricing guide" }).click();

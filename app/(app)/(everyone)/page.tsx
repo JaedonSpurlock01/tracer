@@ -34,7 +34,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { resolveRequestActor } from "@/app/(app)/actor";
 import { withRequestRuntime } from "@/app/(app)/runtime";
-import HomePrototype from "@/components/tracer/prototype/home-variants.prototype";
+import HomeDashboard from "@/components/tracer/home-dashboard";
 import { analyticsCallsHref, analyticsRangeFromSearchParams, calendarDateInTimeZone } from "@/data/analytics-range";
 import { loadHomePage } from "@/data/page-loaders";
 import { canManageWorkspaces } from "@/data/workspace-authorization";
@@ -43,15 +43,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
   const actor = await resolveRequestActor();
   if (actor?.state !== "Active") notFound();
   const operator = canManageWorkspaces(actor);
-  const query = await searchParams;
-  const range = analyticsRangeFromSearchParams(query);
+  const range = analyticsRangeFromSearchParams(await searchParams);
   const data = await withRequestRuntime((runtime) => loadHomePage(runtime, actor, range));
   if ("onlyWorkspaceId" in data) redirect(`/workspaces/${data.onlyWorkspaceId}`);
   if ("noWorkspaces" in data) redirect("/workspaces");
 
   return (
-    <HomePrototype
-      variant={typeof query.variant === "string" ? query.variant : "current"}
+    <HomeDashboard
       operator={operator}
       workspaceCount={data.workspaceCount}
       range={range}
