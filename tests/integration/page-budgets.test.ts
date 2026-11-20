@@ -30,7 +30,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createTestDatabase } from "./test-database";
 
-import { activityFiltersFromSearchParams } from "@/data/activity-query";
 import { analyticsRangeFromSearchParams } from "@/data/analytics-range";
 import { resolveActor, type Actor } from "@/data/authorization";
 import { bootstrapInitialOperator } from "@/data/bootstrap-initial-operator";
@@ -40,7 +39,6 @@ import type { DataForSeoClient } from "@/data/dataforseo-client";
 import { migrateDatabase } from "@/data/migrate";
 import { createOrganizationRepository } from "@/data/organization-repository";
 import {
-  loadActivityPage,
   loadCallsPage,
   loadHomePage,
   loadIntegrationsPage,
@@ -93,7 +91,6 @@ const budgets = {
   integrations: { waves: 2, queries: 12 },
   calls: { waves: 3, queries: 8 },
   workspaceCalls: { waves: 3, queries: 8 },
-  activity: { waves: 3, queries: 8 },
 } as const;
 
 function auth(connection: Database) {
@@ -219,9 +216,5 @@ describe.sequential("page budgets", () => {
 
   it("loads Workspace Calls within budget", async () => {
     await workspaceNavigation("workspaceCalls", (connection) => loadWorkspaceCallsPage(runtimeFor(connection), actor, workspaceId, callListQueryFromSearchParams({})));
-  });
-
-  it("loads Activity within budget", async () => {
-    await navigation("activity", (connection) => Promise.all([layoutReads(connection), loadActivityPage(runtimeFor(connection), actor, activityFiltersFromSearchParams({}))]));
   });
 });

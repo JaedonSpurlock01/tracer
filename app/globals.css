@@ -431,24 +431,8 @@
  * wrapper adds only while components/tracer/line-art.tsx has motion on, and
  * only for viewers who have not asked for reduced motion. Every rule moves
  * an element the static drawing already contains.
- *
- * Radar: the sweep sits on an isometric orbit (rx 84, ry 34). Squashing the
- * plane to a circle, rotating, and stretching it back keeps the sweep's tip
- * on the ellipse for every angle, so no path has to be recomputed.
  */
 @media (prefers-reduced-motion: no-preference) {
-  .line-art-motion .line-art-radar {
-    transform-box: view-box;
-    transform-origin: 100px 70px;
-    animation: line-art-radar 6s linear infinite;
-  }
-
-  .line-art-motion .line-art-ping {
-    transform-box: view-box;
-    transform-origin: 100px 70px;
-    animation: line-art-ping 6s ease-out infinite;
-  }
-
   .line-art-motion .line-art-float {
     animation: line-art-float 4s ease-in-out infinite;
   }
@@ -457,27 +441,6 @@
     transform-box: fill-box;
     transform-origin: center;
     animation: line-art-spin 8s ease-in-out infinite;
-  }
-}
-
-@keyframes line-art-radar {
-  from {
-    transform: scaleY(0.40476) rotate(0deg) scaleY(2.47059);
-  }
-  to {
-    transform: scaleY(0.40476) rotate(-360deg) scaleY(2.47059);
-  }
-}
-
-@keyframes line-art-ping {
-  0% {
-    transform: scale(0.1);
-    opacity: 0.6;
-  }
-  70%,
-  100% {
-    transform: scale(1);
-    opacity: 0;
   }
 }
 

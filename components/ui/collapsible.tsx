@@ -17,7 +17,6 @@
  *  is truly zero tall and focus rings have room.
  *
  * @see
- *  components/tracer/activity-view.tsx
  *  components/tracer/call-detail-view.tsx
  *
  * @author Jaedon Spurlock

@@ -72,7 +72,6 @@ export function BreadcrumbLabel({ segment, label }: { segment: string; label: st
 }
 
 const staticLabels: Readonly<Record<string, string>> = {
-  activity: "Activity",
   calls: "Calls",
   workspaces: "Workspaces",
   reports: "Reports",

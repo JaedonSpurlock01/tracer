@@ -4,10 +4,10 @@
  * @brief  Renders the Reports page and the Workspace Reports tab.
  *
  * @description
- *  A Frame-led page with the Reports header and Generate Report, then the
- *  requester's report history in a Data Grid with the DESIGN columns:
- *  Requested, Requested By, Scope, Period, Files, Status, Expires, and row
- *  actions. Rows offer Download for each completed file, Regenerate when
+ *  A page header with Generate Report on the same row, then the
+ *  requester's report history in one Panel holding a Data Grid of
+ *  single-line rows: Requested, Scope, Period, Files, Status, Expires, and
+ *  row actions. Rows offer Download for each completed file, Regenerate when
  *  the server allows it, named Retry for a Failed job, and View
  *  Parameters, which shows the stored scope, timezone, period or Calls
  *  filters, and files readably. History shows Skeleton rows while it
@@ -23,7 +23,13 @@
  *  on mount and which polls while a job is Queued or Generating, so the
  *  popover and the grid always agree. Report history also lists Calls
  *  exports, because the API returns every job the requester made. A
- *  regenerated job is added from its response. Times use the scope's
+ *  regenerated job is added from its response. Every job in the history is
+ *  the viewer's own, so Requested By lives in View Parameters rather than
+ *  a column. Requested shows the short time with the full timestamp as its
+ *  hover title, a long Period or Failed reason truncates with the full text
+ *  as its title, and a job without an expiry names it None. Download
+ *  buttons show an icon and the file label, named Download and the label
+ *  for assistive technology, so every row fits one line at 1440px. Times use the scope's
  *  timezone: the account's on global Reports and the Workspace's on
  *  Workspace Reports.
  *
@@ -39,6 +45,7 @@
 "use client";
 
 import Link from "next/link";
+import { DownloadIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTable, type ColumnDef, type PaginationState } from "@tanstack/react-table";
 
@@ -47,13 +54,13 @@ import { DataGrid, dataGridFeatures, type DataGridFeatures } from "@/components/
 import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagination";
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
-import { Frame, FramePanel } from "@/components/reui/frame";
 import { EmptyState } from "@/components/tracer/empty-state";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { NoReportsArt } from "@/components/tracer/line-art";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCallDate, formatCallTime } from "@/components/tracer/call-format";
+import { formatCallDate, formatCallTime, formatShortTime } from "@/components/tracer/call-format";
 import { GenerateReportDialog, type GenerateReportScope } from "@/components/tracer/generate-report-dialog";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import {
@@ -195,25 +202,40 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
       {
         id: "requested",
         header: "Requested",
-        cell: ({ row }) => <span className="tabular-nums">{formatCallTime(row.original.requestedAt, timeZone)}</span>,
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        cell: ({ row }) => (
+          <span title={formatCallTime(row.original.requestedAt, timeZone)} className="whitespace-nowrap tabular-nums">
+            {formatShortTime(row.original.requestedAt, timeZone)}
+          </span>
+        ),
+        size: 100,
+        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
       },
-      { id: "requestedBy", header: "Requested By", cell: ({ row }) => row.original.requestedBy, size: 160, meta: { skeleton: <Skeleton className="h-4 w-28" /> } },
-      { id: "scope", header: "Scope", cell: ({ row }) => jobScopeLabel(row.original), size: 200, meta: { skeleton: <Skeleton className="h-4 w-32" /> } },
+      {
+        id: "scope",
+        header: "Scope",
+        cell: ({ row }) => {
+          const label = jobScopeLabel(row.original);
+          return <span title={label} className="block truncate">{label}</span>;
+        },
+        size: 140,
+        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+      },
       {
         id: "period",
         header: "Period",
-        cell: ({ row }) => <span className="tabular-nums">{jobPeriodLabel(row.original)}</span>,
-        size: 280,
+        cell: ({ row }) => {
+          const label = jobPeriodLabel(row.original);
+          return <span title={label} className="block truncate tabular-nums">{label}</span>;
+        },
+        size: 260,
         meta: { skeleton: <Skeleton className="h-4 w-48" /> },
       },
       {
         id: "files",
         header: "Files",
-        cell: ({ row }) => row.original.files.map(({ file }) => fileLabels[file]).join(", "),
-        size: 100,
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        cell: ({ row }) => <span className="whitespace-nowrap">{row.original.files.map(({ file }) => fileLabels[file]).join(", ")}</span>,
+        size: 80,
+        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         id: "status",
@@ -221,31 +243,40 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
         cell: ({ row }) => {
           const status = jobDisplayStatus(row.original, checkedAt);
           return (
-            <div className="flex flex-col items-start gap-1">
+            <div className="flex min-w-0 items-center gap-2">
               <Badge variant={statusVariants[status]}>{status}</Badge>
-              {status === "Failed" && row.original.failureReason ? <span className="text-xs text-muted-foreground">{row.original.failureReason}</span> : null}
+              {status === "Failed" && row.original.failureReason ? (
+                <span title={row.original.failureReason} className="truncate text-xs text-muted-foreground">
+                  {row.original.failureReason}
+                </span>
+              ) : null}
             </div>
           );
         },
-        size: 200,
+        size: 140,
         meta: { skeleton: <Skeleton className="h-5 w-20" /> },
       },
       {
         id: "expires",
         header: "Expires",
-        cell: ({ row }) => <span className="tabular-nums">{row.original.expiresAt ? formatCallDate(row.original.expiresAt, timeZone) : "-"}</span>,
-        size: 130,
+        cell: ({ row }) =>
+          row.original.expiresAt ? (
+            <span className="whitespace-nowrap tabular-nums">{formatCallDate(row.original.expiresAt, timeZone)}</span>
+          ) : (
+            <span className="text-muted-foreground">None</span>
+          ),
+        size: 100,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: "actions",
         header: "Actions",
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 whitespace-nowrap">
             {row.original.files.map((file) =>
               file.downloadable && file.href ? (
-                <a key={file.file} className={buttonVariants({ variant: "ghost", size: "sm" })} href={file.href} download>
-                  Download {fileLabels[file.file]}
+                <a key={file.file} className={buttonVariants({ variant: "ghost", size: "sm" })} href={file.href} download aria-label={`Download ${fileLabels[file.file]}`}>
+                  <DownloadIcon aria-hidden /> {fileLabels[file.file]}
                 </a>
               ) : null,
             )}
@@ -259,7 +290,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
             </Button>
           </div>
         ),
-        size: 380,
+        size: 312,
         meta: { skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ];
@@ -296,33 +327,29 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
   );
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-          <p className="text-sm text-muted-foreground">
-            {workspace ? `Reports and exports covering ${workspace.name}.` : "Reports and exports you requested. Files stay downloadable for 7 days."}
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader title="Reports" description={workspace ? `Reports and exports covering ${workspace.name}.` : "Reports and exports you requested. Files stay downloadable for 7 days."}>
         <Button type="button" onClick={() => setGenerateOpen(true)}>
           Generate Report
         </Button>
-      </div>
-      <Frame>
-        <FramePanel className="flex flex-col gap-4">
-          {actionError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {actionError}
-            </p>
+      </PageHeader>
+      <Panel>
+        {actionError ? (
+          <p role="alert" className="border-b border-border px-4 py-3 text-sm text-destructive">
+            {actionError}
+          </p>
+        ) : null}
+        <DataGrid table={table} recordCount={rows.length} isLoading={loading} emptyMessage={emptyMessage}>
+          <DataGridScrollArea orientation="horizontal">
+            <DataGridTable />
+          </DataGridScrollArea>
+          {rows.length > pageSize ? (
+            <div className="border-t border-border px-4 py-2">
+              <DataGridPagination sizes={[pageSize]} />
+            </div>
           ) : null}
-          <DataGrid table={table} recordCount={rows.length} isLoading={loading} emptyMessage={emptyMessage}>
-            <DataGridScrollArea orientation="horizontal">
-              <DataGridTable />
-            </DataGridScrollArea>
-            {rows.length > pageSize ? <DataGridPagination sizes={[pageSize]} /> : null}
-          </DataGrid>
-        </FramePanel>
-      </Frame>
+        </DataGrid>
+      </Panel>
       <GenerateReportDialog scope={scope} open={generateOpen} onOpenChange={setGenerateOpen} />
       <ParametersDialog job={parametersJob} timeZone={timeZone} checkedAt={checkedAt} onClose={() => setParametersJob(null)} />
     </div>

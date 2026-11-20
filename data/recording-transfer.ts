@@ -34,7 +34,8 @@
  *  a later change never backfills it. The Stored commit appends Recording
  *  transferred, and Transcript skipped when analysis is skipped, and a
  *  failed download, upload, or verify appends one Recording transfer
- *  failed event, so a Twilio cleanup failure never reaches Activity.
+ *  failed event, so a Twilio cleanup failure never reaches the Call
+ *  Detail Processing timeline.
  *
  * @see
  *  data/r2-objects.ts

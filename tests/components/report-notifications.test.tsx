@@ -12,7 +12,7 @@
  *
  * @remarks
  *  Fake interval timers and a stubbed `document.visibilityState` drive the
- *  polling, as in the Activity suite.
+ *  polling, as in the Calls suite.
  *
  * @see
  *  components/tracer/report-notifications.tsx

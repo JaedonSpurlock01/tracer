@@ -15,9 +15,9 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M26 - Home Briefing, started on 2026-11-19
-- **Next milestone:** M27 - Calls Absorbs Activity, then M28 through M30 in order
-- **Last completed:** M25 - Interface Foundations, on 2026-11-19
+- **Current milestone:** M27 - Calls Absorbs Activity, started on 2026-11-19
+- **Next milestone:** M28 - Workspace Overview Briefing, then M29 and M30 in order
+- **Last completed:** M26 - Home Briefing, on 2026-11-19
 - **Paused:** M18 - Production Hardening and Acceptance, deferred by the Product Owner on 2026-11-18 for the Experience Overhaul. M24's Staging gate and M19 wait behind it
 - **Why the plan changed:** the Product Owner reviewed the running application on 2026-11-18 and found it clunky and unfinished to use. Interface polish had been arriving as one-line additions to M18, which made M18 a catch-all and never addressed how whole pages read. The Experience Overhaul is its own phase so the interface is planned and verified as product work
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production deployed from `main` on 2026-11-18 ahead of M19 for Product Owner acceptance, with Production data empty since 2026-10-24
@@ -192,8 +192,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M22 | Cost and Revenue | Complete | Preview and Staging | M21 |
 | M23 | Form Submissions | Complete | Preview and Staging | M22 |
 | M25 | Interface Foundations | Complete | Local and Preview | M23 |
-| M26 | Home Briefing | In Progress | Preview and Staging | M25 |
-| M27 | Calls Absorbs Activity | Not Started | Preview and Staging | M26 |
+| M26 | Home Briefing | Complete | Preview and Staging | M25 |
+| M27 | Calls Absorbs Activity | In Progress | Preview and Staging | M26 |
 | M28 | Workspace Overview Briefing | Not Started | Preview and Staging | M27 |
 | M29 | Forms, Settings, and Action Feedback | Not Started | Preview and Staging | M28 |
 | M30 | Detail Pages and Experience Acceptance | Not Started | Staging | M29 |
@@ -251,12 +251,13 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M26 - Home Briefing
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Home shows the state of every readable Workspace in one screen: one stat strip, the Leads generated chart beside the latest Calls, and the Workspaces as a compact list.
 - **Depends on:** M25
 - **Target environment:** Preview and Staging
 - **Execution note:** Started on 2026-11-19. Home is rebuilt from the M25 page parts in `components/tracer/page-parts.tsx`.
 - **Progress (2026-11-19):** all three slices landed locally. Home is the Briefing layout: the header sentence names the scope and range beside the date controls and Generate Report; one stat strip holds the four Call stats and, for Operators, Monthly Revenue and Profit, with the Monthly Cost named on one line beneath it; Leads generated sits beside Recent Calls as one-line rows; the Workspaces list shows each Workspace's profit to Operators. The Home prototype and its sample data are removed and remain in commit `250fdac` as the record of the three-way comparison. `Panel` clips its contents like `FramePanel` did, because the chart's screen-reader table otherwise widened the page at 390px. The verification gate passed locally (757 unit and component tests, 571 integration tests, 14 Worker tests, typecheck, lint with no new warnings, production build). The browser journeys pass; in two full-suite runs one Calls-page step of the lifecycle journey timed out under load at a different viewport each time and passed when the file ran alone. Two journey assertions changed: Home's stat strip shows two, three, then four Call stats per row instead of one, two, then four, and the Monthly Cost is read from its line rather than a tile. M26 remains In Progress until the Product Owner accepts Home on Staging at 1440px and 390px.
+- **Completion (2026-11-19):** the Product Owner accepted Home on Staging at 1440px and 390px.
 
 #### Vertical slices
 
@@ -281,11 +282,13 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M27 - Calls Absorbs Activity
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** One Calls page serves both browsing history and watching what just happened, and every table in the application reads in single-line rows.
 - **Depends on:** M26
 - **Target environment:** Preview and Staging
 - **Execution note:** The Product Owner decided on 2026-11-18 to fold Activity into Calls because Activity showed the same Calls in a taller layout. The per-Call processing steps Activity expanded stay available on Call Detail's Processing timeline.
+- **Started:** 2026-11-19, after the Product Owner accepted M26.
+- **Progress (2026-11-19):** all four slices landed locally. Calls rows are one line of Started (short time, full timestamp on hover), Caller, Workspace, Outcome, Duration, and Lead; the Lead Score, Recording availability, Play Recording, and Download MP3 sit behind the row on Call Detail, and below `md` only Started, Caller, and Outcome show. Calls refreshes every 30 seconds while the tab is visible, keeping the page, sort, search, filters, and row elements; a failed refresh keeps the rows silently and the next one retries, so Calls shows no freshness label. Activity left the Sidebar and `/activity` redirects to `/calls` without parameters. Removed: the Activity view, page loader, `GET /api/activity`, `data/activity*.ts`, the Activity filter mode, the No Activity line art and its motion, the caller-only search Activity needed, and `/activity` as a Call Detail back source, with their tests (`activity-view`, `activity-query`, the Activity integration suite, the Activity page budget, and the caller-only neighbors case); their refresh behaviors moved to the Calls component tests. Calls, Users, Reports, Forms, and Workspaces use `PageHeader` and `Panel`. Decisions taken in the slices: Reports drops the Requested By column because the history lists only the requester's own jobs, and its downloads show an icon and file label; Forms keeps UTC times because its list carries no Workspace timezone; Workspaces shows the Destination Number on the Tracking Number's hover title instead of a second line; Users shows times in the Operator's account timezone. Browser journey changes: the lifecycle journey reaches Calls through `/activity` and no longer reads Activity, the Calls and Reports grid checks expect no grid scroll at 1440px (and at 390px for Calls), and the Client Viewer journey checks `/activity` lands on Calls without an ungranted Workspace. The verification gate passed locally (753 unit and component tests, 556 integration tests, 14 Worker tests, 22 browser journeys, typecheck, lint with no new warnings, production build). M27 remains In Progress until the Product Owner accepts Calls and the four rebuilt tables on Staging at 1440px and 390px.
 
 #### Vertical slices
 

@@ -18,7 +18,8 @@
  *  through its confirmation and downloads the completed Calls CSV. The
  *  responsive tests check Reports and the Generate Report dialog at 390px,
  *  the md breakpoint, and a wide viewport for horizontal page scroll, the
- *  history grid scrolling inside its Frame, and reachable controls.
+ *  history grid scrolling inside its Panel below 1440px and fitting
+ *  without scrolling at 1440px, and reachable controls.
  *
  * @remarks
  *  Trigger.dev does not run in the browser suite. The E2E_TRIGGER_FAKE
@@ -150,7 +151,22 @@ async function expectNoHorizontalPageScroll(page: Page): Promise<void> {
   expect(overflow, page.url()).toBeLessThanOrEqual(0);
 }
 
-async function expectGridScrollsInsideFrame(page: Page): Promise<void> {
+async function expectGridLayout(page: Page, viewport: { width: number }): Promise<void> {
+  if (viewport.width < 1440) return expectGridScrollsInsidePanel(page);
+  const overflow = await page.getByRole("table").evaluate((element) => {
+    let node = element.parentElement;
+    while (node && node !== document.body) {
+      const overflowX = getComputedStyle(node).overflowX;
+      if (overflowX === "auto" || overflowX === "scroll") return node.scrollWidth - node.clientWidth;
+      node = node.parentElement;
+    }
+    return 0;
+  });
+  expect(overflow).toBeLessThanOrEqual(0);
+  await expectNoHorizontalPageScroll(page);
+}
+
+async function expectGridScrollsInsidePanel(page: Page): Promise<void> {
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
   const scrolled = await table.evaluate((element) => {
@@ -159,15 +175,15 @@ async function expectGridScrollsInsideFrame(page: Page): Promise<void> {
       const overflowX = getComputedStyle(node).overflowX;
       if ((overflowX === "auto" || overflowX === "scroll") && node.scrollWidth > node.clientWidth) {
         node.scrollLeft = node.scrollWidth;
-        return { overflowing: true, scrollLeft: node.scrollLeft, insideFrame: node.closest("[data-slot=frame]") !== null };
+        return { overflowing: true, scrollLeft: node.scrollLeft, insidePanel: node.closest("section") !== null };
       }
       node = node.parentElement;
     }
-    return { overflowing: false, scrollLeft: 0, insideFrame: false };
+    return { overflowing: false, scrollLeft: 0, insidePanel: false };
   });
   expect(scrolled.overflowing).toBe(true);
   expect(scrolled.scrollLeft).toBeGreaterThan(0);
-  expect(scrolled.insideFrame).toBe(true);
+  expect(scrolled.insidePanel).toBe(true);
   await expectNoHorizontalPageScroll(page);
 }
 
@@ -287,7 +303,7 @@ test.describe.serial("report generation", () => {
       await expectReachable(page.getByRole("button", { name: /^Notifications/ }));
       const reportRow = page.getByRole("row").filter({ hasText: workspaceName }).filter({ hasText: "PDF, CSV" });
       await expect(reportRow).toHaveCount(1);
-      await expectGridScrollsInsideFrame(page);
+      await expectGridLayout(page, viewport);
       await expectReachable(reportRow.getByRole("button", { name: "View Parameters" }));
       await expectNoHorizontalPageScroll(page);
 

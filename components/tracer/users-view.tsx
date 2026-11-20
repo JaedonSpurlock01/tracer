@@ -5,10 +5,16 @@
  *
  * @description
  *  Loads Organization users, provides client-side search and User State
- *  filtering, and manages provisioning, delivery, and state actions.
+ *  filtering, and manages provisioning, delivery, and state actions. Each
+ *  user is one line: the name with the email beside it, Role, State, the
+ *  Workspaces the user can read, the last sign-in, and who added the user.
  *
  * @remarks
  *  Server authorization and validation remain authoritative for every action.
+ *  The last sign-in shows the short time in the given timezone, falling back
+ *  to the browser's, with the full timestamp as its hover title. Absent
+ *  values are named: Never for a user who has not signed in, and Initial
+ *  setup for the Operator the bootstrap script created.
  *
  * @see
  *  data/operator-administration-handler.ts
@@ -22,7 +28,6 @@ import { useCallback, useMemo, useState, useEffect, type FormEvent } from "react
 import { useTable, type ColumnDef, type PaginationState } from "@tanstack/react-table";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FramePanel } from "@/components/reui/frame";
 import {
   DataGrid,
   dataGridFeatures,
@@ -39,7 +44,9 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatCallTime, formatShortTime } from "@/components/tracer/call-format";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { CanonicalRole, UserState } from "@/data/auth-policy";
 import type { OperatorRecord } from "@/data/operator-administration";
@@ -53,10 +60,8 @@ function stateVariant(state: UserState): "primary-light" | "success-light" | "de
   return "primary-light";
 }
 
-function formatSignIn(value: string | null): string {
-  return value
-    ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
-    : "Never";
+function Muted({ children }: { children: string }) {
+  return <span className="text-muted-foreground">{children}</span>;
 }
 
 function responseBody(response: Response): Promise<Record<string, unknown>> {
@@ -80,17 +85,19 @@ async function updateError(response: Response | null): Promise<string> {
   return updateErrors[String(body.error)] ?? "Update failed.";
 }
 
-function workspaceAccess(user: OperatorRecord): string {
+function workspaceAccess(user: OperatorRecord) {
   if (user.role === "Operator") return "All Workspaces";
-  return user.accessGrants.map((grant) => grant.workspaceName).join(", ") || "None";
+  const names = user.accessGrants.map((grant) => grant.workspaceName).join(", ");
+  return names ? <span className="block truncate" title={names}>{names}</span> : <Muted>None</Muted>;
 }
 
 interface UsersViewProps {
   currentUserId: string;
   initialUsers: OperatorRecord[];
+  timeZone?: string;
 }
 
-export default function UsersView({ currentUserId, initialUsers }: UsersViewProps) {
+export default function UsersView({ currentUserId, initialUsers, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone }: UsersViewProps) {
   const [users, setUsers] = useState<OperatorRecord[]>(initialUsers);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
@@ -166,20 +173,43 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
     {
       accessorKey: "name",
       header: "User",
-      cell: ({ row }) => <div><p className="font-medium">{row.original.name}</p><p className="text-xs text-muted-foreground">{row.original.email}</p></div>,
-      meta: { skeleton: <Skeleton className="h-8 w-44" /> },
+      cell: ({ row }) => (
+        <span className="block truncate" title={`${row.original.name} ${row.original.email}`}>
+          <span className="font-medium">{row.original.name}</span> <span className="text-muted-foreground">{row.original.email}</span>
+        </span>
+      ),
+      size: 280,
+      meta: { skeleton: <Skeleton className="h-4 w-44" /> },
     },
-    { accessorKey: "role", header: "Role", cell: ({ row }) => <Badge variant="outline">{row.original.role}</Badge> },
-    { accessorKey: "state", header: "User State", cell: ({ row }) => <Badge variant={stateVariant(row.original.state)}>{row.original.state}</Badge> },
-    { id: "workspaceAccess", header: "Workspace Access", cell: ({ row }) => workspaceAccess(row.original) },
-    { id: "lastSignIn", header: "Last Sign-In", cell: ({ row }) => formatSignIn(row.original.lastSignInAt) },
-    { id: "provisionedBy", header: "Provisioned By", cell: ({ row }) => row.original.provisionedBy?.name ?? "Bootstrap" },
+    { accessorKey: "role", header: "Role", cell: ({ row }) => <Badge variant="outline">{row.original.role}</Badge>, size: 120 },
+    { accessorKey: "state", header: "State", cell: ({ row }) => <Badge variant={stateVariant(row.original.state)}>{row.original.state}</Badge>, size: 120 },
+    { id: "workspaceAccess", header: "Workspaces", cell: ({ row }) => workspaceAccess(row.original), size: 200 },
+    {
+      id: "lastSignIn",
+      header: "Last Sign-In",
+      cell: ({ row }) => {
+        const signedIn = row.original.lastSignInAt;
+        return signedIn ? (
+          <span className="whitespace-nowrap tabular-nums" title={formatCallTime(signedIn, timeZone)}>{formatShortTime(signedIn, timeZone)}</span>
+        ) : (
+          <Muted>Never</Muted>
+        );
+      },
+      size: 130,
+    },
+    {
+      id: "provisionedBy",
+      header: "Added By",
+      cell: ({ row }) => (row.original.provisionedBy ? <span className="block truncate">{row.original.provisionedBy.name}</span> : <Muted>Initial setup</Muted>),
+      size: 150,
+    },
     {
       id: "actions",
       header: "",
       cell: ({ row }) => <Button variant="ghost" size="sm" aria-label={`Manage ${row.original.name}`} onClick={() => openManage(row.original)}>Manage</Button>,
+      size: 96,
     },
-  ], [openManage]);
+  ], [openManage, timeZone]);
 
   const table = useTable({
     features: dataGridFeatures,
@@ -321,41 +351,44 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
       : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-        <p className="text-sm text-muted-foreground">{activeOperatorCount} Active Operators, {users.filter((user) => user.role === "Client Viewer").length} Client Viewers</p>
-      </div>
-      <Frame>
-        <FramePanel className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <Field className="min-w-56 flex-1">
-              <FieldLabel htmlFor="search-users">Search</FieldLabel>
-              <Input id="search-users" aria-label="Search users" value={search} onChange={(event) => { setSearch(event.target.value); resetPagination(); }} />
-            </Field>
-            <Field className="w-44">
-              <FieldLabel htmlFor="user-state">User State</FieldLabel>
-              <Select value={stateFilter} onValueChange={(value) => { setStateFilter((value ?? "All") as "All" | UserState); resetPagination(); }}>
-                <SelectTrigger id="user-state" aria-label="User State"><SelectValue /></SelectTrigger>
-                <SelectContent>{userStates.map((state) => <SelectItem key={state} value={state}>{state}</SelectItem>)}</SelectContent>
-              </Select>
-            </Field>
-            <Button type="button" onClick={() => { setProvisionOpen(true); setActionError(""); setProvisionRole("Operator"); setProvisionWorkspaceIds([]); }}>Provision User</Button>
+    <div className="flex flex-col gap-5">
+      <PageHeader title="Users" description={`${activeOperatorCount} Active Operators, ${users.filter((user) => user.role === "Client Viewer").length} Client Viewers`}>
+        <Button type="button" onClick={() => { setProvisionOpen(true); setActionError(""); setProvisionRole("Operator"); setProvisionWorkspaceIds([]); }}>Provision User</Button>
+      </PageHeader>
+      <Panel>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <Input
+            type="search"
+            aria-label="Search users"
+            placeholder="Search name or email..."
+            className="w-full sm:w-64"
+            value={search}
+            onChange={(event) => { setSearch(event.target.value); resetPagination(); }}
+          />
+          <Select value={stateFilter} onValueChange={(value) => { setStateFilter((value ?? "All") as "All" | UserState); resetPagination(); }}>
+            <SelectTrigger className="w-40" aria-label="State"><SelectValue /></SelectTrigger>
+            <SelectContent>{userStates.map((state) => <SelectItem key={state} value={state}>{state === "All" ? "All states" : state}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        {status.text || deliveryWarning || fetchError || (!loading && !filteredUsers.length) ? (
+          <div className="flex flex-col gap-3 px-4 py-3">
+            <StatusMessage status={status} />
+            {deliveryWarning ? <div className="flex items-center gap-3"><p role="alert">Access email could not be delivered.</p><Button type="button" variant="outline" onClick={() => void resend(deliveryWarning)}>Resend</Button></div> : null}
+            {fetchError ? <div className="flex items-center gap-3"><p role="alert">Users are unavailable.</p><Button type="button" variant="outline" onClick={() => void loadUsers()}>Retry</Button></div> : null}
+            {!fetchError && !loading && !filteredUsers.length ? <div className="flex items-center gap-3"><p>No matching users.</p><Button type="button" variant="outline" onClick={() => { setSearch(""); setStateFilter("All"); }}>Clear Filters</Button></div> : null}
           </div>
-          <StatusMessage status={status} />
-          {deliveryWarning ? <div className="flex items-center gap-3"><p role="alert">Access email could not be delivered.</p><Button type="button" variant="outline" onClick={() => void resend(deliveryWarning)}>Resend</Button></div> : null}
-          {fetchError ? <div className="flex items-center gap-3"><p role="alert">Users are unavailable.</p><Button type="button" variant="outline" onClick={() => void loadUsers()}>Retry</Button></div> : null}
-          {!fetchError && !loading && !filteredUsers.length ? <div className="flex items-center gap-3"><p>No matching users.</p><Button type="button" variant="outline" onClick={() => { setSearch(""); setStateFilter("All"); }}>Clear Filters</Button></div> : null}
-          {!fetchError && (loading || filteredUsers.length > 0) ? (
-            <DataGrid table={table} recordCount={filteredUsers.length} isLoading={loading}>
-              <DataGridScrollArea orientation="horizontal">
-                <DataGridTable />
-              </DataGridScrollArea>
+        ) : null}
+        {!fetchError && (loading || filteredUsers.length > 0) ? (
+          <DataGrid table={table} recordCount={filteredUsers.length} isLoading={loading}>
+            <DataGridScrollArea orientation="horizontal">
+              <DataGridTable />
+            </DataGridScrollArea>
+            <div className="border-t border-border px-4 py-2">
               <DataGridPagination sizes={[pageSize]} />
-            </DataGrid>
-          ) : null}
-        </FramePanel>
-      </Frame>
+            </div>
+          </DataGrid>
+        ) : null}
+      </Panel>
 
       <Dialog open={provisionOpen} onOpenChange={setProvisionOpen}>
         <DialogContent>
@@ -420,7 +453,7 @@ export default function UsersView({ currentUserId, initialUsers }: UsersViewProp
           <DialogHeader><DialogTitle>Manage {manageUser?.name}</DialogTitle><DialogDescription>{manageUser?.email}</DialogDescription></DialogHeader>
           {manageUser ? <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2"><Badge variant="outline">{manageUser.role}</Badge><Badge variant={stateVariant(manageUser.state)}>{manageUser.state}</Badge></div>
-            <dl className="grid gap-2 text-sm"><div><dt className="text-muted-foreground">Last Sign-In</dt><dd>{formatSignIn(manageUser.lastSignInAt)}</dd></div><div><dt className="text-muted-foreground">Provisioned By</dt><dd>{manageUser.provisionedBy?.name ?? "Bootstrap"}</dd></div></dl>
+            <dl className="grid gap-2 text-sm"><div><dt className="text-muted-foreground">Last Sign-In</dt><dd>{manageUser.lastSignInAt ? formatCallTime(manageUser.lastSignInAt, timeZone) : <Muted>Never</Muted>}</dd></div><div><dt className="text-muted-foreground">Added By</dt><dd>{manageUser.provisionedBy?.name ?? <Muted>Initial setup</Muted>}</dd></div></dl>
             {actionError ? <p role="alert">{actionError}</p> : null}
             {isLastActiveOperator ? <p>{updateErrors.last_active_operator}</p> : null}
             {manageUser.role === "Client Viewer" ? (

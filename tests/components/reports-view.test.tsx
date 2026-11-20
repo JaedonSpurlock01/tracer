@@ -4,12 +4,14 @@
  * @brief  Verifies the Reports page and Workspace Reports tab.
  *
  * @description
- *  Covers the Report history columns from DESIGN, Skeleton rows while the
+ *  Covers the single-line Report history columns from DESIGN with the
+ *  short Requested time and its full-time title, Skeleton rows while the
  *  history loads, the on-demand Empty state with Generate Report, inline
  *  Retry after a failed load, and each status's row actions: Download per
  *  completed file, Generating without blocking the page, Failed with its
- *  reason and Retry, Expired with Regenerate, and View Parameters showing
- *  stored report and Calls export parameters readably. Workspace Reports
+ *  reason, a named absent expiry, and Retry, Expired with Regenerate, and
+ *  View Parameters showing the requester and the stored report and Calls
+ *  export parameters readably. Workspace Reports
  *  keeps the Workspace tabs, lists only jobs covering that Workspace, and
  *  fixes the Generate Report scope.
  *
@@ -77,7 +79,7 @@ describe("ReportsView", () => {
     resolve(respond({ jobs: [reportJob()] }));
     await screen.findByRole("link", { name: "Download PDF" });
     expect(container.querySelector(".animate-pulse")).toBeNull();
-    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual(["Requested", "Requested By", "Scope", "Period", "Files", "Status", "Expires", "Actions"]);
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual(["Requested", "Scope", "Period", "Files", "Status", "Expires", "Actions"]);
   });
 
   it("explains on-demand generation when there are no reports and offers Generate Report", async () => {
@@ -103,21 +105,21 @@ describe("ReportsView", () => {
     expect(await screen.findByRole("link", { name: "Download PDF" })).toBeVisible();
   });
 
-  it("downloads each completed file and shows the row's requester, scope, period, files, and expiry", async () => {
+  it("downloads each completed file and shows the row's short Requested time, scope, period, files, and expiry on one line", async () => {
     vi.stubGlobal("fetch", routedFetch({ "GET /api/reports": { jobs: [reportJob()] } }));
     renderView();
 
     const download = await screen.findByRole("link", { name: "Download PDF" });
     const cells = within(download.closest("tr") as HTMLElement).getAllByRole("cell").map((cell) => cell.textContent);
-    expect(cells.slice(0, 7)).toEqual([
-      "Oct 18, 2026, 9:00:00 AM",
-      "Example Operator",
+    expect(cells.slice(0, 6)).toEqual([
+      "9:00 AM",
       "Acme Plumbing",
       "Previous Week, Oct 5, 2026 - Oct 11, 2026",
       "PDF, CSV",
       "Completed",
       "Oct 25, 2026",
     ]);
+    expect(screen.getByText("9:00 AM")).toHaveAttribute("title", "Oct 18, 2026, 9:00:00 AM");
     expect(download).toHaveAttribute("href", "/api/reports/job-1/files/pdf");
     expect(screen.getByRole("link", { name: "Download CSV" })).toHaveAttribute("href", "/api/reports/job-1/files/csv");
     expect(screen.queryByRole("button", { name: "Regenerate" })).not.toBeInTheDocument();
@@ -132,13 +134,14 @@ describe("ReportsView", () => {
     expect(screen.getByRole("button", { name: "Generate Report" })).toBeEnabled();
   });
 
-  it("shows a Failed row's reason and retries it into a new job", async () => {
+  it("shows a Failed row's reason, names its absent expiry, and retries it into a new job", async () => {
     const failed = reportJob({ id: "job-3", status: "Failed", failureReason: "Report generation failed.", files: [{ file: "pdf", downloadable: false, href: null }], expiresAt: null, canRegenerate: true });
     const fetch = routedFetch({ "GET /api/reports": { jobs: [failed] }, "POST /api/reports/job-3/regenerate": () => respond({ job: generatingJob({ id: "job-4" }) }, 201) });
     vi.stubGlobal("fetch", fetch);
     renderView();
 
     expect(await screen.findByText("Report generation failed.")).toBeVisible();
+    expect(within(row("Report generation failed.")).getByText("None")).toHaveClass("text-muted-foreground");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Generating")).toBeVisible();
     expect(requestsTo(fetch, "POST", "/api/reports/job-3/regenerate")).toHaveLength(1);
@@ -164,6 +167,7 @@ describe("ReportsView", () => {
     expect(within(dialog).getByText("Acme Plumbing, Unavailable Workspace")).toBeVisible();
     expect(within(dialog).getByText("Previous Week, Oct 5, 2026 - Oct 11, 2026")).toBeVisible();
     expect(within(dialog).getByText("America/Chicago")).toBeVisible();
+    expect(within(dialog).getByText("Example Operator")).toBeVisible();
     expect(within(dialog).getByText("PDF, CSV")).toBeVisible();
   });
 

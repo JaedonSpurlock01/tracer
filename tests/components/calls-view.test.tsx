@@ -74,6 +74,13 @@ function lastRequest(fetch: { mock: { calls: unknown[][] } }): URLSearchParams {
   return new URL(String(fetch.mock.calls.at(-1)?.[0]), "http://localhost").searchParams;
 }
 
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
 function headers(): string[] {
   return screen.getAllByRole("columnheader").map((header) => header.textContent?.trim() ?? "");
 }
@@ -87,29 +94,40 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("CallsView", () => {
-  it("renders the server page immediately in DESIGN column order with dates in the result timezone", () => {
+  it("renders the server page immediately in six single-line columns with plain labels and short Started times", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T18:00:00.000Z"));
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     const { container } = render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
     expect(screen.getByRole("heading", { level: 1, name: "Calls" })).toBeVisible();
     expect(screen.getByText("2 Calls")).toBeVisible();
-    expect(headers()).toEqual(["Started", "Caller", "Workspace", "Call Outcome", "Connected Duration", "Effective Lead Classification", "Lead Score", "Recording Availability", "Actions"]);
+    expect(headers()).toEqual(["Started", "Caller", "Workspace", "Outcome", "Duration", "Lead"]);
     expect(container.querySelector(".animate-pulse")).toBeNull();
     const row = screen.getByRole("row", { name: /\+13125550142/ });
-    expect(within(row).getByRole("link", { name: "Oct 17, 2026, 10:04:05 AM" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-1?back=%2Fcalls");
+    const started = within(row).getByRole("link", { name: "Oct 17" });
+    expect(started).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-1?back=%2Fcalls");
+    expect(started).toHaveAttribute("title", "Oct 17, 2026, 10:04:05 AM");
     expect(within(row).getByText("Acme Plumbing")).toBeVisible();
     expect(within(row).getByText("Answered")).toBeVisible();
     expect(within(row).getByText("1:23")).toBeVisible();
     expect(within(row).getByText("Not Good Lead")).toBeVisible();
-    expect(within(row).getByText("82")).toBeVisible();
-    expect(within(row).getByText("Available")).toBeVisible();
     const pending = screen.getByRole("row", { name: /Unknown caller/ });
     expect(within(pending).getByText("In Progress")).toBeVisible();
-    expect(within(pending).getByText("Not available")).toBeVisible();
+    expect(within(pending).getAllByText("None")).toHaveLength(2);
+  });
+
+  it("shows only Started, Caller, and Outcome below the md breakpoint", () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
+    expect(headers()).toEqual(["Started", "Caller", "Outcome"]);
   });
 
   it("omits the Workspace column and keeps the fixed Workspace scope on the next page fetch without re-fetching the server page on mount", async () => {
@@ -118,7 +136,7 @@ describe("CallsView", () => {
     render(<CallsView initialResult={{ ...result, calls: [answered], total: 1, timeZone: "America/Los_Angeles" }} initialQuery={defaultQuery} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} />);
     expect(headers()).not.toContain("Workspace");
     expect(screen.getByText("1 Call in Acme Plumbing")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Oct 17, 2026, 8:04:05 AM" })).toBeVisible();
+    expect(screen.getByTitle("Oct 17, 2026, 8:04:05 AM")).toBeVisible();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Search Calls"), { target: { value: "312" } });
@@ -134,43 +152,16 @@ describe("CallsView", () => {
     expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled();
   });
 
-  it("offers Play Recording only for a playable Recording and opens Call Detail from a row", () => {
+  it("keeps the Lead Score, Recording, and row actions behind the row, which opens Call Detail", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
     const row = screen.getByRole("row", { name: /\+13125550142/ });
-    expect(within(row).getByRole("link", { name: "Play Recording" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-1?back=%2Fcalls&play=1");
-    expect(within(row).getByRole("link", { name: "Open Call" })).toHaveAttribute("href", "/workspaces/workspace-1/calls/call-1?back=%2Fcalls");
+    expect(within(row).getAllByRole("link")).toHaveLength(1);
+    expect(within(row).queryByText("82")).toBeNull();
+    expect(within(row).queryByText("Available")).toBeNull();
     const pending = screen.getByRole("row", { name: /Unknown caller/ });
-    expect(within(pending).queryByRole("link", { name: "Play Recording" })).toBeNull();
-    expect(within(pending).getByRole("link", { name: "Open Call" })).toHaveAttribute("href", "/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
     fireEvent.click(within(pending).getByText("Quiet Dental"));
     expect(push).toHaveBeenCalledWith("/workspaces/workspace-2/calls/call-2?back=%2Fcalls");
-  });
-
-  it("offers Download MP3 in the row actions whenever the Recording's MP3 is retained, even without Play Recording", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    const processing: CallListItem = { ...answered, id: "call-3", callerNumber: "+13125550199", mp3RecordingId: null };
-    const waveformPending: CallListItem = { ...answered, id: "call-4", callerNumber: "+13125550188", recording: "Processing", mp3RecordingId: "recording-4" };
-    render(<CallsView initialResult={{ ...result, calls: [inProgress, answered, processing, waveformPending], total: 4 }} initialQuery={defaultQuery} />);
-    const pendingRow = screen.getByRole("row", { name: /\+13125550188/ });
-    expect(within(pendingRow).getByRole("link", { name: "Download MP3" })).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-4/mp3");
-    expect(within(pendingRow).queryByRole("link", { name: "Play Recording" })).toBeNull();
-    const download = within(screen.getByRole("row", { name: /\+13125550142/ })).getByRole("link", { name: "Download MP3" });
-    expect(download).toHaveAttribute("href", "/api/workspaces/workspace-1/recordings/recording-1/mp3");
-    expect(download).toHaveAttribute("download");
-    expect(within(screen.getByRole("row", { name: /\+13125550199/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
-    expect(within(screen.getByRole("row", { name: /Unknown caller/ })).queryByRole("link", { name: "Download MP3" })).toBeNull();
-  });
-
-  it("labels purged Recording media Purged without Play Recording or Download MP3", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    const purged: CallListItem = { ...answered, id: "call-5", callerNumber: "+13125550177", recording: "Purged", mp3RecordingId: null };
-    render(<CallsView initialResult={{ ...result, calls: [purged], total: 1 }} initialQuery={defaultQuery} />);
-    const row = screen.getByRole("row", { name: /\+13125550177/ });
-    expect(within(row).getByText("Purged")).toBeVisible();
-    expect(within(row).queryByRole("link", { name: "Play Recording" })).toBeNull();
-    expect(within(row).queryByRole("link", { name: "Download MP3" })).toBeNull();
-    expect(within(row).getByRole("link", { name: "Open Call" })).toBeVisible();
   });
 
   it("filters by Purged Recording availability in the advanced popover", async () => {
@@ -189,16 +180,72 @@ describe("CallsView", () => {
     expect(JSON.parse(lastRequest(fetch).get("adv") ?? "")).toEqual({ combinator: "and", rules: [{ combinator: "or", rules: [{ field: "recording", values: ["Purged"] }] }] });
   });
 
-  it("opens Call Detail carrying the list's page, sort, and filters from rows and row actions", () => {
+  it("opens Call Detail carrying the list's page, sort, and filters from the row and its Started link", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     const query: CallListQuery = { page: 2, sort: { column: "leadScore", direction: "asc" }, filters: { ...emptyCallFilters, search: "312", outcomes: ["Answered"] } };
     const back = encodeURIComponent("/workspaces/workspace-1/calls?page=2&sort=leadScore&order=asc&q=312&outcome=Answered");
     render(<CallsView initialResult={{ ...result, calls: [answered], total: 30, page: 2 }} initialQuery={query} workspace={{ id: "workspace-1", name: "Acme Plumbing" }} />);
     const row = screen.getByRole("row", { name: /\+13125550142/ });
-    expect(within(row).getByRole("link", { name: "Open Call" })).toHaveAttribute("href", `/workspaces/workspace-1/calls/call-1?back=${back}`);
-    expect(within(row).getByRole("link", { name: "Play Recording" })).toHaveAttribute("href", `/workspaces/workspace-1/calls/call-1?back=${back}&play=1`);
+    expect(within(row).getByRole("link")).toHaveAttribute("href", `/workspaces/workspace-1/calls/call-1?back=${back}`);
     fireEvent.click(within(row).getByText("Answered"));
     expect(push).toHaveBeenCalledWith(`/workspaces/workspace-1/calls/call-1?back=${back}`);
+  });
+
+  it("refreshes the current page every 30 seconds only while the document is visible, and promptly when it returns stale", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const query: CallListQuery = { page: 2, sort: { column: "callerNumber", direction: "asc" }, filters: { ...emptyCallFilters, outcomes: ["Answered"] } };
+    const paged = { ...result, total: 30, page: 2 };
+    const fetch = vi.fn(async () => respond(paged));
+    vi.stubGlobal("fetch", fetch);
+    render(<CallsView initialResult={paged} initialQuery={query} />);
+    await act(async () => vi.advanceTimersByTime(29_999));
+    expect(fetch).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenLastCalledWith("/api/calls?page=2&sort=callerNumber&order=asc&outcome=Answered", { cache: "no-store" });
+    expect(replaceState).not.toHaveBeenCalled();
+
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    setVisibility("hidden");
+    await act(async () => vi.advanceTimersByTime(120_000));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    setVisibility("visible");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTime(30_000));
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("updates rows in place on a background refresh without Skeletons, keeping the filters and the same row elements", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const arrived: CallListItem = { ...answered, id: "call-9", callerNumber: "+13125550111", startedAt: "2026-10-17T17:00:00.000Z" };
+    const fetch = vi.fn(async () => respond({ ...result, calls: [arrived, inProgress, { ...answered, outcome: "Missed" }], total: 3 }));
+    vi.stubGlobal("fetch", fetch);
+    const filtered: CallListQuery = { ...defaultQuery, filters: { ...emptyCallFilters, search: "312" } };
+    const { container } = render(<CallsView initialResult={result} initialQuery={filtered} />);
+    const before = screen.getByRole("row", { name: /\+13125550142/ });
+    await act(async () => vi.advanceTimersByTime(30_000));
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+    await waitFor(() => expect(screen.getByText("3 Calls")).toBeVisible());
+    expect(screen.getByRole("row", { name: /\+13125550142/ })).toBe(before);
+    expect(within(before).getByText("Missed")).toBeVisible();
+    expect(screen.getByRole("row", { name: /\+13125550111/ })).toBeVisible();
+    expect(screen.getByRole("searchbox", { name: "Search Calls" })).toHaveValue("312");
+  });
+
+  it("keeps the rows after a failed background refresh and shows no error", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const fetch = vi.fn(async () => respond({ error: "unavailable" }, 500));
+    vi.stubGlobal("fetch", fetch);
+    render(<CallsView initialResult={result} initialQuery={defaultQuery} />);
+    await act(async () => vi.advanceTimersByTime(30_000));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("row", { name: /\+13125550142/ })).toBeVisible();
   });
 
   it("explains that Calls appear after inbound traffic when there are none", () => {

@@ -32,7 +32,7 @@
  *  rechecks current access to every Workspace in scope. History is one
  *  indexed query plus one Workspace name query, cheap enough for the
  *  notification popover to poll every 30 seconds while the tab is
- *  visible, like Activity. A Workspace the requester can no longer read
+ *  visible, like Calls. A Workspace the requester can no longer read
  *  is listed without its name, and its job offers neither download nor
  *  Regenerate. Downloads stream from R2 through the Worker instead of a
  *  pre-signed URL, so authorization is rechecked on every download.

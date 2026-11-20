@@ -4,10 +4,13 @@
  * @brief  Verifies the Workspace Forms page view.
  *
  * @description
- *  Covers the ledger rows with their forwarding and Lead badges, the
+ *  Covers the ledger rows with their forwarding and Lead badges, one-line
+ *  rows with plain headers and the short Received time whose hover title
+ *  is the full UTC time, named absent values instead of dashes, the
  *  Operator actions on a Held row and their absence for a Client Viewer,
  *  Resend appearing only for Forward failed and Not forwarded rows, the
- *  full-field details of an expanded row, the mutations through the
+ *  full-field details of an expanded row with its forwarding time, the
+ *  mutations through the
  *  Workspace Forms routes, and the Empty states with and without a linked
  *  Site.
  *
@@ -87,6 +90,7 @@ function row(name: string): HTMLElement {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -107,6 +111,30 @@ describe("FormsView", () => {
     expect(within(row("Pat Nobody")).getByText("Not forwarded")).toBeVisible();
     expect(within(row("Repeat Person")).getByText("Held")).toBeVisible();
     expect(within(row("Repeat Person")).getByText("Awaiting approval")).toBeVisible();
+  });
+
+  it("reads each row on one line with plain headers and the short Received time, keeping the full UTC time on hover", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T18:00:00.000Z"));
+    render(<FormsView list={list} />);
+
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Received", "Name", "Contact", "Fields", "Forwarding", "Lead", "Actions"]);
+    const received = within(row("Dana Customer")).getByText("Oct 21");
+    expect(received).toHaveAttribute("title", "Oct 21, 2026, 3:04:05 PM UTC");
+    expect(received).not.toHaveClass("font-mono");
+    expect(within(row("Dana Customer")).queryByText(/3:04:07 PM/)).not.toBeInTheDocument();
+  });
+
+  it("names absent contact, fields, page, and recipients instead of printing a dash", () => {
+    const bare = submission({ id: "sub-bare", name: "Quiet Visitor", phone: null, email: null, page: null, fields: { Name: "Quiet Visitor" }, forward: { status: "Not configured", to: [], error: null, forwardedAt: null } });
+    render(<FormsView list={{ ...list, submissions: [bare] }} readOnly />);
+
+    expect(within(row("Quiet Visitor")).getAllByText("None")).toHaveLength(2);
+    fireEvent.click(within(row("Quiet Visitor")).getByRole("button", { name: "Details" }));
+    const details = screen.getByRole("region", { name: "Quiet Visitor details" });
+    expect(within(details).getByText("None")).toBeVisible();
+    expect(within(details).getByText("No recipients")).toBeVisible();
+    expect(within(details).queryByText("-")).not.toBeInTheDocument();
   });
 
   it("offers an Operator Approve and Reject on a Held row and Resend only on Forward failed and Not forwarded rows", () => {
@@ -142,6 +170,7 @@ describe("FormsView", () => {
     expect(within(details).getByText("Need a quote for a 40 foot driveway before winter.")).toBeVisible();
     expect(within(details).getByText("/contact")).toBeVisible();
     expect(within(details).getByText("owner@example.com")).toBeVisible();
+    expect(within(details).getByText("Oct 21, 2026, 3:04:07 PM UTC")).toBeVisible();
   });
 
   it("approves a Held row and replaces it with the returned submission", async () => {

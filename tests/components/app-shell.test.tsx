@@ -113,7 +113,7 @@ describe("application shell", () => {
   it("shows all navigation links for an Operator and hides Operator links for a Client Viewer", () => {
     render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
     expect(screen.getByRole("link", { name: "Home" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Calls" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Workspaces" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Reports" })).toBeVisible();

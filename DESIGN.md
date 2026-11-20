@@ -27,9 +27,9 @@ Tracer follows a call from first contact through routing, recording, transcripti
 
 ### Line art
 
-Empty states use single-weight vector line art drawn in `components/tracer/line-art.tsx`: dashed isometric orbits with one small subject, stroked in the muted foreground at reduced opacity. Scenes are decorative, hidden from assistive technology, and sit only in Empty states, never behind data. The scenes are No Activity (a listening tracking line), No Calls (an empty call log card), No Transcript (a recording strip at 0:00, used when a Transcript was skipped or never existed), No Reports (a report page with empty bars), No Workspaces (an open slot), and No Results (a lens over the field). Other Empty states use the shared `EmptyState` without art until a scene is approved for them.
+Empty states use single-weight vector line art drawn in `components/tracer/line-art.tsx`: dashed isometric orbits with one small subject, stroked in the muted foreground at reduced opacity. Scenes are decorative, hidden from assistive technology, and sit only in Empty states, never behind data. The scenes are No Calls (an empty call log card), No Transcript (a recording strip at 0:00, used when a Transcript was skipped or never existed), No Reports (a report page with empty bars), No Workspaces (an open slot), and No Results (a lens over the field). Other Empty states use the shared `EmptyState` without art until a scene is approved for them.
 
-Three scenes carry slow ambient motion, defined in `globals.css` under `.line-art-motion`: the Activity sweep circles its orbit with a ping once per pass, the Reports page drifts up and down, and the Calls row markers spin now and then. Motion only moves elements the static drawing already has, is skipped for viewers who prefer reduced motion, and switches off everywhere through the `lineArtMotion` constant in `line-art.tsx`, which restores the static scenes exactly.
+Two scenes carry slow ambient motion, defined in `globals.css` under `.line-art-motion`: the Reports page drifts up and down, and the Calls row markers spin now and then. Motion only moves elements the static drawing already has, is skipped for viewers who prefer reduced motion, and switches off everywhere through the `lineArtMotion` constant in `line-art.tsx`, which restores the static scenes exactly.
 
 ### Color
 
@@ -134,7 +134,6 @@ Interface labels are the shortest plain words a client would use: `Lead` rather 
 - Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher. The content header holds the Sidebar trigger, route breadcrumbs (every segment linked but the current page, with Workspace and Call segments named by their records), and the notification popover.
 - Prefer Frame-led pages and dense controls. Each FramePanel is one flat surface; headings live inside the panel. Pages rebuilt in Phase 9 use `Panel` from the shared parts for their bordered regions; Frame and FramePanel remain on pages not yet rebuilt and inside ReUI compositions such as the Data Grid.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
-- Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
 - Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
@@ -152,12 +151,13 @@ Interface labels are the shortest plain words a client would use: `Lead` rather 
 ### Global navigation
 
 1. Home
-2. Activity
-3. Calls
-4. Workspaces
-5. Reports
-6. Users, Operator only
-7. Integrations, Operator only
+2. Calls
+3. Workspaces
+4. Reports
+5. Users, Operator only
+6. Integrations, Operator only
+
+Activity was folded into Calls in M27; `/activity` redirects to Calls.
 
 ### Account menu
 
@@ -190,7 +190,7 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 - At widths below `md`, the Sidebar becomes a Sheet.
 - KPI grids collapse to one column, then two columns, before reaching four columns at wide sizes. A `StatStrip` shows two columns, three from `sm`, and every stat in one row from `xl`.
 - Record-detail side columns stack below the main content.
-- Data grids scroll within their Frame and never create horizontal page scrolling.
+- Data grids scroll within their Panel and never create horizontal page scrolling.
 - Every action remains reachable at 390px; actions removed from a toolbar move into an overflow menu.
 
 ## Page inventory
@@ -203,7 +203,6 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 ### Global
 
 - Home
-- Activity
 - Calls
 - Workspaces
 - Reports
@@ -289,75 +288,19 @@ Shown only when the user can access more than one Workspace. One `ListRow` per W
 - **Loading:** A range change shows the strip and chart as Skeletons in their final layout.
 - **Partial error:** Fail only the affected region and show Retry without blanking the page. Without analytics, Recent Calls spans the full width.
 
-## Activity
-
-### Composition plan
-
-1. **Surface:** Operational
-2. **Archetype:** Frame stack
-3. **Container family:** Frame-led
-4. **Density:** Dense
-5. **Regions:** Header and freshness status, filter toolbar, day-grouped Call timeline
-6. **States:** Timeline Skeletons, no-results Empty state, and inline Retry
-7. **Motion:** No entrance; changed data appears without positional animation. An expanded Call's steps open and close with the shared Collapsible height transition
-
-### Header and filters
-
-- Title: `Activity`
-- Description: count of Calls currently in view
-- Freshness label: `Updated just now` or the elapsed time since the last successful refresh
-- Manual action: Refresh
-- Search: caller phone number
-- Filters: Workspace, call outcome, effective lead classification, processing state, and date
-- Refresh every 30 seconds while the browser tab is visible and pause while it is hidden
-
-### Timeline
-
-Use the ReUI Timeline API and adapt the collapsible pipeline composition from [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp). Group entries under Today, Yesterday, or a calendar date.
-
-Each top-level entry represents one Call and shows:
-
-- Start time
-- Caller number
-- Workspace
-- Current or final call outcome
-- Effective lead classification when available
-- Connected duration
-- Expand control
-
-Expanding an entry reveals only lifecycle events that occurred:
-
-1. Call received
-2. Spam gate passed or failed, when enabled
-3. Forwarding attempted
-4. Answered, missed, rejected, or failed
-5. Recording transferred or transfer failed
-6. Transcript completed, skipped, expired, or failed
-7. Lead Assessment completed or failed
-8. Lead Review added
-9. Media purged
-
-Outcome and processing states use one semantic Badge per row. Infrastructure details remain behind concise user-facing status copy. Selecting the entry header opens Call Detail.
-
-### States
-
-- **No Activity:** Explain that call events appear after the first inbound Call.
-- **No results:** Preserve active filters and offer `Clear Filters`.
-- **Loading:** Render timeline-shaped Skeletons under the current day labels.
-- **Refresh error:** Keep existing entries visible, mark freshness as unavailable, and offer Retry.
-- **Processing:** Show pending nested steps with neutral status rather than a page-level loader.
-
 ## Calls
 
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
+3. **Container family:** `PageHeader`, then one `Panel` holding the search and filter row, the ledger, and pagination
+4. **Density:** Dense, one line per row
 5. **Regions:** Header and export actions, search and filters, server-backed Calls grid
 6. **States:** Data Grid Skeleton rows, filter-aware Empty state, and inline Retry
-7. **Motion:** None
+7. **Motion:** None; a background refresh updates rows in place
+
+Calls serves both browsing history and watching what just happened. It absorbed Activity in M27: the list refreshes every 30 seconds while the browser tab is visible, pauses while it is hidden, and refreshes at once on return when the last load is 30 seconds old. A refresh rereads the same page, sort, search, and filters without Skeletons and keeps the scroll position; a failed refresh keeps the rows and the next one tries again. The per-Call steps Activity expanded are on Call Detail's Processing timeline.
 
 ### Header and actions
 
@@ -389,17 +332,14 @@ Basic filters remain visible in the toolbar. Less common combinations open in th
 
 Columns:
 
-1. Started
+1. Started, the short time with the full timestamp on hover
 2. Caller
 3. Workspace
-4. Call Outcome
-5. Connected Duration
-6. Effective Lead Classification
-7. Lead Score
-8. Recording Availability
-9. Row actions
+4. Outcome
+5. Duration, `None` before the Call connects
+6. Lead, `None` until a Lead classification exists
 
-Rows use server-side pagination and sorting. Started sorts descending by default. Selecting a row opens Call Detail. Row actions offer Play Recording when available, Open Call, and Download MP3 when retained.
+Every row is one line. The Lead Score, Recording availability, Play Recording, and Download MP3 sit behind the row on Call Detail. Below `md` only Started, Caller, and Outcome show, sized to their content, so the grid fits a 390px screen without scrolling. Rows use server-side pagination and sorting. Started sorts descending by default. Selecting a row or its Started link opens Call Detail.
 
 ### Call Outcomes
 
@@ -420,8 +360,7 @@ Provider-specific status remains diagnostic metadata and does not appear as a co
 - **No matches:** Preserve filters and offer `Clear Filters`.
 - **Loading:** Use Data Grid Skeleton rows with stable column widths.
 - **Fetch error:** Render the error and Retry inside the grid without removing the toolbar.
-- **Expired Recording:** Keep the Call row and show recording availability as Expired.
-- **Purged Recording:** Keep the Call row and show recording availability as Purged, ahead of Expired, without Play Recording or Download MP3. The Recording availability filter offers Purged beside Expired.
+- **Expired or Purged Recording:** Keep the Call row. Call Detail shows the Recording as Expired or Purged, Purged ahead of Expired, without Play Recording or Download MP3. The Recording availability filter offers Purged beside Expired.
 
 ## Call Detail
 
@@ -555,8 +494,8 @@ Purge Media is Operator only and uses an AlertDialog with explicit irreversible 
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
+3. **Container family:** `PageHeader`, then one `Panel` holding the State chips and search, the ledger, and pagination
+4. **Density:** Dense, one line per row
 5. **Regions:** Header, Workspace State chips and search, server-backed triage ledger
 6. **States:** Server-rendered first page, in-place refresh after each action, Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
 7. **Motion:** None
@@ -579,14 +518,16 @@ One table grouped in triage order, each group with a collapsible heading and cou
 
 Columns:
 
-1. Workspace: name, Workspace State Badge, and the reporting timezone, or `Next: <requirement>` from the setup checklist while Setup Required
-2. Routing: Tracking Number over `→ Destination Number`, in Geist Mono
-3. Calls, last 30 days
-4. Good Leads, last 30 days
-5. Lead rate: Good Leads over Calls as a bar and percentage, blank without Calls
-6. Last Call, in the reporting timezone
-7. Attention: the analytics roll-up (Healthy, Needs attention, or Not applicable) with its reason beneath, such as `Site Down` or `No accepted Twilio webhook yet`
+1. Workspace: name and Workspace State Badge, with the reporting timezone on hover
+2. Tracking Number, in Geist Mono, with the Destination Number on hover; `No Tracking Number` until one is assigned
+3. Calls (30d)
+4. Good Leads (30d)
+5. Lead Rate: Good Leads over Calls as a bar and percentage, `None` without Calls
+6. Last Call: the short time in the reporting timezone with the full timestamp on hover, `No Calls` before the first
+7. Attention: `Next: <requirement>` from the setup checklist while Setup Required, otherwise the analytics roll-up (Healthy, Needs attention, or Not applicable) as a status dot with its reason beside it, such as `Site Down` or `No accepted Twilio webhook yet`, truncated with the full text on hover
 8. Row action: Resume Setup while Setup Required for Operators, otherwise Open
+
+Every row is one line. Counts and rates use tabular figures, not monospace.
 
 Workspace State and attention are separate. State describes lifecycle; attention reports whether Twilio, routing, or the linked Site needs an Operator, and the analytics module owns that rule so every view agrees. Selecting a row opens Workspace Overview.
 
@@ -819,8 +760,8 @@ Requests and errors over 7 days, hostname certificates as a count Badge, Refresh
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around the header and the ledger
-4. **Density:** Dense
+3. **Container family:** `PageHeader`, then one `Panel` holding the ledger
+4. **Density:** Dense, one line per row
 5. **Regions:** Header, Form Submissions ledger with expandable rows
 6. **States:** No Form Submissions, No Site, inline action error
 7. **Motion:** None
@@ -836,15 +777,15 @@ The Forms page is `/workspaces/[id]/forms`, the Website group's second item in t
 
 Columns:
 
-1. Received, in Geist Mono
+1. Received: the short time in UTC with the full UTC timestamp on hover, because the list carries no Workspace timezone
 2. Name
-3. Contact: phone and email in Geist Mono
-4. Fields: every field except Name, Phone, and Email as `Key: value`, muted and truncated
-5. Forwarding: `Forwarded` with the send time, `Forward failed` with the provider's reason beneath, `Not forwarded` when the Workspace had no Forwarding Recipients, `Held`, or `Rejected`
-6. Lead: the effective classification Badge, `Awaiting approval` while Held, with the reviewer's note beneath
+3. Contact: the phone in Geist Mono, then the email muted on the same line
+4. Fields: every field except Name, Phone, and Email as `Key: value` on one muted, truncated line
+5. Forwarding: `Forwarded`, `Forward failed` with the provider's reason beside it, `Not forwarded` when the Workspace had no Forwarding Recipients, `Held`, or `Rejected`
+6. Lead: the effective classification Badge, `Awaiting approval` while Held, with the reviewer's note beside it
 7. Row actions
 
-`Details` on any row expands it to a definition list of the page, the recipients, and every field in full.
+Every row is one line; long values truncate with the full text on hover, and an absent Contact or Fields value reads `None`. `Details` on any row expands it to a definition list of the page, the recipients (`No recipients` when there were none), the forwarding time, and every field in full.
 
 ### Row actions (Operator only)
 
@@ -979,9 +920,9 @@ Validation runs on every change. The toolbar shows Publishable or the issue coun
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Frame stack with a table-backed history region
-3. **Container family:** Frame-led
-4. **Density:** Dense
+2. **Archetype:** Table-backed history
+3. **Container family:** `PageHeader` with Generate Report, then one `Panel` holding the history grid and pagination
+4. **Density:** Dense, one line per row
 5. **Regions:** Header, report generator, report history Data Grid
 6. **States:** Generator validation, history Skeleton rows, Empty state, and inline Retry
 7. **Motion:** None
@@ -1056,16 +997,15 @@ The CSV contains every matching Call with:
 
 Columns:
 
-1. Requested
-2. Requested By
-3. Scope
-4. Period
-5. Files
-6. Status
-7. Expires
-8. Row actions
+1. Requested: the short time with the full timestamp on hover
+2. Scope
+3. Period, truncated with the full text on hover
+4. Files
+5. Status, with a Failed reason truncated beside the Badge
+6. Expires: a short date, or `None`
+7. Row actions
 
-Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. A Recording ZIP or Export Call that includes a Recording whose media an Operator purges expires at the purge, so its row shows Expired with Regenerate, and the regenerated export omits that Recording as Purged. Job metadata and parameters remain for 90 days.
+The history lists only the requester's own jobs, so the requester appears in View Parameters rather than as a column. Download actions show an icon and the file label (`PDF`, `CSV`, `ZIP`) with the accessible name `Download PDF` and so on, so every row is one line at 1440px. Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. A Recording ZIP or Export Call that includes a Recording whose media an Operator purges expires at the purge, so its row shows Expired with Regenerate, and the regenerated export omits that Recording as Purged. Job metadata and parameters remain for 90 days.
 
 ### States
 
@@ -1081,8 +1021,8 @@ Rows support Download, Regenerate, and View Parameters while authorization remai
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
+3. **Container family:** `PageHeader`, then one `Panel` holding the toolbar, grid, and pagination
+4. **Density:** Dense, one line per row
 5. **Regions:** Header, role and state filters, server-backed user grid
 6. **States:** Server-rendered user list, in-place refresh after each action, Data Grid Skeleton rows only while reloading after a Retry, first-user protection, and inline Retry
 7. **Motion:** None
@@ -1103,15 +1043,15 @@ Users is visible to Operators only. Client Viewers cannot discover other users o
 
 Columns:
 
-1. User
+1. User: name with the muted email beside it, truncated
 2. Role
-3. User State
-4. Workspace Access
-5. Last Sign-In
-6. Provisioned By
+3. State
+4. Workspaces: `All Workspaces` for Operators, otherwise the granted names truncated, or `None`
+5. Last Sign-In: the short time in the Operator's account timezone with the full timestamp on hover, or `Never`
+6. Added By: the provisioning Operator, or `Initial setup` for the bootstrap Operator
 7. Row actions
 
-Use state Badges for Provisioned, Active, and Disabled. Selecting a row opens the management Dialog rather than a permanent detail page.
+Every row is one line. Use state Badges for Provisioned, Active, and Disabled. Selecting a row opens the management Dialog rather than a permanent detail page.
 
 ### Provision User
 
@@ -1238,7 +1178,7 @@ Users cannot change their own sign-in email. Operators replace it through Users 
 - Date and time preview
 - Save action
 
-Global dashboards, Activity grouping, and multi-Workspace report defaults use this timezone. Workspace views and single-Workspace reports use the Workspace reporting timezone.
+Global dashboards, global Calls, and multi-Workspace report defaults use this timezone. Workspace views and single-Workspace reports use the Workspace reporting timezone.
 
 ### Security
 

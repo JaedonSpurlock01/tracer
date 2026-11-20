@@ -4,7 +4,7 @@
  * @brief  Reports how long the main pages take to answer on a warm second visit.
  *
  * @description
- *  Signs in as the Operator, visits Home, Workspaces, Calls, Activity, and
+ *  Signs in as the Operator, visits Home, Workspaces, Calls, and
  *  Integrations twice each, and records the server's time to first byte on
  *  the second visit, when the dev server has compiled the route. The numbers
  *  are attached to the test report and printed, and any page over the
@@ -31,7 +31,7 @@ import { expect, test } from "@playwright/test";
 import { signInAsOperator } from "./helpers";
 
 export const navigationTimingCeilingMs = 1500;
-const pages = ["/", "/workspaces", "/calls", "/activity", "/integrations"];
+const pages = ["/", "/workspaces", "/calls", "/integrations"];
 
 test("answers the main pages within the dev-mode ceiling on a warm visit", async ({ page, request }) => {
   test.setTimeout(180_000);

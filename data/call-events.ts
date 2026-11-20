@@ -6,8 +6,8 @@
  * @description
  *  Each lifecycle writer calls these helpers inside the transaction that
  *  changes the Call, Recording, or Lead Review state the event records, so
- *  an event exists exactly when its state change commits. Activity reads
- *  the log to show every step of a Call with its exact time.
+ *  an event exists exactly when its state change commits. Analytics reads
+ *  the log to count the Calls that reached forwarding for the Answer Rate.
  *
  * @remarks
  *  Every event carries an idempotency key unique per Organization, and an

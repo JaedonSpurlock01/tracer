@@ -116,11 +116,30 @@ describe("WorkspacesView", () => {
       },
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T18:00:00.000Z"));
     render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Workspace", "Tracking Number", "Calls (30d)", "Good Leads (30d)", "Lead Rate", "Last Call", "Attention", "Actions"]);
     const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
-    await waitFor(() => expect(cells(/^North Plumbing/).slice(2, 7)).toEqual(["17", "5", "29%", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
-    expect(cells(/^South Dental/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Needs attentionNo accepted Twilio webhook yet"]);
-    expect(cells(/^Phoenix Office/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Not applicable"]);
+    await waitFor(() => expect(cells(/^North Plumbing/).slice(2, 7)).toEqual(["17", "5", "29%", "Oct 18", "Healthy"]));
+    expect(within(screen.getByRole("link", { name: /^North Plumbing/ }).closest("tr")!).getByText("Oct 18")).toHaveAttribute("title", "Oct 18, 2026, 10:04:05 AM");
+    expect(cells(/^South Dental/).slice(2, 7)).toEqual(["0", "0", "None", "No Calls", "Needs attention: No accepted Twilio webhook yet"]);
+    expect(cells(/^Phoenix Office/).slice(1, 7)).toEqual(["No Tracking Number", "0", "0", "None", "No Calls", "Next: Tracking Number"]);
+    vi.useRealTimers();
+  });
+
+  it("reads each ledger row on one line, with the reporting timezone and Destination Number on hover and no monospace counts", () => {
+    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const, trackingNumber: "+14155550101", destinationNumber: "+14155550199" };
+    const stats = { north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Healthy" as const, reason: null } } };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [north], stats }} initialTimezone="America/Chicago" />);
+    const link = screen.getByRole("link", { name: /^North Plumbing/ });
+    expect(link).toHaveAttribute("title", "America/Chicago");
+    const row = link.closest("tr")!;
+    expect(within(row).getByText("+14155550101")).toHaveAttribute("title", "Forwards to +14155550199");
+    expect(within(row).getByText("Active")).toBeVisible();
+    for (const cell of within(row).getAllByRole("cell")) expect(cell).toHaveClass("whitespace-nowrap");
+    expect(within(row).getByText("17")).not.toHaveClass("font-mono");
   });
 
   it("groups Workspaces in triage order and names the next setup step", async () => {

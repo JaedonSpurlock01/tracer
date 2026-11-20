@@ -95,6 +95,11 @@ test.describe.serial("Workspace Access Grants", () => {
     await expect(clientPage.getByRole("link", { name: "Workspace Settings" })).toHaveCount(0);
     await expect(clientPage.getByRole("link", { name: "Users" })).toHaveCount(0);
 
+    await clientPage.goto("/activity");
+    await expect(clientPage).toHaveURL((url) => url.pathname === "/calls" && url.search === "");
+    await expect(clientPage.getByRole("heading", { level: 1, name: "Calls" })).toBeVisible();
+    await expect(clientPage.getByText(ungrantedName)).toHaveCount(0);
+
     expect((await clientPage.goto(`/workspaces/${ungrantedId}`))?.status()).toBe(404);
     expect((await clientPage.goto(`/workspaces/${grantedId}/settings`))?.status()).toBe(404);
     expect((await clientPage.goto(`/workspaces/${grantedId}/flow`))?.status()).toBe(404);
