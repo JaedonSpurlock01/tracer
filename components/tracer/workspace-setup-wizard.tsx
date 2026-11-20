@@ -39,7 +39,7 @@ import {
   StepperTitle,
   StepperTrigger,
 } from "@/components/reui/stepper";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -496,9 +496,9 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
               {flowManaged && workspace ? (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm text-muted-foreground">Spam gate and whisper are managed in the published Call Flow.</p>
-                  <Button variant="outline" size="sm" render={<Link href={`/workspaces/${workspace.id}/flow`} />}>
+                  <Link href={`/workspaces/${workspace.id}/flow`} className={buttonVariants({ variant: "outline", size: "sm" })}>
                     Edit Flow
-                  </Button>
+                  </Link>
                 </div>
               ) : null}
               {routing.whisperEnabled ? (

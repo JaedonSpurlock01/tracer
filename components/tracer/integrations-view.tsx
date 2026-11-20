@@ -46,7 +46,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
@@ -839,7 +839,7 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
       const message = provider.mediaLifecycle?.stuckCount
         ? `${provider.mediaLifecycle.stuckCount} purged or expired Recordings still have media to clean up.`
         : provider.lastFailureDetail ?? provider.note ?? `Last failure ${formatDate(provider.lastFailureAt)}.`;
-      attention.push({ key: `${provider.id}-degraded`, provider, message, action: provider.id === selected.id ? null : <Button type="button" size="sm" variant="outline" render={<Link href={`/integrations?provider=${provider.id}`} scroll={false} />}>View</Button> });
+      attention.push({ key: `${provider.id}-degraded`, provider, message, action: provider.id === selected.id ? null : <Link href={`/integrations?provider=${provider.id}`} scroll={false} className={buttonVariants({ size: "sm", variant: "outline" })}>View</Link> });
     }
   }
 

@@ -44,7 +44,7 @@ import { DataGrid, dataGridFeatures, type DataGridFeatures } from "@/components/
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AnalyticsKpiRow,
@@ -257,7 +257,7 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
         <Frame>
           <FramePanel className="flex flex-col items-center gap-3 py-10 text-center text-sm text-muted-foreground">
             <p>Tracer needs an imported Twilio number before it can track Calls. Create a Workspace to assign one.</p>
-            <Button render={<Link href="/workspaces" prefetch />}>Create Workspace</Button>
+            <Link href="/workspaces" prefetch className={buttonVariants()}>Create Workspace</Link>
           </FramePanel>
         </Frame>
       ) : (
@@ -299,9 +299,9 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
                 id="home-recent-calls-title"
                 title="Recent Calls"
                 action={
-                  <Button variant="outline" size="sm" render={<Link href={callsHref} prefetch />}>
+                  <Link href={callsHref} prefetch className={buttonVariants({ variant: "outline", size: "sm" })}>
                     View Calls
-                  </Button>
+                  </Link>
                 }
               />
               {recentCalls ? (

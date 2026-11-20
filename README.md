@@ -60,7 +60,7 @@ pnpm dev:local
 
 Bootstrap with the email address listed in `AUTH_EMAIL_ALLOWED_RECIPIENTS` inside the `dev:local` script in `package.json`, since only that address can sign in locally.
 
-Open `http://127.0.0.1:3000/sign-in`. Locally no email is sent; read your sign-in code from `http://127.0.0.1:3000/api/test/auth-otp`.
+Open `http://127.0.0.1:3000/sign-in` (use `127.0.0.1`, not `localhost`, or sign-in is refused as an unknown origin). Locally no email is sent: enter your email, then press **Use local code** on the Verify email page to sign in with the code in one click. The button exists only outside production builds, and the code is also readable at `http://127.0.0.1:3000/api/test/auth-otp`.
 
 `pnpm dev:local` needs **no `.env` file**. It brings its own throwaway settings and turns on fakes so nothing calls a real provider:
 

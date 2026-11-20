@@ -126,6 +126,11 @@ describe("application shell", () => {
     expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
   });
 
+  it("pads the global navigation inside a Sidebar group like the Workspace navigation", () => {
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
+    expect(screen.getByRole("link", { name: "Home" }).closest('[data-slot="sidebar-group"]')).not.toBeNull();
+  });
+
   it("opens the account menu from the top of the Sidebar with the current Organization", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ success: true })));
     render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);

@@ -271,7 +271,13 @@ export default function AppSidebar({ actor, organization }: AppSidebarProps) {
         <AccountMenu actor={actor} organization={organization} />
       </SidebarHeader>
       <SidebarContent>
-        {workspace ? <WorkspaceNavigation workspace={workspace} /> : <NavigationMenu items={navigation} operator={operator} />}
+        {workspace ? (
+          <WorkspaceNavigation workspace={workspace} />
+        ) : (
+          <SidebarGroup>
+            <NavigationMenu items={navigation} operator={operator} />
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   );

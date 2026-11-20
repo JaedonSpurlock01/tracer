@@ -39,7 +39,7 @@ import { Frame, FramePanel } from "@/components/reui/frame";
 import { EmptyState } from "@/components/tracer/empty-state";
 import { NoResultsArt, NoWorkspacesArt } from "@/components/tracer/line-art";
 import WorkspaceSetupWizard from "@/components/tracer/workspace-setup-wizard";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCallTime } from "@/components/tracer/call-format";
@@ -150,9 +150,9 @@ function LedgerRow({ row, readOnly, onResume }: { row: WorkspaceRow; readOnly: b
             Resume Setup
           </Button>
         ) : (
-          <Button variant="outline" size="xs" render={<Link href={`/workspaces/${row.id}`} prefetch />}>
+          <Link href={`/workspaces/${row.id}`} prefetch className={buttonVariants({ variant: "outline", size: "xs" })}>
             Open
-          </Button>
+          </Link>
         )}
       </td>
     </tr>

@@ -6,12 +6,17 @@
  * @description
  *  Reads the normalized pending identity from sessionStorage, masks its
  *  destination, and handles verification, resend cooldown, and return flow.
+ *  Outside production builds a Use local code action reads the code from
+ *  the local sign-in fake and verifies with it in one click.
  *
  * @remarks
- *  Verification never receives an email address through the URL.
+ *  Verification never receives an email address through the URL. Use local
+ *  code is compiled out of production builds, and the endpoint behind it
+ *  answers 404 unless the local sign-in fake is switched on.
  *
  * @see
  *  app/sign-in/page.tsx
+ *  app/api/test/auth-otp/route.ts
  *
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
@@ -30,6 +35,9 @@ import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/comp
 
 const pendingEmailKey = "tracer.pending-email";
 const genericMessage = "We could not verify that code.";
+const noLocalCodeMessage = "No local code is available. Send a sign-in code first.";
+const wrongLocalCodeMessage = "The local code is not for this email. Only a provisioned, allowed email receives a code.";
+const localCodeOffered = process.env.NODE_ENV !== "production";
 const otpSlotClassName = "h-12 flex-1 text-base";
 
 function maskEmail(email: string): string {
@@ -59,24 +67,39 @@ export default function VerifyEmailPage() {
     return () => window.clearTimeout(timer);
   }, [cooldown]);
 
-  async function verify(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function verifyCode(otp: string, failureMessage = genericMessage) {
     setBusy(true);
     setError("");
     try {
       const response = await fetch("/api/auth/sign-in/email-otp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, otp: code }),
+        body: JSON.stringify({ email, otp }),
       });
       if (!response.ok) throw new Error(genericMessage);
       window.sessionStorage.removeItem(pendingEmailKey);
       router.push("/account/settings");
     } catch {
-      setError(genericMessage);
+      setError(failureMessage);
     } finally {
       setBusy(false);
     }
+  }
+
+  function verify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void verifyCode(code);
+  }
+
+  async function signInWithLocalCode() {
+    const response = await fetch("/api/test/auth-otp").catch(() => null);
+    const body = response?.ok ? ((await response.json()) as { code: string | null }) : null;
+    if (!body?.code) {
+      setError(noLocalCodeMessage);
+      return;
+    }
+    setCode(body.code);
+    await verifyCode(body.code, wrongLocalCodeMessage);
   }
 
   async function resend() {
@@ -140,6 +163,11 @@ export default function VerifyEmailPage() {
             <Button type="submit" className="w-full" disabled={busy || code.length !== 6 || !email}>
               {busy ? "Verifying..." : "Verify"}
             </Button>
+            {localCodeOffered ? (
+              <Button type="button" variant="outline" className="w-full" disabled={busy || !email} onClick={() => void signInWithLocalCode()}>
+                Use local code
+              </Button>
+            ) : null}
             {status ? <p className="text-sm text-muted-foreground" role="status">{status}</p> : null}
           </form>
           <Button type="button" variant="link" className="self-start px-0" onClick={changeEmail}>

@@ -60,9 +60,9 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 
 ### Typography
 
-- Use Geist throughout the product and generated reports.
-- Use Instrument Sans Semibold for the wordmark and page headings.
-- Use Geist Mono (`font-mono`) for identifiers: phone numbers, Organization slugs, timestamps, durations, scores, and KPI values. Body copy, labels, headings, and navigation stay in Instrument Sans.
+- Use Instrument Sans for the interface: body copy, labels, headings, navigation, numbers, and the wordmark (Semibold).
+- Use Geist in generated PDF reports.
+- Use Geist Mono (`font-mono`) only for phone numbers and identifiers such as Organization slugs and provider SIDs. Timestamps, durations, scores, money, and stat values are Instrument Sans with tabular numerals. Pages built before M25 still set those in Geist Mono until the milestone that rebuilds them.
 - Use `text-sm` for body content and `text-xs` for metadata, never smaller.
 - Use tabular numerals for phone numbers, durations, dates, scores, and KPIs.
 - Keep page and panel titles to one to three words where possible.
@@ -75,11 +75,64 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 - State destructive consequences precisely.
 - Never present an AI Lead Assessment as certain or final when no Lead Review exists.
 
+## Foundations
+
+These rules apply to every page. They were written in M25 after a review of the whole running application, and each page adopts them in the Phase 9 milestone that rebuilds it. Where a per-page section below disagrees with a rule here, the rule here wins and the page section is out of date.
+
+### What a page is for
+
+Every page answers one question first. Its regions are ordered by how often that question needs them, not by the order features were built, and at most one region per page is visually dominant. A region that has nothing to show shrinks to a line with its action; it never holds a large empty panel above populated ones.
+
+### Shared parts
+
+Pages are composed from the parts in `components/tracer/page-parts.tsx` rather than hand-written markup:
+
+| Part | Use | Rules |
+| --- | --- | --- |
+| `PageHeader` | The top of every page | The page's only `h1` at `text-xl`, one line of context beneath it, and the page's controls and primary action on the same row to the right. No badge row under the title. |
+| `StatStrip` | A page's headline numbers | One bordered strip, never separate tiles. Label at `text-xs`, value at `text-2xl`. A change against the previous period appears only when a previous period exists and the change is not zero. The definition is available on hover and to assistive technology, never printed. At most six stats. |
+| `Panel` | Every bordered region | An optional 44px header bar with an `h2` at `text-sm` and at most one quiet action on the right. The panel is a region named by that heading. |
+| `FactList` | Read-only details | Label over value. An absent value is named, never a dash. |
+| `ListRow` | Feeds of records | One link per row: the primary value, one muted detail line, and badges on the right. |
+
+### Type scale
+
+- `text-xl` semibold: the page heading, once per page.
+- `text-2xl` semibold: stat values only.
+- `text-sm` medium: panel headings and row primary values.
+- `text-sm`: body copy, form labels, and table cells.
+- `text-xs` muted: metadata, stat labels, table headers, and detail lines.
+
+Nothing is smaller than `text-xs`, and form labels are never larger than `text-sm`.
+
+### Timestamps
+
+Lists, feeds, and tables show the short form from `formatShortTime` in `components/tracer/call-format.ts`: the time of day for a moment today in the reporting timezone (`7:28 PM`), a short date for an earlier day this year (`Nov 17`), and a date with its year otherwise (`Dec 31, 2025`). The full timestamp from `formatCallTime` is the element's hover title. Seconds appear only where the moment itself is the subject: Call Detail facts and the Processing timeline. A timestamp never wraps onto a second line.
+
+### Absent values
+
+An absent value is named in muted text: `None` by default, or wording that says what is missing, such as `No Deal`, `No Tracking Number`, or `Not forwarded`. A dash is never a value. A comparison that cannot be made shows nothing.
+
+### Labels
+
+Interface labels are the shortest plain words a client would use: `Lead` rather than `Effective Lead Classification`, `Duration` rather than `Connected Duration`, `Recording` rather than `Recording Availability`. The canonical terms in `CONTEXT.md` remain the language of code, tests, and documentation.
+
+### Width and density
+
+- Reading pages (Home, Workspace Overview, settings, detail pages) cap their content at `max-w-6xl`, centered. Tables may use the full width.
+- A table row is one line at 1440px. A column that cannot fit moves behind the row instead of wrapping or forcing a horizontal scroll.
+- Panels on one page share a 20px gap.
+
+### Actions
+
+- Each page has at most one filled primary Button, and it is the action the page exists for.
+- An action that navigates is a link styled with `buttonVariants`, never a Button wrapping a link.
+
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
 - Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher. The content header holds the Sidebar trigger, route breadcrumbs (every segment linked but the current page, with Workspace and Call segments named by their records), and the notification popover.
-- Prefer Frame-led pages and dense controls. Each FramePanel is one flat surface; headings live inside the panel.
+- Prefer Frame-led pages and dense controls. Each FramePanel is one flat surface; headings live inside the panel. Pages rebuilt in Phase 9 use `Panel` from the shared parts for their bordered regions; Frame and FramePanel remain on pages not yet rebuilt and inside ReUI compositions such as the Data Grid.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
 - Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
 - Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
@@ -1169,6 +1222,7 @@ Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=
 - Change Email action returns to Sign In
 - Display the normalized destination email in masked form
 - Successful verification marks a Provisioned user Active and creates a session
+- Outside production builds, a `Use local code` outline action below Verify reads the code from the local sign-in fake and verifies with it in one click; it reports `No local code is available` when the fake is off and never appears in Production
 
 ### Authentication rules
 

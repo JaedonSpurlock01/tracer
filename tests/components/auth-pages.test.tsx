@@ -88,6 +88,48 @@ describe("authentication pages", () => {
     expect(router.push).toHaveBeenCalledWith("/sign-in");
   });
 
+  it("signs in with the local code in one click when the local sign-in fake holds one", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "operator@example.com");
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/test/auth-otp") return response({ code: "482913" });
+      return response({ token: "session-token", user: {} });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/account/settings"));
+    expect(fetch).toHaveBeenCalledWith("/api/auth/sign-in/email-otp", expect.objectContaining({ body: JSON.stringify({ email: "operator@example.com", otp: "482913" }) }));
+  });
+
+  it("says no local code is available when the local sign-in fake is off", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "operator@example.com");
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    expect(await screen.findByText("No local code is available. Send a sign-in code first.")).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("explains that a refused local code may belong to another email", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "someone@example.com");
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/test/auth-otp") return response({ code: "482913" });
+      return response({ message: "invalid" }, 400);
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    expect(await screen.findByText("The local code is not for this email. Only a provisioned, allowed email receives a code.")).toBeVisible();
+  });
+
   it("redirects unauthenticated users without rendering settings data", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(null)));
     render(<AccountSettingsPage />);

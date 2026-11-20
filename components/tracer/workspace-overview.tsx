@@ -46,7 +46,7 @@ import { useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   AnalyticsKpiRow,
   AnalyticsKpiSkeleton,
@@ -115,9 +115,9 @@ function RecentCalls({ workspace, calls, viewCallsHref, onRetry, pending }: { wo
       <FramePanel className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
           <h2 id="recent-calls-title" className="font-semibold">Recent Calls</h2>
-          <Button variant="outline" render={<Link href={viewCallsHref} prefetch />}>
+          <Link href={viewCallsHref} prefetch className={buttonVariants({ variant: "outline" })}>
             View Calls
-          </Button>
+          </Link>
         </div>
         {calls === null ? (
           <RegionRetry message="Recent Calls are unavailable." pending={pending} onRetry={onRetry} />
@@ -168,9 +168,9 @@ function RoutingHealth({ workspace, health, operator, pending, onRetry }: { work
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/25 bg-warning/15 px-3 py-2 text-sm">
             <p>No accepted Twilio voice webhook for the current Tracking Number.</p>
             {operator ? (
-              <Button variant="outline" size="sm" render={<Link href={`/workspaces/${workspace.id}/settings/number`} prefetch />}>
+              <Link href={`/workspaces/${workspace.id}/settings/number`} prefetch className={buttonVariants({ variant: "outline", size: "sm" })}>
                 Review Number Settings
-              </Button>
+              </Link>
             ) : null}
           </div>
         ) : null}
@@ -238,9 +238,9 @@ function SiteSummaryPanel({ workspace, site, operator, pending, onRetry, onLink 
         <div className="flex items-center justify-between gap-2">
           <h2 id="site-summary-title" className="font-semibold">Site</h2>
           {record ? (
-            <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/site`} prefetch />}>
+            <Link href={`/workspaces/${workspace.id}/site`} prefetch className={buttonVariants({ variant: "outline" })}>
               View Site
-            </Button>
+            </Link>
           ) : null}
         </div>
         {site === null ? (
@@ -291,9 +291,9 @@ function BusinessPanel({ workspace, business }: { workspace: WorkspaceRecord; bu
       <FramePanel role="region" aria-labelledby="business-title" className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-2">
           <h2 id="business-title" className="font-semibold">Business</h2>
-          <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings/site`} prefetch />}>
+          <Link href={`/workspaces/${workspace.id}/settings/site`} prefetch className={buttonVariants({ variant: "outline" })}>
             Edit Business
-          </Button>
+          </Link>
         </div>
         {business ? (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -379,18 +379,18 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
         <div className="flex flex-wrap gap-2">
           {operator ? (
             <>
-              <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/settings/general`} prefetch />}>
+              <Link href={`/workspaces/${workspace.id}/settings/general`} prefetch className={buttonVariants({ variant: "outline" })}>
                 Workspace Settings
-              </Button>
-              {setupRequired ? <Button render={<Link href={`/workspaces?resume=${workspace.id}`} />}>Resume Setup</Button> : null}
-              {archived ? <Button render={<Link href={`/workspaces/${workspace.id}/settings/danger`} />}>Restore</Button> : null}
-              {workspace.state === "Active" ? <Button render={<Link href={`/workspaces/${workspace.id}/flow`} />}>Edit Flow</Button> : null}
+              </Link>
+              {setupRequired ? <Link href={`/workspaces?resume=${workspace.id}`} className={buttonVariants()}>Resume Setup</Link> : null}
+              {archived ? <Link href={`/workspaces/${workspace.id}/settings/danger`} className={buttonVariants()}>Restore</Link> : null}
+              {workspace.state === "Active" ? <Link href={`/workspaces/${workspace.id}/flow`} className={buttonVariants()}>Edit Flow</Link> : null}
             </>
           ) : (
             <>
-              <Button variant="outline" render={<Link href={`/workspaces/${workspace.id}/reports`} prefetch />}>
+              <Link href={`/workspaces/${workspace.id}/reports`} prefetch className={buttonVariants({ variant: "outline" })}>
                 Reports
-              </Button>
+              </Link>
               <GenerateReportButton scope={{ kind: "workspace", workspace: { id: workspace.id, name: workspace.name, reportingTimezone: workspace.reportingTimezone } }} />
             </>
           )}
@@ -436,9 +436,9 @@ export default function WorkspaceOverview({ workspace, flow, readOnly = false, r
               Call Flow {published ? <Badge variant="outline">v{published.version}</Badge> : null}
             </h2>
             {published && operator && workspace.state === "Active" ? (
-              <Button size="sm" variant="outline" render={<Link href={`/workspaces/${workspace.id}/flow`} prefetch />}>
+              <Link href={`/workspaces/${workspace.id}/flow`} prefetch className={buttonVariants({ size: "sm", variant: "outline" })}>
                 Open Flow
-              </Button>
+              </Link>
             ) : null}
           </div>
           {published ? (
