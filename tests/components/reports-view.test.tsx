@@ -126,6 +126,25 @@ describe("ReportsView", () => {
     expect(screen.queryByRole("button", { name: "Regenerate" })).not.toBeInTheDocument();
   });
 
+  it("shows only Period, Status, and Actions below the md breakpoint and keeps every row action in one menu", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    const expired = reportJob({ id: "job-5", files: [{ file: "pdf", downloadable: false, href: null }], expiresAt: "2026-10-11T00:00:00.000Z", canRegenerate: true });
+    vi.stubGlobal("fetch", routedFetch({ "GET /api/reports": { jobs: [reportJob(), expired] } }));
+    renderView();
+
+    const menus = await screen.findAllByRole("button", { name: "Report actions" });
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual(["Period", "Status", "Actions"]);
+    fireEvent.click(menus[0]);
+    expect(await screen.findByRole("menuitem", { name: "Download PDF" })).toHaveAttribute("href", "/api/reports/job-1/files/pdf");
+    expect(screen.getByRole("menuitem", { name: "Download CSV" })).toHaveAttribute("href", "/api/reports/job-1/files/csv");
+    fireEvent.click(screen.getByRole("menuitem", { name: "View Parameters" }));
+    expect(await screen.findByRole("dialog", { name: "Report parameters" })).toBeVisible();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report parameters" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole("button", { name: "Report actions" })[1]);
+    expect(await screen.findByRole("menuitem", { name: "Regenerate" })).toBeVisible();
+  });
+
   it("shows a Generating row without downloads while the page stays usable", async () => {
     vi.stubGlobal("fetch", routedFetch({ "GET /api/reports": { jobs: [generatingJob()] } }));
     renderView();

@@ -95,6 +95,18 @@ describe("CallDetailView", () => {
     expect(screen.getByRole("region", { name: "Recording" })).toBeVisible();
   });
 
+  it("names the Call with its steps and actions on the first header row and its context on the second", () => {
+    render(<CallDetailView call={call} operator />);
+    const heading = screen.getByRole("heading", { level: 1, name: "+13125550142" });
+    const titleRow = heading.parentElement;
+    const header = heading.closest("header");
+    if (!titleRow || !header) throw new Error("Call header missing");
+    expect(within(titleRow).getByRole("group", { name: "Call navigation" })).toBeVisible();
+    expect(within(titleRow).getByRole("button", { name: "Call actions" })).toBeVisible();
+    expect(within(titleRow).queryByRole("link", { name: "Acme Plumbing" })).not.toBeInTheDocument();
+    expect(within(header).getByRole("link", { name: "Acme Plumbing" })).toBeVisible();
+  });
+
   it("lists the Call facts with the Operator-only Twilio call SID", () => {
     render(<CallDetailView call={call} operator />);
     expect(fact("Call start")).toHaveTextContent("Oct 16, 2026, 3:04:05 PM");
@@ -110,11 +122,13 @@ describe("CallDetailView", () => {
     expect(fact("Twilio call SID")).toHaveTextContent("CA00000000000000000000000000000001");
   });
 
-  it("omits the Twilio call SID for a Client Viewer and shows placeholders for missing facts", () => {
+  it("omits the Twilio call SID for a Client Viewer and names each missing fact instead of a dash", () => {
     render(<CallDetailView operator={false} call={{ ...call, twilioCallSid: undefined, callerNumber: null, destinationNumber: null, state: "In Progress", outcome: null, endedAt: null, totalDurationSeconds: null, connectedDurationSeconds: null }} />);
     expect(screen.getByRole("heading", { level: 1, name: "Unknown caller" })).toBeVisible();
     expect(within(screen.getByRole("region", { name: "Call facts" })).queryByText("Twilio call SID")).not.toBeInTheDocument();
-    expect(fact("Call end")).toHaveTextContent("-");
+    expect(fact("Call end")).toHaveTextContent("None");
+    expect(fact("Total duration")).toHaveTextContent("None");
+    expect(fact("Connected duration")).toHaveTextContent("None");
     expect(fact("Destination Number used")).toHaveTextContent("Not forwarded");
     expect(fact("Call Outcome")).toHaveTextContent("In Progress");
   });

@@ -16,7 +16,11 @@
  *  never block the page, a Failed row's concise reason, and Expired rows
  *  kept during metadata retention. Workspace Reports fixes the Generate
  *  Report scope to its Workspace and reporting timezone and lists only
- *  jobs whose scope covers that Workspace.
+ *  jobs whose scope covers that Workspace. Below the md breakpoint the grid
+ *  keeps Period, Status, and Actions, the Status cell is its Badge alone
+ *  with a Failed job's reason as its hover title, and each row's actions
+ *  move into one Report actions menu, so nothing scrolls sideways on a
+ *  phone.
  *
  * @remarks
  *  History comes from the shared jobs provider, which this view refreshes
@@ -45,7 +49,7 @@
 "use client";
 
 import Link from "next/link";
-import { DownloadIcon } from "lucide-react";
+import { DownloadIcon, EllipsisIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTable, type ColumnDef, type PaginationState } from "@tanstack/react-table";
 
@@ -59,10 +63,12 @@ import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { NoReportsArt } from "@/components/tracer/line-art";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCallDate, formatCallTime, formatShortTime } from "@/components/tracer/call-format";
 import { GenerateReportDialog, type GenerateReportScope } from "@/components/tracer/generate-report-dialog";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   fileLabels,
   jobDisplayStatus,
@@ -163,6 +169,8 @@ function ParametersDialog({ job, timeZone, checkedAt, onClose }: { job: ReportJo
   );
 }
 
+const narrowHiddenColumns = { requested: false, scope: false, files: false, expires: false };
+
 export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
   const { jobs, checkedAt, failed, refresh, addJob } = useReportJobs();
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -172,6 +180,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
   const workspace = scope.kind === "workspace" ? scope.workspace : null;
   const timeZone = workspace ? workspace.reportingTimezone : scope.kind === "global" ? scope.accountTimeZone : "UTC";
+  const narrow = useIsMobile();
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
@@ -225,7 +234,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
         header: "Period",
         cell: ({ row }) => {
           const label = jobPeriodLabel(row.original);
-          return <span title={label} className="block truncate tabular-nums">{label}</span>;
+          return <span title={label} className={narrow ? "block max-w-32 truncate tabular-nums" : "block truncate tabular-nums"}>{label}</span>;
         },
         size: 260,
         meta: { skeleton: <Skeleton className="h-4 w-48" /> },
@@ -242,6 +251,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
         header: "Status",
         cell: ({ row }) => {
           const status = jobDisplayStatus(row.original, checkedAt);
+          if (narrow) return <Badge variant={statusVariants[status]} title={status === "Failed" ? row.original.failureReason ?? undefined : undefined}>{status}</Badge>;
           return (
             <div className="flex min-w-0 items-center gap-2">
               <Badge variant={statusVariants[status]}>{status}</Badge>
@@ -271,7 +281,28 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
       {
         id: "actions",
         header: "Actions",
-        cell: ({ row }) => (
+        cell: ({ row }) => narrow ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger className={buttonVariants({ variant: "ghost", size: "icon-sm" })} aria-label="Report actions">
+              <EllipsisIcon aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {row.original.files.map((file) =>
+                file.downloadable && file.href ? (
+                  <DropdownMenuItem key={file.file} render={<a href={file.href} download />}>
+                    <DownloadIcon aria-hidden /> Download {fileLabels[file.file]}
+                  </DropdownMenuItem>
+                ) : null,
+              )}
+              {row.original.canRegenerate ? (
+                <DropdownMenuItem disabled={regenerating === row.original.id} onClick={() => void regenerate(row.original)}>
+                  {row.original.status === "Failed" ? "Retry" : "Regenerate"}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem onClick={() => setParametersJob(row.original)}>View Parameters</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
           <div className="flex items-center gap-1 whitespace-nowrap">
             {row.original.files.map((file) =>
               file.downloadable && file.href ? (
@@ -290,18 +321,18 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
             </Button>
           </div>
         ),
-        size: 312,
+        size: narrow ? 64 : 312,
         meta: { skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ];
-  }, [addJob, checkedAt, regenerating, timeZone]);
+  }, [addJob, checkedAt, narrow, regenerating, timeZone]);
 
   const table = useTable({
     features: dataGridFeatures,
     data: rows,
     columns,
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, columnVisibility: narrow ? narrowHiddenColumns : {} },
     onPaginationChange: setPagination,
   });
 
@@ -339,7 +370,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
             {actionError}
           </p>
         ) : null}
-        <DataGrid table={table} recordCount={rows.length} isLoading={loading} emptyMessage={emptyMessage}>
+        <DataGrid table={table} recordCount={rows.length} isLoading={loading} emptyMessage={emptyMessage} tableLayout={{ width: narrow ? "auto" : "fixed" }}>
           <DataGridScrollArea orientation="horizontal">
             <DataGridTable />
           </DataGridScrollArea>

@@ -12,7 +12,8 @@
  *  caller gives) and shown muted. PageHeader holds the page's one top
  *  heading, a line of context, and its controls on a single row. Panel is
  *  the bordered surface with an optional header bar of a title and one
- *  action. ListRow is a one-line link row with a detail line beneath its
+ *  action; a header with nothing beneath it, such as a closed section,
+ *  drops its bottom rule. ListRow is a one-line link row with a detail line beneath its
  *  primary value and room for badges on the right.
  *
  * @remarks
@@ -128,7 +129,7 @@ export function Panel({ title, action, children, className, ...props }: Omit<Com
       {...props}
     >
       {title ? (
-        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border px-4 last:border-b-0">
           <h2 id={id} className="text-sm font-medium">{title}</h2>
           {action}
         </div>

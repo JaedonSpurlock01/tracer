@@ -174,7 +174,8 @@ describe("IntegrationsView", () => {
     expect(within(nav).getByText("Organization connections")).toBeVisible();
     expect(within(nav).getByText("Platform services")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Twilio" })).toBeVisible();
-    expect(screen.getAllByRole("region")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Needs attention" })).toBeVisible();
+    expect(screen.getAllByRole("region")).toHaveLength(2);
     expect(within(detail("Twilio")).getByRole("button", { name: "Connect Twilio" })).toBeVisible();
     expect(within(detail("Twilio")).getByText("Not configured")).toBeVisible();
 

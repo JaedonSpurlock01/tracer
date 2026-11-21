@@ -6,11 +6,13 @@
  * @brief  Renders Call Detail as a reader with a now-playing bar.
  *
  * @description
- *  The Transcript is the page. A one-line header names the Call by its
- *  caller number with the Call Outcome and effective Lead classification,
- *  the Workspace, Tracking Number, and start time, the previous and next
- *  Call steps labeled with the Call they go to, and an actions menu with
- *  Download MP3, Export Call, and the Operator-only Purge Media. A verdict
+ *  The Transcript is the page. The header's first row names the Call by
+ *  its caller number with the Call Outcome and effective Lead
+ *  classification, the previous and next Call steps labeled with the Call
+ *  they go to, and an actions menu with Download MP3, Export Call, and the
+ *  Operator-only Purge Media; its second row gives the Workspace, Tracking
+ *  Number, and start time. The Call facts are the shared FactList, which
+ *  names an absent value instead of printing a dash. A verdict
  *  strip shows the effective classification, the Lead Assessment score and
  *  summary, and who reviewed the Call, and expands into the full Lead
  *  Assessment and the Lead Review. Below it the Transcript stays pinned
@@ -53,7 +55,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Timeline, TimelineContent, TimelineDate, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from "@/components/reui/timeline";
 import { AssessmentBody, LeadReviewBody, TranscriptBody, useCallAnalysis } from "@/components/tracer/call-analysis";
 import { ExportCallDialog } from "@/components/tracer/call-export";
@@ -62,6 +63,7 @@ import { formatCallDate, formatCallTime, formatClock, formatTimeOfDay } from "@/
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
 import { PlaybackProvider } from "@/components/tracer/playback";
 import PurgeMediaDialog, { canPurgeMedia, purgedCallDetail } from "@/components/tracer/purge-media";
+import { FactList, Panel, type Fact } from "@/components/tracer/page-parts";
 import RecordingPlayer from "@/components/tracer/recording-player";
 import type { CallDetail, CallTimelineEntry } from "@/data/call-details";
 import type { CallStep } from "@/data/call-source";
@@ -91,36 +93,28 @@ function recordingStatus(call: CallDetail): string {
   }
 }
 
-function duration(seconds: number | null): string {
-  return seconds === null ? "-" : formatClock(seconds);
-}
-
-function Fact({ term, children }: { term: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <dt className="text-xs text-muted-foreground">{term}</dt>
-      <dd className="text-sm break-words tabular-nums">{children}</dd>
-    </div>
-  );
+function duration(seconds: number | null): string | null {
+  return seconds === null ? null : formatClock(seconds);
 }
 
 function CallFacts({ call }: { call: CallDetail }) {
   const timeZone = call.workspace.reportingTimezone;
+  const facts: Fact[] = [
+    { label: "Call start", value: formatCallTime(call.startedAt, timeZone) },
+    { label: "Call end", value: call.endedAt ? formatCallTime(call.endedAt, timeZone) : null },
+    { label: "Total duration", value: duration(call.totalDurationSeconds) },
+    { label: "Connected duration", value: duration(call.connectedDurationSeconds) },
+    { label: "Tracking Number dialed", value: call.trackingNumber },
+    { label: "Destination Number used", value: call.destinationNumber, empty: "Not forwarded" },
+    { label: "Workspace", value: call.workspace.name },
+    { label: "Call Outcome", value: call.outcome ?? "In Progress" },
+    { label: "Spam gate", value: call.spamGate },
+    { label: "Recording", value: recordingStatus(call) },
+  ];
+  if (call.twilioCallSid) facts.push({ label: "Twilio call SID", value: call.twilioCallSid, mono: true });
   return (
     <div className="flex flex-col gap-4">
-      <dl className="grid gap-x-6 gap-y-3">
-        <Fact term="Call start">{formatCallTime(call.startedAt, timeZone)}</Fact>
-        <Fact term="Call end">{call.endedAt ? formatCallTime(call.endedAt, timeZone) : "-"}</Fact>
-        <Fact term="Total duration">{duration(call.totalDurationSeconds)}</Fact>
-        <Fact term="Connected duration">{duration(call.connectedDurationSeconds)}</Fact>
-        <Fact term="Tracking Number dialed">{call.trackingNumber}</Fact>
-        <Fact term="Destination Number used">{call.destinationNumber ?? "Not forwarded"}</Fact>
-        <Fact term="Workspace">{call.workspace.name}</Fact>
-        <Fact term="Call Outcome">{call.outcome ?? "In Progress"}</Fact>
-        <Fact term="Spam gate">{call.spamGate}</Fact>
-        <Fact term="Recording">{recordingStatus(call)}</Fact>
-        {call.twilioCallSid ? <Fact term="Twilio call SID">{call.twilioCallSid}</Fact> : null}
-      </dl>
+      <FactList facts={facts} />
       <p className="text-xs text-muted-foreground">Times are shown in {timeZone}.</p>
     </div>
   );
@@ -149,24 +143,23 @@ function ProcessingTimeline({ call }: { call: CallDetail }) {
 }
 
 /** A rail region that opens and closes; its header is one line, level with the Transcript's. */
-function RailSection({ id, title, defaultOpen, children }: { id: string; title: string; defaultOpen: boolean; children: ReactNode }) {
+function RailSection({ title, defaultOpen, children }: { title: string; defaultOpen: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section aria-labelledby={id}>
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <Frame>
-          <div className="flex items-center justify-between px-(--frame-panel-header-px) py-(--frame-panel-header-py)">
-            <FrameTitle><h2 id={id}>{title}</h2></FrameTitle>
-            <CollapsibleTrigger className={buttonVariants({ variant: "ghost", size: "icon-xs", className: "-my-1" })} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>
-              <ChevronDownIcon aria-hidden className={cn("transition-transform", open ? "rotate-180" : "")} />
-            </CollapsibleTrigger>
-          </div>
-          <CollapsibleContent>
-            <FramePanel>{children}</FramePanel>
-          </CollapsibleContent>
-        </Frame>
-      </Collapsible>
-    </section>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Panel
+        title={title}
+        action={
+          <CollapsibleTrigger className={buttonVariants({ variant: "ghost", size: "icon-xs" })} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>
+            <ChevronDownIcon aria-hidden className={cn("transition-transform", open ? "rotate-180" : "")} />
+          </CollapsibleTrigger>
+        }
+      >
+        <CollapsibleContent>
+          <div className="p-4">{children}</div>
+        </CollapsibleContent>
+      </Panel>
+    </Collapsible>
   );
 }
 
@@ -242,8 +235,7 @@ function Verdict({ call, operator, analysis }: { call: CallDetail; operator: boo
   const showReview = call.leadReview !== null || operator;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <Frame>
-        <FramePanel className="flex flex-col gap-3">
+      <Panel className="gap-3 p-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               {effective ? <LeadClassificationBadge classification={effective.classification} automated={effective.source === "assessment"} /> : <Badge variant="outline">No classification</Badge>}
@@ -288,8 +280,7 @@ function Verdict({ call, operator, analysis }: { call: CallDetail; operator: boo
               </section>
             </div>
           </CollapsibleContent>
-        </FramePanel>
-      </Frame>
+      </Panel>
     </Collapsible>
   );
 }
@@ -324,19 +315,32 @@ function CallDetailReader({
   const caller = call.callerNumber ?? "Unknown caller";
   return (
     <div className="flex min-h-[calc(100vh-6rem)] flex-col gap-4">
-      <header className="flex flex-wrap items-center gap-3">
-        <Link className={buttonVariants({ variant: "ghost", size: "icon", className: "-ml-2" })} href={navigation.back} prefetch aria-label="Back to Calls">
-          <ChevronLeftIcon aria-hidden />
-        </Link>
-        <BreadcrumbLabel segment={call.id} label={caller} />
-        <h1 className="text-xl font-semibold tracking-tight tabular-nums">{caller}</h1>
-        <div className="flex items-center gap-2">
-          <CallOutcomeBadge outcome={call.outcome} />
-          {call.effectiveLeadClassification ? (
-            <LeadClassificationBadge classification={call.effectiveLeadClassification.classification} automated={call.effectiveLeadClassification.source === "assessment"} />
-          ) : null}
+      <header className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Link className={buttonVariants({ variant: "ghost", size: "icon", className: "-ml-2" })} href={navigation.back} prefetch aria-label="Back to Calls">
+            <ChevronLeftIcon aria-hidden />
+          </Link>
+          <BreadcrumbLabel segment={call.id} label={caller} />
+          <h1 className="text-xl font-semibold tracking-tight tabular-nums">{caller}</h1>
+          <div className="flex items-center gap-2">
+            <CallOutcomeBadge outcome={call.outcome} />
+            {call.effectiveLeadClassification ? (
+              <LeadClassificationBadge classification={call.effectiveLeadClassification.classification} automated={call.effectiveLeadClassification.source === "assessment"} />
+            ) : null}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <ButtonGroup aria-label="Call navigation">
+              <StepCall label="Previous Call" step={navigation.previous} timeZone={timeZone}>
+                <ChevronUpIcon data-icon="inline-start" aria-hidden />
+              </StepCall>
+              <StepCall label="Next Call" step={navigation.next} timeZone={timeZone}>
+                <ChevronDownIcon data-icon="inline-start" aria-hidden />
+              </StepCall>
+            </ButtonGroup>
+            <ActionsMenu call={call} operator={operator} onPurged={(purgedAt) => setPurge({ call: loadedCall, purgedAt })} />
+          </div>
         </div>
-        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           <Link href={`/workspaces/${call.workspace.id}`} prefetch className="text-foreground transition-colors hover:text-muted-foreground">
             {call.workspace.name}
           </Link>
@@ -345,35 +349,19 @@ function CallDetailReader({
           </span>
           <span className="tabular-nums">{formatCallTime(call.startedAt, timeZone)}</span>
         </p>
-        <div className="ml-auto flex items-center gap-2">
-          <ButtonGroup aria-label="Call navigation">
-            <StepCall label="Previous Call" step={navigation.previous} timeZone={timeZone}>
-              <ChevronUpIcon data-icon="inline-start" aria-hidden />
-            </StepCall>
-            <StepCall label="Next Call" step={navigation.next} timeZone={timeZone}>
-              <ChevronDownIcon data-icon="inline-start" aria-hidden />
-            </StepCall>
-          </ButtonGroup>
-          <ActionsMenu call={call} operator={operator} onPurged={(purgedAt) => setPurge({ call: loadedCall, purgedAt })} />
-        </div>
       </header>
       <Verdict call={call} operator={operator} analysis={analysis} />
       <div className="grid flex-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <section aria-labelledby="call-transcript-title" className="sticky top-4">
-          <Frame>
-            <FrameHeader>
-              <FrameTitle><h2 id="call-transcript-title">Transcript</h2></FrameTitle>
-            </FrameHeader>
-            <FramePanel>
-              <TranscriptBody transcript={analysis.transcript} operator={operator} retry={analysis.retry} emphasis={analysis.emphasis} listClassName="max-h-[calc(100vh-22rem)]" />
-            </FramePanel>
-          </Frame>
-        </section>
+        <Panel title="Transcript" className="sticky top-4">
+          <div className="p-4">
+            <TranscriptBody transcript={analysis.transcript} operator={operator} retry={analysis.retry} emphasis={analysis.emphasis} listClassName="max-h-[calc(100vh-22rem)]" />
+          </div>
+        </Panel>
         <div className="flex flex-col gap-4">
-          <RailSection id="call-facts-title" title="Call facts" defaultOpen>
+          <RailSection title="Call facts" defaultOpen>
             <CallFacts call={call} />
           </RailSection>
-          <RailSection id="call-timeline-title" title="Processing timeline" defaultOpen={false}>
+          <RailSection title="Processing timeline" defaultOpen={false}>
             <ProcessingTimeline call={call} />
           </RailSection>
         </div>

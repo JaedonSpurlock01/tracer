@@ -15,13 +15,13 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M29 - Forms, Settings, and Action Feedback, started on 2026-11-20
-- **Next milestone:** M30 - Detail Pages and Experience Acceptance
-- **Last completed:** M28 - Workspace Overview Briefing, on 2026-11-20, with its Staging acceptance and M27's riding with M29's
+- **Current milestone:** M30 - Detail Pages and Experience Acceptance, started on 2026-11-21
+- **Next milestone:** M18 - Production Hardening and Acceptance resumes once the Product Owner accepts the interface
+- **Last completed:** M29 - Forms, Settings, and Action Feedback, on 2026-11-21, with its Staging acceptance and M27's and M28's riding with M30's
 - **Paused:** M18 - Production Hardening and Acceptance, deferred by the Product Owner on 2026-11-18 for the Experience Overhaul. M24's Staging gate and M19 wait behind it
 - **Why the plan changed:** the Product Owner reviewed the running application on 2026-11-18 and found it clunky and unfinished to use. Interface polish had been arriving as one-line additions to M18, which made M18 a catch-all and never addressed how whole pages read. The Experience Overhaul is its own phase so the interface is planned and verified as product work
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production deployed from `main` on 2026-11-18 ahead of M19 for Product Owner acceptance, with Production data empty since 2026-10-24
-- **Last roadmap review:** 2026-11-20
+- **Last roadmap review:** 2026-11-21
 
 Completed milestones M0 through M23 and their full records are in `docs/ROADMAP_ARCHIVE.md`.
 
@@ -195,8 +195,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M26 | Home Briefing | Complete | Preview and Staging | M25 |
 | M27 | Calls Absorbs Activity | Complete | Preview and Staging | M26 |
 | M28 | Workspace Overview Briefing | Complete | Preview and Staging | M27 |
-| M29 | Forms, Settings, and Action Feedback | In Progress | Preview and Staging | M28 |
-| M30 | Detail Pages and Experience Acceptance | Not Started | Staging | M29 |
+| M29 | Forms, Settings, and Action Feedback | Complete | Preview and Staging | M28 |
+| M30 | Detail Pages and Experience Acceptance | In Progress | Staging | M29 |
 | M18 | Production Hardening and Acceptance | Deferred | Staging | M30 |
 | M24 | Keyword Discovery | Deferred | Preview and Staging | M18 |
 | M19 | Production Deployment and Stabilization | Not Started | Production | M24 |
@@ -347,12 +347,13 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M29 - Forms, Settings, and Action Feedback
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Every form looks like the same form, and every action visibly starts, succeeds, or fails where the user pressed.
 - **Depends on:** M28
 - **Target environment:** Preview and Staging
 - **Started:** 2026-11-20, after M28 closed on its local gate. The Staging review covers M28's Workspace Overview and M27's Calls and four rebuilt tables alongside the forms and settings.
 - **Progress (2026-11-20):** all four slices landed locally. `components/tracer/form-parts.tsx` holds `SettingsSection`, `SwitchField`, `useAction`, and `ActionButton`, and `DESIGN.md` Foundations gains Forms and actions. Workspace Settings and Account Settings use a `PageHeader` and one panel per section with its own save, a description under each Recording and AI switch, and read-only values as facts; the shared busy flags in both are gone, so one action never disables another section. Every action that sends a request shows its own pending state, names a failure in the destructive style beside its button, and confirms beside it instead of the page header; a disabled action says why (an Archived Workspace, an Active Workspace that must detach its number before archiving, a Draft with issues). Confirmation dialogs stay open with their failure inside. The same treatment reached the Create Workspace wizard, Workspaces, Users, Integrations, the Call Flow editor (whose Edit Flow, Discard Draft, and Version history failures were silent), Forms rows (a failure now sits beneath its row), the Site Hosting panel and Site picker, Call Detail Retry and Purge Media, and Reports. Account Settings no longer hides the session list when a revoke fails. Users' Disable now keeps the Manage dialog open. The verification gate passed locally (798 unit and component tests, 556 integration tests, 14 Worker tests, 22 browser journeys, typecheck, lint with no new warnings, production build). The first browser run caught a confirmation repeated inside a closing Detach Number dialog; confirm buttons that close their dialog now leave the confirmation to the button that opened it. No browser journey assertion changed. M29 remains In Progress until the Product Owner accepts the forms and settings on Staging, together with M28's Workspace Overview and M27's Calls and four rebuilt tables.
+- **Completion (2026-11-21):** the Product Owner directed on 2026-11-21 that M29 close on its local gate and that its Staging acceptance of the forms and settings, together with M28's Workspace Overview and M27's Calls and four rebuilt tables, ride with M30's Staging walk of every page.
 
 #### Vertical slices
 
@@ -377,10 +378,12 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M30 - Detail Pages and Experience Acceptance
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** The remaining pages match the rest, loading states match the pages they stand in for, and the Product Owner accepts the whole interface.
 - **Depends on:** M29
 - **Target environment:** Staging
+- **Started:** 2026-11-21, after M29 closed on its local gate. The Product Owner's Staging walk of every page covers M27's, M28's, and M29's acceptance.
+- **Progress (2026-11-21):** all four slices landed locally. Call Detail's header is two rows (the Call with its steps and actions, then its Workspace, Tracking Number, and start time), its facts are the shared `FactList` naming an absent value instead of a dash, and its verdict strip, Transcript, and rail sections are `Panel`s. Site and Integrations moved to `PageHeader`, `Panel`, and `FactList`; the Site page is a reading page with one `StatStrip` and its date range in the header, and names every absent value. The Pricing guide, the one other page still on Frames, moved to the same parts because this milestone's outcome is that the remaining pages match the rest. Every page now has its own loading state in its page's shape, rendering the panels the page always shows with their real headings; the route-group boundaries are gone because Next prefetches only to the first boundary, so one per group stood in for every page in it, and Home, the Workspace Overview, and Workspace Calls moved into the `(home)`, `(overview)`, and `(list)` route groups to hold theirs. The 390px pass covered every page as an Operator and fixed two: the Pricing Rates table (its explanation now sits under each rate's name below `md`) and the Reports history grid (below `md` it shows Period, Status, and a Report actions menu holding the row's downloads, Regenerate or Retry, and View Parameters). `DESIGN.md` gives every page section the question it answers first and its regions by priority, gains Foundations rules for loading states, and drops detail that restated the code (file paths, wiring, ReUI starting examples, library internals). A `Panel` whose header has nothing beneath it, such as a closed rail section, drops its header rule. Browser journey changes: the Site journey checks at 390px that the page does not scroll sideways and its header and Hosting actions are fully on screen; the Reports 390px journey expects Period, Status, and Actions with View Parameters in the Report actions menu instead of an inline button and a scrolling grid. The full verification boundary passed locally (815 unit and component tests, 556 integration tests, 14 Worker tests, 22 browser journeys, typecheck, lint with no new warnings, production build); the first browser run failed the Reports 390px journey on the old assertion and then on a grid 40px too wide once real report rows were present, fixed by capping the period's width and showing the Status Badge alone on phones. M30 remains In Progress until the Product Owner walks every page on Staging as an Operator and as a Client Viewer.
 
 #### Vertical slices
 

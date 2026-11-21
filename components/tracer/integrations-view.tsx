@@ -17,7 +17,8 @@
  *  Number Assignments without restoring Twilio.
  *  A Needs attention lane above them lists unconnected Organization
  *  credentials, a missing Twilio Auth Token, and degraded providers with
- *  the action that resolves each. The detail shows the provider's facts,
+ *  the action that resolves each. The page uses the shared PageHeader,
+ *  Panel, and FactList. The detail shows the provider's facts,
  *  its actions, and its own panels: Twilio numbers, Cloudflare Sites with
  *  their link state, Recording transfer failures for R2 and Trigger.dev,
  *  and the oldest purged or expired Recordings whose media cleanup is
@@ -51,7 +52,6 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -61,6 +61,7 @@ import { Input } from "@/components/ui/input";
 import { ActionButton, useAction, type ActionResult } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { ProviderLogo } from "@/components/tracer/provider-logo";
+import { FactList, PageHeader, Panel, type Fact } from "@/components/tracer/page-parts";
 import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import { callDetailHref } from "@/data/call-source";
 import type { CloudflareConnectionRecord, CloudflareSiteListEntry } from "@/data/cloudflare-connection";
@@ -140,78 +141,67 @@ function StatusDot({ state }: { state: ProviderState }) {
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
-type Fact = [term: string, value: ReactNode];
-
-function FactList({ facts }: { facts: Fact[] }) {
-  return (
-    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-      {facts.map(([term, value]) => (
-        <div key={term} className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{term}</dt>
-          <dd className="truncate tabular-nums">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
 function analysisFacts(identifier: string | null, analysis: OpenAIAnalysisHealth): Fact[] {
   return [
-    ["Identifier", identifier ?? "Not available"],
-    ["Transcription model", analysis.transcriptionModel],
-    ["Lead analysis model", analysis.leadAssessmentModel],
-    ["Last successful Transcript", formatDate(analysis.lastTranscriptAt)],
-    ["Last successful Lead Assessment", formatDate(analysis.lastLeadAssessmentAt)],
-    ["Recent processing failures", String(analysis.failedCount)],
-    ["Last failure", formatDate(analysis.lastFailureAt)],
+    { label: "Identifier", value: identifier, empty: "Not available", mono: true },
+    { label: "Transcription model", value: analysis.transcriptionModel },
+    { label: "Lead analysis model", value: analysis.leadAssessmentModel },
+    { label: "Last successful Transcript", value: formatDate(analysis.lastTranscriptAt) },
+    { label: "Last successful Lead Assessment", value: formatDate(analysis.lastLeadAssessmentAt) },
+    { label: "Recent processing failures", value: String(analysis.failedCount) },
+    { label: "Last failure", value: formatDate(analysis.lastFailureAt) },
   ];
 }
 
 function serviceFacts(provider: ProviderHealth): Fact[] {
   if (provider.analysis) return analysisFacts(provider.identifier, provider.analysis);
   const facts: Fact[] = [
-    ["Identifier", provider.identifier ?? "Not available"],
-    [provider.recentFailures ? "Last successful Recording transfer" : "Last successful check", formatDate(provider.lastSuccessAt)],
-    ["Last failure", formatDate(provider.lastFailureAt)],
+    { label: "Identifier", value: provider.identifier, empty: "Not available", mono: true },
+    { label: provider.recentFailures ? "Last successful Recording transfer" : "Last successful check", value: formatDate(provider.lastSuccessAt) },
+    { label: "Last failure", value: formatDate(provider.lastFailureAt) },
   ];
-  if (provider.lastFailureDetail) facts.push(["Failure detail", provider.lastFailureDetail]);
-  if (provider.mediaLifecycle) facts.push(["Unfinished media cleanup", String(provider.mediaLifecycle.stuckCount)]);
+  if (provider.lastFailureDetail) facts.push({ label: "Failure detail", value: provider.lastFailureDetail });
+  if (provider.mediaLifecycle) facts.push({ label: "Unfinished media cleanup", value: String(provider.mediaLifecycle.stuckCount) });
   return facts;
 }
 
 function connectedBy(record: { connectedBy: { name: string } | null; connectedAt: string; lastVerifiedAt: string | null }): Fact[] {
-  return [["Connected by", record.connectedBy?.name ?? "Unknown"], ["Connected at", formatDate(record.connectedAt)], ["Last verified", formatDate(record.lastVerifiedAt)]];
+  return [
+    { label: "Connected by", value: record.connectedBy?.name ?? null, empty: "Unknown" },
+    { label: "Connected at", value: formatDate(record.connectedAt) },
+    { label: "Last verified", value: formatDate(record.lastVerifiedAt) },
+  ];
 }
 
 function twilioFacts(connection: TwilioConnectionRecord): Fact[] {
   return [
-    ["Account SID", <span key="sid" className="font-mono">{connection.accountSid}</span>],
-    ["API Key SID", <span key="key" className="font-mono">{connection.apiKeySid}</span>],
-    ["Account name", connection.accountFriendlyName ?? "Not available"],
+    { label: "Account SID", value: connection.accountSid, mono: true },
+    { label: "API Key SID", value: connection.apiKeySid, mono: true },
+    { label: "Account name", value: connection.accountFriendlyName, empty: "Not available" },
     ...connectedBy(connection),
-    ["Webhook Auth Token", <Badge key="token" variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge>],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Webhook Auth Token", value: <Badge variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge> },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
 function cloudflareFacts(connection: CloudflareConnectionRecord): Fact[] {
   return [
-    ["Account ID", <span key="id" className="font-mono">{connection.accountId}</span>],
+    { label: "Account ID", value: connection.accountId, mono: true },
     ...connectedBy(connection),
-    ["Last sync", formatDate(connection.lastSyncedAt)],
-    ["Sites", String(connection.siteCount)],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Last sync", value: formatDate(connection.lastSyncedAt) },
+    { label: "Sites", value: String(connection.siteCount) },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
 function dataforseoFacts(connection: DataForSeoConnectionRecord): Fact[] {
   return [
-    ["API login", <span key="login" className="font-mono">{connection.login}</span>],
+    { label: "API login", value: connection.login, mono: true },
     ...connectedBy(connection),
-    ["Last check", formatDate(connection.lastCheckedAt)],
-    ["Lookups this month", visitsFormatter.format(connection.lookupsThisMonth)],
-    ["Keywords tracked", visitsFormatter.format(connection.keywordCount)],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Last check", value: formatDate(connection.lastCheckedAt) },
+    { label: "Lookups this month", value: visitsFormatter.format(connection.lookupsThisMonth) },
+    { label: "Keywords tracked", value: visitsFormatter.format(connection.keywordCount) },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
@@ -279,31 +269,31 @@ function NavGroup({ label, providers, current, records, onSelect }: { label: str
 }
 
 function NumbersTable({ numbers }: { numbers: TwilioNumberRecord[] }) {
-  if (!numbers.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No numbers synced yet.</p>;
+  if (!numbers.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No numbers synced yet.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Twilio numbers" className="w-full text-sm">
         <caption className="sr-only">Twilio numbers</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Phone Number</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Friendly Name</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Voice</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Status</th></tr></thead>
-        <tbody>{numbers.map((number) => <tr key={number.id} className="border-b last:border-0"><td className="px-3 py-2 font-mono">{number.phoneNumber}</td><td className="px-3 py-2">{number.friendlyName}</td><td className="px-3 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-3 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Phone Number</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Friendly Name</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Voice</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Status</th></tr></thead>
+        <tbody>{numbers.map((number) => <tr key={number.id} className="border-b last:border-0"><td className="px-4 py-2 font-mono">{number.phoneNumber}</td><td className="px-4 py-2">{number.friendlyName}</td><td className="px-4 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-4 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
 function SitesTable({ sites }: { sites: CloudflareSiteListEntry[] }) {
-  if (!sites.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>;
+  if (!sites.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Sites" className="w-full text-sm">
         <caption className="sr-only">Sites</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Site</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Health</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Last deployment</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Visits (30 days)</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th></tr></thead>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Site</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Health</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Last deployment</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Visits (30 days)</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Workspace</th></tr></thead>
         <tbody>{sites.map((site) => <tr key={site.id} className="border-b last:border-0">
-          <td className="px-3 py-2 font-mono">{site.primaryHostname}</td>
-          <td className="px-3 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
-          <td className="px-3 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
-          <td className="px-3 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
-          <td className="px-3 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
+          <td className="px-4 py-2 font-mono">{site.primaryHostname}</td>
+          <td className="px-4 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
+          <td className="px-4 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
+          <td className="px-4 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
+          <td className="px-4 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -311,26 +301,26 @@ function SitesTable({ sites }: { sites: CloudflareSiteListEntry[] }) {
 }
 
 function RecordingTransferFailures({ failures }: { failures: RecordingTransferFailure[] }) {
-  if (!failures.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Recording transfer failures.</p>;
+  if (!failures.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No Recording transfer failures.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Recent transfer failures" className="w-full text-sm">
         <caption className="sr-only">Recent transfer failures</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Stage</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Reason</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Failed at</th></tr></thead>
-        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b last:border-0"><td className="px-3 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-3 py-2">{failure.reason}</td><td className="px-3 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Stage</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Reason</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Failed at</th></tr></thead>
+        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b last:border-0"><td className="px-4 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-4 py-2">{failure.reason}</td><td className="px-4 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
 function MediaLifecycle({ health }: { health: MediaLifecycleHealth }) {
-  if (!health.oldestStuck.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No unfinished media cleanup.</p>;
+  if (!health.oldestStuck.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No unfinished media cleanup.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Unfinished media cleanup" className="w-full text-sm">
         <caption className="sr-only">Unfinished media cleanup</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Call</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Media</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Since</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Detail</th></tr></thead>
-        <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b last:border-0"><td className="px-3 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-3 py-2">{entry.workspaceName}</td><td className="px-3 py-2">{entry.media}</td><td className="px-3 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-3 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Call</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Workspace</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Media</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Since</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Detail</th></tr></thead>
+        <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b last:border-0"><td className="px-4 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-4 py-2">{entry.workspaceName}</td><td className="px-4 py-2">{entry.media}</td><td className="px-4 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-4 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
       </table>
     </div>
   );
@@ -474,7 +464,7 @@ function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 px-3 pb-3 text-sm">
+    <div className="flex flex-col gap-3 px-4 py-3 text-sm">
       <p>
         <span className="font-medium">Status: </span>
         {formsKey ? `Generated ${formatDate(formsKey.createdAt)}` : "No key yet"}
@@ -780,65 +770,59 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   if (selected.mediaLifecycle) panels.push({ title: "Media cleanup", description: "The oldest purged or expired Recordings whose media cleanup is unfinished.", body: <MediaLifecycle health={selected.mediaLifecycle} /> });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <StatusDot state={attention.length ? "degraded" : "connected"} />
-          {readyCount} of {providers.length} providers ready
-        </p>
-      </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Integrations"
+        description={
+          <span className="flex items-center gap-2">
+            <StatusDot state={attention.length ? "degraded" : "connected"} />
+            {readyCount} of {providers.length} providers ready
+          </span>
+        }
+      />
       {refreshError ? <div className="flex items-center gap-3"><p role="alert" className="text-sm text-destructive">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
 
       {attention.length ? (
-        <Frame>
-          <FrameHeader><FrameTitle>Needs attention</FrameTitle></FrameHeader>
-          <FramePanel className="p-0">
-            <ul aria-label="Needs attention" className="divide-y">
-              {attention.map((item) => (
-                <li key={item.key} className="flex items-center gap-3 px-3 py-2.5">
-                  <ProviderLogo id={item.provider.id} className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 text-sm"><span className="font-medium">{item.provider.name}</span><span className="text-muted-foreground"> · {item.message}</span></span>
-                  {item.action}
-                </li>
-              ))}
-            </ul>
-          </FramePanel>
-        </Frame>
+        <Panel title="Needs attention">
+          <ul aria-label="Needs attention" className="divide-y">
+            {attention.map((item) => (
+              <li key={item.key} className="flex items-center gap-3 px-4 py-2.5">
+                <ProviderLogo id={item.provider.id} className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 text-sm"><span className="font-medium">{item.provider.name}</span><span className="text-muted-foreground"> · {item.message}</span></span>
+                {item.action}
+              </li>
+            ))}
+          </ul>
+        </Panel>
       ) : null}
 
-      <div className="grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className="grid gap-5 md:grid-cols-[15rem_minmax(0,1fr)]">
         <nav aria-label="Providers" className="flex gap-4 overflow-x-auto md:flex-col md:overflow-visible">
           <NavGroup label="Organization connections" providers={connections} current={selected.id} records={records} onSelect={selectProvider} />
           <NavGroup label="Platform services" providers={services} current={selected.id} records={records} onSelect={selectProvider} />
         </nav>
-        <section aria-labelledby={headingId} className="min-w-0">
-          <Frame>
-            <FramePanel className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <ProviderLogo id={selected.id} className="size-6 shrink-0" />
-                    <h2 id={headingId} className="text-lg font-semibold">{selected.name}</h2>
-                    <Badge variant={stateVariant(selected.state)}>{stateLabel(selected.state)}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{summaryLine(selected, records)}</p>
+        <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-5">
+          <Panel className="gap-5 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <ProviderLogo id={selected.id} className="size-6 shrink-0" />
+                  <h2 id={headingId} className="text-base font-semibold">{selected.name}</h2>
+                  <Badge variant={stateVariant(selected.state)}>{stateLabel(selected.state)}</Badge>
                 </div>
-                {detailActions(selected)}
+                <p className="text-sm text-muted-foreground">{summaryLine(selected, records)}</p>
               </div>
-              {facts ? <FactList facts={facts} /> : null}
-              {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
-            </FramePanel>
-            {panels.map((panel) => (
-              <FramePanel key={panel.title} role="region" aria-label={panel.title} className="flex flex-col p-0">
-                <div className="flex flex-col gap-0.5 px-3 pt-3 pb-2">
-                  <h3 className="text-sm font-medium">{panel.title}</h3>
-                  {panel.description ? <p className="text-xs text-muted-foreground">{panel.description}</p> : null}
-                </div>
-                {panel.body}
-              </FramePanel>
-            ))}
-          </Frame>
+              {detailActions(selected)}
+            </div>
+            {facts ? <FactList facts={facts} className="sm:grid-cols-2 lg:grid-cols-3" /> : null}
+            {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
+          </Panel>
+          {panels.map((panel) => (
+            <Panel key={panel.title} title={panel.title}>
+              {panel.description ? <p className="px-4 pt-3 text-xs text-muted-foreground">{panel.description}</p> : null}
+              {panel.body}
+            </Panel>
+          ))}
         </section>
       </div>
 

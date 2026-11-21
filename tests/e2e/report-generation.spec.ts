@@ -18,8 +18,9 @@
  *  through its confirmation and downloads the completed Calls CSV. The
  *  responsive tests check Reports and the Generate Report dialog at 390px,
  *  the md breakpoint, and a wide viewport for horizontal page scroll, the
- *  history grid scrolling inside its Panel below 1440px and fitting
- *  without scrolling at 1440px, and reachable controls.
+ *  history grid fitting at 390px with Period, Status, and the Report
+ *  actions menu, scrolling inside its Panel from the md breakpoint below
+ *  1440px, and fitting without scrolling at 1440px, and reachable controls.
  *
  * @remarks
  *  Trigger.dev does not run in the browser suite. The E2E_TRIGGER_FAKE
@@ -152,7 +153,7 @@ async function expectNoHorizontalPageScroll(page: Page): Promise<void> {
 }
 
 async function expectGridLayout(page: Page, viewport: { width: number }): Promise<void> {
-  if (viewport.width < 1440) return expectGridScrollsInsidePanel(page);
+  if (viewport.width >= 768 && viewport.width < 1440) return expectGridScrollsInsidePanel(page);
   const overflow = await page.getByRole("table").evaluate((element) => {
     let node = element.parentElement;
     while (node && node !== document.body) {
@@ -301,10 +302,20 @@ test.describe.serial("report generation", () => {
       await expect(page.getByRole("heading", { level: 1, name: "Reports" })).toBeVisible();
       await expectNoHorizontalPageScroll(page);
       await expectReachable(page.getByRole("button", { name: /^Notifications/ }));
-      const reportRow = page.getByRole("row").filter({ hasText: workspaceName }).filter({ hasText: "PDF, CSV" });
-      await expect(reportRow).toHaveCount(1);
-      await expectGridLayout(page, viewport);
-      await expectReachable(reportRow.getByRole("button", { name: "View Parameters" }));
+      if (viewport.width < 768) {
+        const actions = page.getByRole("button", { name: "Report actions" }).first();
+        await expectReachable(actions);
+        expect(await page.getByRole("columnheader").allTextContents()).toEqual(["Period", "Status", "Actions"]);
+        await expectGridLayout(page, viewport);
+        await actions.click();
+        await expectReachable(page.getByRole("menuitem", { name: "View Parameters" }));
+        await page.keyboard.press("Escape");
+      } else {
+        const reportRow = page.getByRole("row").filter({ hasText: workspaceName }).filter({ hasText: "PDF, CSV" });
+        await expect(reportRow).toHaveCount(1);
+        await expectGridLayout(page, viewport);
+        await expectReachable(reportRow.getByRole("button", { name: "View Parameters" }));
+      }
       await expectNoHorizontalPageScroll(page);
 
       await page.getByRole("button", { name: "Generate Report" }).first().click();

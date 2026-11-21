@@ -25,7 +25,7 @@
  *  accessible Workspace with the account timezone.
  *
  * @see
- *  app/(app)/(everyone)/page.tsx
+ *  app/(app)/(everyone)/(home)/page.tsx
  *  components/tracer/page-parts.tsx
  *  components/tracer/analytics-panels.tsx
  *  data/analytics.ts

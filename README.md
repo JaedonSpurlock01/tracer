@@ -200,7 +200,7 @@ The Production Neon compute never pauses (set on 2026-10-24 on the Launch plan);
 
 ### Page speed budget
 
-One navigation opens one database runtime shared by the actor, the layouts, and the page, with six connections so queries issued together run together, and every route group paints its loading boundary at once while the page streams in, below the layout that decides authorization so a denied URL still answers with a real 404. `tests/integration/page-budgets.test.ts` replays each page's server work against a database and fails when a page exceeds its ceiling of sequential waves and total queries; lower a ceiling when a change earns it, never raise one. `tests/e2e/navigation-timing.spec.ts` reports warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and only warns until its baseline is steady.
+One navigation opens one database runtime shared by the actor, the layouts, and the page, with six connections so queries issued together run together, and every page paints its own loading state, in the shape of that page, at once while the page streams in, below the layout that decides authorization so a denied URL still answers with a real 404. `tests/integration/page-budgets.test.ts` replays each page's server work against a database and fails when a page exceeds its ceiling of sequential waves and total queries; lower a ceiling when a change earns it, never raise one. `tests/e2e/navigation-timing.spec.ts` reports warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and only warns until its baseline is steady.
 
 ## Project status
 
