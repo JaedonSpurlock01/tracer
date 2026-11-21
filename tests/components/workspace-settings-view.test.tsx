@@ -108,7 +108,7 @@ describe("WorkspaceSettingsView", () => {
     render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} />);
     expect(screen.getByRole("img", { name: "Preview of pocatelloasphaltpaving.com" })).toHaveAttribute("src", expect.stringMatching(/\/api\/workspaces\/workspace-1\/site\/preview\?v=1792328400000$/));
     expect(screen.getByText("pocatelloasphaltpaving.com")).toBeVisible();
-    expect(screen.getByText("Site Link since:").closest("p")).toHaveTextContent("Sep 30, 2026");
+    expect(screen.getByText("Site Link since").nextElementSibling).toHaveTextContent("Sep 30, 2026");
     expect(screen.getByRole("button", { name: "Replace Site" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Detach Site" }));
     const dialog = await screen.findByRole("alertdialog");
@@ -247,6 +247,74 @@ describe("WorkspaceSettingsView", () => {
     expect(screen.getByRole("heading", { name: "Number" })).toBeVisible();
     expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Recording enabled" })).not.toBeInTheDocument();
+  });
+
+  describe("settings form pattern", () => {
+    it("describes each Recording and AI switch beneath its label", () => {
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="recording" />);
+      expect(screen.getByRole("switch", { name: "Recording enabled" })).toHaveAccessibleDescription("Records each answered Call after the Recording Disclosure plays.");
+      expect(screen.getByRole("switch", { name: "Analysis enabled" })).toHaveAccessibleDescription("Transcribes Recordings with at least 15 seconds of speech and assesses each Lead. Needs recording.");
+      expect(screen.getByRole("switch", { name: "Spam gate enabled" })).toHaveAccessibleDescription("Asks callers to press a key before the Call is forwarded.");
+      expect(screen.getByRole("switch", { name: "Whisper enabled" })).toHaveAccessibleDescription("Plays a short message to whoever answers before the caller is connected.");
+    });
+
+    it("shows the General section's Workspace State as a read-only fact", () => {
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="general" />);
+      const general = screen.getByRole("region", { name: "General" });
+      expect(within(general).getByRole("term")).toHaveTextContent("Workspace State");
+      expect(within(general).getByRole("definition")).toHaveTextContent("Setup Required");
+    });
+
+    it("shows the Number section's read-only values as facts that name an absent value", () => {
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="number" />);
+      const number = screen.getByRole("region", { name: "Number" });
+      expect(within(number).getAllByRole("term").map((term) => term.textContent)).toEqual(["Tracking Number", "Number Assignment start", "Destination Number"]);
+      expect(within(number).getAllByRole("definition").map((value) => value.textContent)).toEqual(["No Tracking Number", "Not assigned", "No Destination Number"]);
+    });
+  });
+
+  describe("action feedback", () => {
+    it("names a failed save beside its button and keeps the entered values", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 500 })));
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="general" />);
+      fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Updated Office" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      const alert = await within(screen.getByRole("region", { name: "General" })).findByRole("alert");
+      expect(alert).toHaveTextContent("Workspace settings could not be saved.");
+      expect(alert).toHaveClass("text-destructive");
+      expect(screen.getByRole("button", { name: "Save changes" })).toHaveAccessibleDescription("Workspace settings could not be saved.");
+      expect(screen.getByLabelText("Workspace name")).toHaveValue("Updated Office");
+    });
+
+    it("confirms a save beside the action that caused it", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ workspace }), { status: 200 })));
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="recording" />);
+      fireEvent.click(screen.getByRole("button", { name: "Save Recording and AI" }));
+      expect(await within(screen.getByRole("region", { name: "Recording and AI" })).findByRole("status")).toHaveTextContent("Routing settings saved.");
+    });
+
+    it("states why a disabled action is unavailable", () => {
+      render(<WorkspaceSettingsView initialWorkspace={{ ...workspace, state: "Archived", archivedAt: "2026-01-02T00:00:00.000Z" }} section="recording" />);
+      expect(screen.getByRole("button", { name: "Save Recording and AI" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save Recording and AI" })).toHaveAccessibleDescription("Restore this Workspace to edit its settings.");
+      cleanup();
+      render(<WorkspaceSettingsView initialWorkspace={{ ...workspace, state: "Active", trackingNumber: "+14155550101" }} section="danger" />);
+      expect(screen.getByRole("button", { name: "Archive Workspace" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Archive Workspace" })).toHaveAccessibleDescription("Detach the Tracking Number before archiving an Active Workspace.");
+      cleanup();
+      render(<WorkspaceSettingsView initialWorkspace={workspace} section="number" />);
+      expect(screen.getByRole("button", { name: "Replace Number" })).toHaveAccessibleDescription("Available for an Active Workspace.");
+      expect(screen.getByRole("button", { name: "Detach Number" })).toHaveAccessibleDescription("Available for an Active Workspace.");
+    });
+
+    it("keeps the Detach Number confirmation open and names a failure inside it", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "provider_unavailable" }), { status: 502 })));
+      render(<WorkspaceSettingsView initialWorkspace={{ ...workspace, state: "Active", trackingNumber: "+14155550101" }} section="number" />);
+      fireEvent.click(screen.getByRole("button", { name: "Detach Number" }));
+      const dialog = await screen.findByRole("alertdialog", { name: "Detach +14155550101?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Detach Number" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Twilio configuration could not be restored. The Workspace remains Active on its current Tracking Number.");
+    });
   });
 
   describe("Replace Number", () => {
@@ -463,6 +531,28 @@ describe("WorkspaceSettingsView", () => {
     fireEvent.click(within(area).getByRole("button", { name: "Save Service Area" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/service-area", expect.objectContaining({ method: "PUT", body: JSON.stringify({ locationCode: 1016141, locationName: "Pocatello,Idaho,United States" }) })));
     expect(await screen.findByRole("status")).toHaveTextContent("Service Area saved.");
+  });
+
+  it("keeps the Keywords actions enabled while the Service Area saves, and shows the save pending on its own button", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.startsWith("/api/workspaces/workspace-1/site/locations?q=")) {
+        return new Response(JSON.stringify({ locations: [{ code: 1016141, name: "Pocatello,Idaho,United States", kind: "City" }] }), { status: 200 });
+      }
+      if (url === "/api/workspaces/workspace-1/site/service-area" && init?.method === "PUT") return new Promise<Response>(() => undefined);
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspaceSettingsView initialWorkspace={workspace} section="site" initialSite={linkedSite} initialKeywords={{ serviceArea: { city: null, region: null, country: "United States", locationCode: null, locationName: null }, keywords: [], suggestions: null }} />);
+    const area = screen.getByRole("region", { name: "Service Area" });
+    fireEvent.change(within(area).getByRole("combobox", { name: "Search locations" }), { target: { value: "Poca" } });
+    fireEvent.click(await within(area).findByRole("option", { name: /^Pocatello, Idaho, United States/ }));
+    fireEvent.click(within(area).getByRole("button", { name: "Save Service Area" }));
+    await waitFor(() => expect(within(area).getByRole("button", { name: "Save Service Area" })).toHaveAttribute("aria-busy", "true"));
+    expect(within(area).getByRole("button", { name: "Save Service Area" })).toBeDisabled();
+    const keywords = screen.getByRole("region", { name: "Keywords" });
+    expect(within(keywords).getByRole("button", { name: "Add Keyword" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Replace Site" })).toBeEnabled();
   });
 
   it("adds, reweights, and removes Keywords of the linked Site with inline validation", async () => {

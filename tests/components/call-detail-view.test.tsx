@@ -318,6 +318,7 @@ describe("CallDetailView", () => {
       const dialog = await openConfirmation();
       confirmPurge(dialog);
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Media could not be purged. Try again.");
+      expect(within(dialog).getByRole("alert")).toHaveClass("text-destructive");
       expect(within(dialog).getByRole("button", { name: "Purge Media" })).toBeEnabled();
       expect(refreshClientCache).not.toHaveBeenCalled();
       vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("offline"))));

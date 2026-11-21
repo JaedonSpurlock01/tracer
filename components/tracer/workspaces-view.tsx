@@ -323,9 +323,12 @@ export default function WorkspacesView({
         description={`${readOnly ? "" : `${result.counts.setupRequired} Setup Required, `}${result.counts.active} Active, ${result.counts.archived} Archived`}
       >
         {readOnly ? null : (
-          <Button type="button" onClick={() => openWizard(null)}>
-            Create Workspace
-          </Button>
+          <>
+            <StatusMessage status={status} className="text-sm text-muted-foreground" />
+            <Button type="button" onClick={() => openWizard(null)}>
+              Create Workspace
+            </Button>
+          </>
         )}
       </PageHeader>
       <Panel>
@@ -367,10 +370,9 @@ export default function WorkspacesView({
             />
           </div>
         </div>
-        <StatusMessage status={status} className="px-4 pt-3 text-sm" />
         {fetchError ? (
           <div className="flex items-center gap-3 px-4 py-3">
-            <p role="alert">Workspaces are unavailable.</p>
+            <p role="alert" className="text-sm text-destructive">Workspaces are unavailable.</p>
             <Button type="button" variant="outline" onClick={() => void loadWorkspaces()}>
               Retry
             </Button>

@@ -95,6 +95,14 @@ Pages are composed from the parts in `components/tracer/page-parts.tsx` rather t
 | `FactList` | Read-only details | Label over value. An absent value is named, never a dash. |
 | `ListRow` | Feeds of records | One link per row: the primary value, one muted detail line, and badges on the right. |
 
+Forms are composed from the parts in `components/tracer/form-parts.tsx`:
+
+| Part | Use | Rules |
+| --- | --- | --- |
+| `SettingsSection` | Every settings or form section | A `Panel` whose header bar names the section, one muted line saying what it controls, the fields, and a footer bar holding the section's actions. One save per section. |
+| `SwitchField` | Every on or off setting | The label with a one-line description beneath it, both announced with the switch. |
+| `ActionButton` with `useAction` | Every button that starts a request | See Forms and actions. |
+
 ### Type scale
 
 - `text-xl` semibold: the page heading, once per page.
@@ -128,6 +136,15 @@ Interface labels are the shortest plain words a client would use: `Lead` rather 
 - Each page has at most one filled primary Button, and it is the action the page exists for.
 - An action that navigates is a link styled with `buttonVariants`, never a Button wrapping a link.
 
+### Forms and actions
+
+- Labels are `text-sm` and sit above their field. Read-only values are a `FactList`, never a read-only input or a `Label: value` sentence.
+- Every action that sends a request has its own pending state: its button shows a spinner, is marked busy, and is disabled. Nothing else on the page is disabled while it runs; a page never shares one busy flag across actions.
+- A failure is named in the destructive style beside the button that caused it and is that button's accessible description. The entered values stay. A failure from a confirmation dialog appears inside the dialog, which stays open. On success the dialog closes and the confirmation appears once, beside the button that opened it.
+- A confirmation appears beside the action that caused it, never in the page header. When the action's button leaves the page with its result (Detach Site, Archive Workspace), the confirmation stays in the same section.
+- A disabled action says why in muted text beside it, linked as its accessible description, such as `Restore this Workspace to edit its settings.`
+- Field validation that the browser can decide before sending (an empty phrase, an invalid timezone) stays under its field as a `FieldError`.
+
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
@@ -141,7 +158,7 @@ Interface labels are the shortest plain words a client would use: `Lead` rather 
 - Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
 - Installed overlays (Dialog, AlertDialog, Popover, DropdownMenu, Select, Tooltip, Cascader) open and close through the `animate-in` and `animate-out` utilities from `tw-animate-css`, imported in `app/globals.css`. For viewers who prefer reduced motion, `globals.css` pins their slide and zoom to neutral so they only fade.
-- Show action confirmations with `StatusMessage`. Each confirmation fades in over 200ms with a 2px rise (opacity only for reduced motion) and replays when the same message repeats, so every save is visibly acknowledged.
+- Show action confirmations with `StatusMessage`, which `ActionButton` renders beside its button. Each confirmation fades in over 200ms with a 2px rise (opacity only for reduced motion) and replays when the same message repeats, so every save is visibly acknowledged.
 - `CollapsibleContent` grows and shrinks between zero and its measured height over 200ms with a fade, instead of snapping open (a fade alone for reduced motion). The panel clips its overflow while it moves, so keep padding and borders on an inner element and leave focus rings at least 3px of room from the panel edge.
 - A pressed Button shrinks to 97% over 150ms on the same curve and springs back on release, so every click is felt. Popup triggers (`aria-haspopup`) do not shrink, so their popup stays anchored. The Button transitions colors and `scale` only; focus rings and disabled opacity change instantly.
 - Never nest a Card inside a Frame or a Frame inside a Card.
@@ -759,7 +776,7 @@ Every row is one line; long values truncate with the full text on hover, and an 
 - `Review` opens a small popover with the Lead classification and an optional note, mirroring the Call Lead Review; `Clear review` returns the row to the default Good Lead
 - `Resend` on a `Forward failed` or `Not forwarded` row
 
-Every action replaces the row with the submission the route returns; a failed action shows one inline error above the ledger and leaves the row unchanged.
+Every action replaces the row with the submission the route returns. While it runs, the pressed button is busy and the row's other actions wait. A failed action names the failure in the destructive style on a line directly beneath its row and leaves the row unchanged.
 
 ### States
 
@@ -878,7 +895,9 @@ Validation runs on every change. The toolbar shows Publishable or the issue coun
 - **No draft:** Show the published graph read-only with Edit Flow.
 - **Unsaved changes:** Show saving status without blocking canvas work.
 - **Invalid draft:** Preserve the draft and disable Publish; never discard invalid work automatically.
-- **Publish failure:** Keep the published version active and the draft intact with Retry.
+- **Publish failure:** Keep the published version active and the draft intact, and name the failure beside Publish, which stays available to try again.
+- **Publish unavailable:** Say beside Publish why it is disabled: the Workspace is not yet Active, no Draft is open, or the Draft has issues to fix.
+- **Edit Flow, Discard Draft, or Version history failure:** Name the failure beside the action, inside its dialog when it has one, and change nothing.
 - **Archived Workspace:** Show historical Flow Versions read-only.
 
 ## Reports
@@ -1120,20 +1139,19 @@ Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=
 
 1. **Surface:** Operational
 2. **Archetype:** Vertical rail settings
-3. **Container family:** Frame-led
+3. **Container family:** `PageHeader` and one `SettingsSection` per section
 4. **Density:** Default
 5. **Regions:** Section rail and one active settings section
-6. **States:** Field Skeletons, inline validation, save success, and Retry
+6. **States:** Field Skeletons, inline validation, per-action pending, failure, and confirmation, and Retry
 7. **Motion:** Installed section control behavior only
 
 The rail becomes horizontally scrollable below `md`. Use [c-field-7](https://reui.io/preview/base/components/c-field-7?ref=mcp) as the form-composition reference, with working submit behavior and dynamic validation.
 
 ### Profile
 
+- Sign-in email, role, and User State as read-only facts
 - Display name
-- Read-only sign-in email
-- Read-only role
-- Read-only User State
+- Avatar
 - Save action
 
 Users cannot change their own sign-in email. Operators replace it through Users with verification and uniqueness checks.
@@ -1158,9 +1176,9 @@ There is no password section. Revoking the current session redirects to Sign In.
 
 ### States
 
-- **No other sessions:** Show the current session only.
-- **Save success:** Use a concise toast.
-- **Session revoke failure:** Keep the session visible and offer Retry.
+- **No other sessions:** Show the current session only, and say beside Revoke other sessions that there are none to revoke.
+- **Save success:** Confirm beside the section's save button.
+- **Session revoke failure:** Keep the session visible and name the failure beside its Revoke button, which stays available to try again.
 
 ## Integrations
 
@@ -1274,17 +1292,18 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 
 1. **Surface:** Operational
 2. **Archetype:** Vertical rail settings
-3. **Container family:** Frame-led
+3. **Container family:** `PageHeader` and one `SettingsSection` per section
 4. **Density:** Default forms with dense metadata
 5. **Regions:** General, Site, Forms, Number, Recording and AI, Access, Danger
-6. **States:** Server-rendered section data, inline validation, save success, and Retry
+6. **States:** Server-rendered section data, inline validation, per-action pending, failure, and confirmation, and Retry
 7. **Motion:** Installed section control behavior only
 
 Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `site`, `forms`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
 
 ### Site
 
-- Linked Site with preview thumbnail, primary hostname, and Site Link start time, or an Empty state with Link Site
+- Linked Site with preview thumbnail, and its primary hostname, Site Link start time, and Site Health as facts, or an Empty state with Link Site
+- Service Area, Keywords, Suggested Keywords, Domain renewal, and Business and Deal each follow as their own section with their own save
 - Replace Site opens the same Site picker as the wizard and ends the current Site Link before starting the new one
 - Detach Site ends the Site Link after confirmation and never changes Cloudflare
 - Service Area (M21): city, region, and country
@@ -1359,7 +1378,9 @@ Tracer does not permanently delete a Workspace in the first release.
 - **Setup Required:** Emphasize incomplete number or routing configuration and Resume Setup.
 - **Number replacement failure:** Keep the current Tracking Number and Number Assignment, and explain that the replacement did not complete.
 - **Access removal conflict:** Keep the current list and explain why the grant was not removed.
-- **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore.
+- **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore, and each disabled save says `Restore this Workspace to edit its settings.`
+- **Active Workspace in Danger:** Archive Workspace is disabled and says `Detach the Tracking Number before archiving an Active Workspace.`
+- **Recording and AI switches:** each switch has a one-line description beneath its label saying what it does.
 
 ## Workspace Calls and Reports
 

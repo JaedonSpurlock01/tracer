@@ -307,6 +307,64 @@ describe("WorkspaceFlowEditor", () => {
     expect(screen.getByRole("button", { name: "Discard Draft" })).toBeVisible();
   });
 
+  describe("action feedback", () => {
+    it("names a failed Publish beside the button in the destructive style and keeps the Draft", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "internal" }), { status: 500 })));
+      render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow({
+          draft: { graph, basedOnVersion: 1, updatedAt: "2026-01-02T00:00:00.000Z" },
+          validation: { valid: true, issues: [] },
+        })} />);
+      fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Publish failed. The published version is unchanged.");
+      expect(alert).toHaveClass("text-destructive");
+      expect(screen.getByRole("button", { name: "Publish" })).toHaveAccessibleDescription("Publish failed. The published version is unchanged.");
+      expect(screen.getByRole("button", { name: "Discard Draft" })).toBeVisible();
+    });
+
+    it("names a failed Edit Flow beside the button and stays read-only", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "internal" }), { status: 500 })));
+      render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit Flow" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("The Draft could not be started.");
+      expect(screen.getByRole("button", { name: "Edit Flow" })).toBeVisible();
+    });
+
+    it("keeps the Discard Draft confirmation open and names a failed discard inside it", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "internal" }), { status: 500 })));
+      render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow({
+          draft: { graph, basedOnVersion: 1, updatedAt: "2026-01-02T00:00:00.000Z" },
+          validation: { valid: true, issues: [] },
+        })} />);
+      fireEvent.click(screen.getByRole("button", { name: "Discard Draft" }));
+      const dialog = await screen.findByRole("dialog", { name: "Discard Draft?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard Draft" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("The Draft could not be discarded.");
+    });
+
+    it("names a version that could not be opened inside Version history", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "internal" }), { status: 500 })));
+      render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Version history" }));
+      const dialog = await screen.findByRole("dialog", { name: "Version history" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Version 1" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Version 1 could not be opened.");
+    });
+
+    it("states why Publish is unavailable", () => {
+      render(<WorkspaceFlowEditor workspace={workspace} initialFlow={flow()} />);
+      expect(screen.getByRole("button", { name: "Publish" })).toHaveAccessibleDescription("Edit Flow to start a Draft before publishing.");
+      cleanup();
+      render(
+        <WorkspaceFlowEditor
+          workspace={{ ...workspace, state: "Setup Required" }}
+          initialFlow={flow({ workspaceState: "Setup Required", draft: { graph, basedOnVersion: null, updatedAt: "2026-01-02T00:00:00.000Z" }, validation: { valid: true, issues: [] } })}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "Publish" })).toHaveAccessibleDescription("Publishing opens once the Workspace is Active.");
+    });
+  });
+
   it("discards a draft after confirmation", async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetch);

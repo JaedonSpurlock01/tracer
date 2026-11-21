@@ -28,7 +28,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 
 import {
   Stepper,
@@ -45,10 +45,11 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import FlowSummary from "@/components/tracer/flow/flow-summary";
+import { ActionButton, SwitchField, useAction } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { FactList } from "@/components/tracer/page-parts";
 import { SitePickerList } from "@/components/tracer/site-picker";
 import { formatCallDate } from "@/components/tracer/call-format";
 import { recordingDisclosureText, type CallFlowGraph, type TtsVoice } from "@/data/call-flow";
@@ -129,7 +130,11 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
     setShownStep(step);
     setStepDirection(step > shownStep ? "forward" : "back");
   }
-  const [actionError, setActionError] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [destinationError, setDestinationError] = useState("");
+  const create = useAction();
+  const routingSave = useAction();
+  const activation = useAction();
   const [numbers, setNumbers] = useState<AvailableNumber[]>([]);
   const [numbersLoading, setNumbersLoading] = useState(false);
   const [numbersError, setNumbersError] = useState(false);
@@ -139,10 +144,9 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
   const [changingSite, setChangingSite] = useState(false);
   const [routing, setRouting] = useState<RoutingForm>(routingFromWorkspace(initialWorkspace));
   const [flow, setFlow] = useState<FlowResponse | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [reviewError, setReviewError] = useState("");
   const [reviewIssues, setReviewIssues] = useState<Array<{ code: string; message: string }>>([]);
   const flowManaged = Boolean(workspace?.publishedFlowVersion);
+  const numberNote = useId();
 
   const loadNumbers = useCallback(async () => {
     setNumbersLoading(true);
@@ -181,98 +185,86 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
     };
   }, [cloudflareConnected, open, siteLink.loaded, step, workspace]);
 
-  async function createWorkspace(event: FormEvent<HTMLFormElement>) {
+  function createWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setActionError("");
+    setNameError("");
     const form = new FormData(event.currentTarget);
-    const response = await mutationFetch("/api/workspaces", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: String(form.get("name") ?? ""),
-        reportingTimezone: String(form.get("reportingTimezone") ?? initialTimezone),
-      }),
-    }).catch(() => null);
-    if (!response) {
-      setActionError("Workspace could not be created.");
-      return;
-    }
-    const body = await responseBody(response);
-    if (response.status === 409 && body.error === "name_taken") {
-      setActionError("A Workspace with this name already exists.");
-      return;
-    }
-    if (!response.ok) {
-      setActionError("Enter a valid Workspace name and reporting timezone.");
-      return;
-    }
-    const created = body.workspace as WorkspaceRecord;
-    setWorkspace(created);
-    setRouting(routingFromWorkspace(created));
-    setSiteLink({ loaded: true, site: null });
-    setStep(2);
-    onCreated(created);
+    return create.run(async () => {
+      const response = await mutationFetch("/api/workspaces", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: String(form.get("name") ?? ""),
+          reportingTimezone: String(form.get("reportingTimezone") ?? initialTimezone),
+        }),
+      }).catch(() => null);
+      if (!response) return { error: "Workspace could not be created." };
+      const body = await responseBody(response);
+      if (response.status === 409 && body.error === "name_taken") {
+        setNameError("A Workspace with this name already exists.");
+        return;
+      }
+      if (response.status === 400) {
+        setNameError("Enter a valid Workspace name and reporting timezone.");
+        return;
+      }
+      if (!response.ok) return { error: "Workspace could not be created." };
+      const created = body.workspace as WorkspaceRecord;
+      setWorkspace(created);
+      setRouting(routingFromWorkspace(created));
+      setSiteLink({ loaded: true, site: null });
+      setStep(2);
+      onCreated(created);
+    });
   }
 
-  async function nextFromRouting() {
+  function nextFromRouting() {
     if (!workspace) return;
-    setBusy(true);
-    setActionError("");
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/routing`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...routing, analysisEnabled: routing.recordingEnabled && routing.analysisEnabled }),
-    }).catch(() => null);
-    if (!response) {
-      setActionError("Routing settings could not be saved.");
-      setBusy(false);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok || !body.workspace) {
-      setActionError(response.status === 400 ? "Enter a valid Destination Number." : "Routing settings could not be saved.");
-      setBusy(false);
-      return;
-    }
-    setWorkspace(body.workspace as WorkspaceRecord);
-    const flowResponse = await fetch(`/api/workspaces/${workspace.id}/flow`).catch(() => null);
-    if (!flowResponse?.ok) {
-      setActionError("Call Flow could not be loaded.");
-      setBusy(false);
-      return;
-    }
-    setFlow((await responseBody(flowResponse)) as FlowResponse);
-    setStep(5);
-    setBusy(false);
+    setDestinationError("");
+    return routingSave.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/routing`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...routing, analysisEnabled: routing.recordingEnabled && routing.analysisEnabled }),
+      }).catch(() => null);
+      if (!response) return { error: "Routing settings could not be saved." };
+      const body = await responseBody(response);
+      if (response.status === 400) {
+        setDestinationError("Enter a valid Destination Number.");
+        return;
+      }
+      if (!response.ok || !body.workspace) return { error: "Routing settings could not be saved." };
+      setWorkspace(body.workspace as WorkspaceRecord);
+      const flowResponse = await fetch(`/api/workspaces/${workspace.id}/flow`).catch(() => null);
+      if (!flowResponse?.ok) return { error: "Call Flow could not be loaded." };
+      setFlow((await responseBody(flowResponse)) as FlowResponse);
+      setStep(5);
+    });
   }
 
-  async function activate() {
+  function activate() {
     if (!workspace || !selectedNumberId) return;
-    setBusy(true);
-    setReviewError("");
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/activate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ twilioNumberId: selectedNumberId }),
-    }).catch(() => null);
-    if (!response) {
-      setReviewError("Workspace could not be activated.");
-      setBusy(false);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      if (response.status === 422) setReviewIssues(Array.isArray(body.issues) ? (body.issues as Array<{ code: string; message: string }>) : []);
-      else setReviewError(activationFailureMessage(response.status, body));
-      setBusy(false);
-      return;
-    }
-    setBusy(false);
-    onOpenChange(false);
-    onActivated(body.workspace as WorkspaceRecord);
+    setReviewIssues([]);
+    return activation.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/activate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ twilioNumberId: selectedNumberId }),
+      }).catch(() => null);
+      if (!response) return { error: "Workspace could not be activated." };
+      const body = await responseBody(response);
+      if (response.status === 422) {
+        setReviewIssues(Array.isArray(body.issues) ? (body.issues as Array<{ code: string; message: string }>) : []);
+        return;
+      }
+      if (!response.ok) return { error: activationFailureMessage(response.status, body) };
+      onOpenChange(false);
+      onActivated(body.workspace as WorkspaceRecord);
+    });
   }
 
   const selectedNumber = numbers.find((number) => number.id === selectedNumberId);
+  const numberUnavailable = !selectedNumberId && !numbersLoading && !numbersError ? "Select a number to continue." : null;
   const numberQuery = numberSearch.trim().toLowerCase();
   const visibleNumbers = numbers.filter(
     (number) => number.phoneNumber.toLowerCase().includes(numberQuery) || number.friendlyName.toLowerCase().includes(numberQuery),
@@ -300,10 +292,10 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
           {step === 1 && (
             <div data-step-direction={stepDirection}>
               <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void createWorkspace(event)}>
-                <Field data-invalid={Boolean(actionError)}>
+                <Field data-invalid={Boolean(nameError)}>
                   <FieldLabel htmlFor="workspace-name">Workspace name</FieldLabel>
                   <Input id="workspace-name" name="name" required maxLength={80} />
-                  <FieldError>{actionError}</FieldError>
+                  <FieldError>{nameError}</FieldError>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="workspace-timezone">Reporting timezone</FieldLabel>
@@ -322,7 +314,9 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                   <FieldDescription>Used for Workspace reporting dates and times.</FieldDescription>
                 </Field>
                 <DialogFooter>
-                  <Button type="submit">Create Workspace</Button>
+                  <ActionButton type="submit" action={create}>
+                    Create Workspace
+                  </ActionButton>
                 </DialogFooter>
               </form>
             </div>
@@ -347,18 +341,13 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                 <p>Loading Site...</p>
               ) : siteLink.site && !changingSite ? (
                 <>
-                  <dl className="grid gap-2 text-sm">
-                    <div>
-                      <dt className="font-medium">Linked Site</dt>
-                      <dd className="font-mono">{siteLink.site.primaryHostname}</dd>
-                    </div>
-                    {siteLink.site.linkedAt ? (
-                      <div>
-                        <dt className="font-medium">Site Link since</dt>
-                        <dd>{formatCallDate(siteLink.site.linkedAt, workspace.reportingTimezone)}</dd>
-                      </div>
-                    ) : null}
-                  </dl>
+                  <FactList
+                    className="sm:grid-cols-2"
+                    facts={[
+                      { label: "Linked Site", value: siteLink.site.primaryHostname, mono: true },
+                      ...(siteLink.site.linkedAt ? [{ label: "Site Link since", value: formatCallDate(siteLink.site.linkedAt, workspace.reportingTimezone) }] : []),
+                    ]}
+                  />
                   <div className="flex justify-between">
                     <Button type="button" variant="outline" onClick={() => setChangingSite(true)}>
                       Change
@@ -390,7 +379,7 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
             <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
               <p>Tracer will manage the selected number&apos;s voice webhook and keep its current configuration for restoration.</p>
               {numbersError ? (
-                <p role="alert">
+                <p role="alert" className="text-sm text-destructive">
                   Connect the Organization Twilio account in Integrations first <Link href="/integrations">Integrations</Link>
                 </p>
               ) : null}
@@ -429,70 +418,78 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                   ))}
                 </div>
               </ScrollArea>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <Button type="button" variant="outline" onClick={() => void loadNumbers()}>
                   Refresh
                 </Button>
-                <Button type="button" onClick={() => setStep(4)} disabled={!selectedNumberId || numbersLoading || numbersError}>
-                  Next
-                </Button>
+                <span className="flex flex-wrap items-center gap-3">
+                  {numberUnavailable ? (
+                    <p id={numberNote} className="text-xs text-muted-foreground">
+                      {numberUnavailable}
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={() => setStep(4)}
+                    disabled={!selectedNumberId || numbersLoading || numbersError}
+                    aria-describedby={numberUnavailable ? numberNote : undefined}
+                  >
+                    Next
+                  </Button>
+                </span>
               </div>
             </div>
           )}
           {step === 4 && (
             <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
-              <Field data-invalid={Boolean(actionError)}>
+              <Field data-invalid={Boolean(destinationError)}>
                 <FieldLabel htmlFor="destination-number">Destination Number</FieldLabel>
                 <Input
                   id="destination-number"
                   value={routing.destinationNumber}
                   onChange={(event) => setRouting((current) => ({ ...current, destinationNumber: event.target.value }))}
                 />
-                {actionError ? <FieldError>{actionError}</FieldError> : null}
+                {destinationError ? <FieldError>{destinationError}</FieldError> : null}
               </Field>
-              <label className="flex items-center justify-between">
-                <span>Recording enabled</span>
-                <Switch
-                  checked={routing.recordingEnabled}
-                  onCheckedChange={(checked) =>
-                    setRouting((current) => ({
-                      ...current,
-                      recordingEnabled: checked,
-                      analysisEnabled: checked ? current.analysisEnabled : false,
-                    }))
-                  }
-                />
-              </label>
+              <SwitchField
+                label="Recording enabled"
+                description="Records each answered Call after the Recording Disclosure plays."
+                checked={routing.recordingEnabled}
+                onCheckedChange={(checked) =>
+                  setRouting((current) => ({
+                    ...current,
+                    recordingEnabled: checked,
+                    analysisEnabled: checked ? current.analysisEnabled : false,
+                  }))
+                }
+              />
               {routing.recordingEnabled ? (
                 <div className="grid gap-1">
                   <p className="rounded-md border p-3 text-sm">{recordingDisclosureText}</p>
                   <p className="text-xs text-muted-foreground">You can change this disclosure later on the Call Flow.</p>
                 </div>
               ) : null}
-              <label className="flex items-center justify-between">
-                <span>Analysis enabled</span>
-                <Switch
-                  checked={routing.analysisEnabled}
-                  disabled={!routing.recordingEnabled}
-                  onCheckedChange={(checked) => setRouting((current) => ({ ...current, analysisEnabled: checked }))}
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <span>Spam gate enabled</span>
-                <Switch
-                  checked={routing.spamGateEnabled}
-                  disabled={flowManaged}
-                  onCheckedChange={(checked) => setRouting((current) => ({ ...current, spamGateEnabled: checked }))}
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <span>Whisper enabled</span>
-                <Switch
-                  checked={routing.whisperEnabled}
-                  disabled={flowManaged}
-                  onCheckedChange={(checked) => setRouting((current) => ({ ...current, whisperEnabled: checked }))}
-                />
-              </label>
+              <SwitchField
+                label="Analysis enabled"
+                description="Transcribes Recordings with at least 15 seconds of speech and assesses each Lead. Needs recording."
+                checked={routing.analysisEnabled}
+                disabled={!routing.recordingEnabled}
+                onCheckedChange={(checked) => setRouting((current) => ({ ...current, analysisEnabled: checked }))}
+              />
+              <SwitchField
+                label="Spam gate enabled"
+                description="Asks callers to press a key before the Call is forwarded."
+                checked={routing.spamGateEnabled}
+                disabled={flowManaged}
+                onCheckedChange={(checked) => setRouting((current) => ({ ...current, spamGateEnabled: checked }))}
+              />
+              <SwitchField
+                label="Whisper enabled"
+                description="Plays a short message to whoever answers before the caller is connected."
+                checked={routing.whisperEnabled}
+                disabled={flowManaged}
+                onCheckedChange={(checked) => setRouting((current) => ({ ...current, whisperEnabled: checked }))}
+              />
               {flowManaged && workspace ? (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm text-muted-foreground">Spam gate and whisper are managed in the published Call Flow.</p>
@@ -513,55 +510,35 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                 </Field>
               ) : null}
               <DialogFooter>
-                <Button type="button" onClick={() => void nextFromRouting()} disabled={busy}>
+                <ActionButton type="button" action={routingSave} onClick={() => void nextFromRouting()}>
                   Next
-                </Button>
+                </ActionButton>
               </DialogFooter>
             </div>
           )}
           {step === 5 && (
             <div data-step-direction={stepDirection} className="mt-5 flex flex-col gap-4">
-              <dl className="grid gap-2 text-sm">
-                <div>
-                  <dt className="font-medium">Site</dt>
-                  <dd className="font-mono">{siteLink.site?.primaryHostname ?? "None"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Number</dt>
-                  <dd>
-                    {selectedNumber ? (
+              <FactList
+                className="sm:grid-cols-2"
+                facts={[
+                  { label: "Site", value: siteLink.site?.primaryHostname ?? null, empty: "No Site", mono: true },
+                  {
+                    label: "Number",
+                    value: selectedNumber ? (
                       <>
-                        <span className="block">{selectedNumber.phoneNumber}</span>
-                        {selectedNumber.friendlyName ? (
-                          <span className="block text-sm text-muted-foreground">{selectedNumber.friendlyName}</span>
-                        ) : null}
+                        <span className="block font-mono">{selectedNumber.phoneNumber}</span>
+                        {selectedNumber.friendlyName ? <span className="block text-muted-foreground">{selectedNumber.friendlyName}</span> : null}
                       </>
-                    ) : (
-                      "-"
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Destination Number</dt>
-                  <dd>{routing.destinationNumber || "-"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Recording</dt>
-                  <dd>{routing.recordingEnabled ? "Enabled" : "Disabled"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Analysis</dt>
-                  <dd>{routing.analysisEnabled ? "Enabled" : "Disabled"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Spam gate</dt>
-                  <dd>{routing.spamGateEnabled ? "Enabled" : "Disabled"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium">Whisper</dt>
-                  <dd>{routing.whisperEnabled ? routing.whisperMessage || "Enabled" : "Disabled"}</dd>
-                </div>
-              </dl>
+                    ) : null,
+                    empty: "No number selected",
+                  },
+                  { label: "Destination Number", value: routing.destinationNumber, empty: "No Destination Number", mono: true },
+                  { label: "Recording", value: routing.recordingEnabled ? "Enabled" : "Disabled" },
+                  { label: "Analysis", value: routing.analysisEnabled ? "Enabled" : "Disabled" },
+                  { label: "Spam gate", value: routing.spamGateEnabled ? "Enabled" : "Disabled" },
+                  { label: "Whisper", value: routing.whisperEnabled ? routing.whisperMessage || "Enabled" : "Disabled" },
+                ]}
+              />
               <div>
                 <h3 className="font-medium">Call Flow</h3>
                 {flow?.draft ? (
@@ -571,31 +548,28 @@ export default function WorkspaceSetupWizard({ open, onOpenChange, workspace: in
                 )}
               </div>
               {flow?.validation && !flow.validation.valid ? (
-                <ul role="alert">
+                <ul role="alert" className="text-sm text-destructive">
                   {flow.validation.issues.map((issue) => (
                     <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>
                   ))}
                 </ul>
               ) : null}
-              {reviewError ? (
-                <div role="alert">
-                  {reviewError}
-                  <Button type="button" variant="outline" onClick={() => setStep(3)}>
-                    Choose another number
-                  </Button>
-                </div>
-              ) : null}
               {reviewIssues.length > 0 ? (
-                <ul role="alert">
+                <ul role="alert" className="text-sm text-destructive">
                   {reviewIssues.map((issue) => (
                     <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>
                   ))}
                 </ul>
               ) : null}
               <DialogFooter>
-                <Button type="button" onClick={() => void activate()} disabled={busy}>
+                {activation.error ? (
+                  <Button type="button" variant="outline" onClick={() => setStep(3)}>
+                    Choose another number
+                  </Button>
+                ) : null}
+                <ActionButton type="button" action={activation} onClick={() => void activate()}>
                   Create and Activate
-                </Button>
+                </ActionButton>
               </DialogFooter>
             </div>
           )}

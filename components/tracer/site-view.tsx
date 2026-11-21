@@ -59,7 +59,7 @@ import { EmptyState } from "@/components/tracer/empty-state";
 import { NoWorkspacesArt } from "@/components/tracer/line-art";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { previewImageSrc, SitePickerDialog, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
-import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
+import { ActionButton, useAction } from "@/components/tracer/form-parts";
 import type { AnalyticsSummary } from "@/data/analytics";
 import type { AnalyticsRange, AnalyticsTrendInterval } from "@/data/analytics-range";
 import type { WorkspaceCostRevenue } from "@/data/cost-revenue";
@@ -537,20 +537,15 @@ function DealAndCost({ workspace, money, pending, onRetry }: { workspace: Worksp
 }
 
 function Hosting({ workspace, site, summary }: { workspace: WorkspaceRecord; site: SiteViewSite; summary: SiteViewSummary | null }) {
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useStatusMessage();
-  const [error, setError] = useState("");
+  const refresh = useAction();
   const certificates = site.hostnames.filter((hostname) => hostname.certificateId).length;
   const deployments = site.deployments ?? [];
 
-  async function refreshPreview() {
-    setBusy(true);
-    setStatus("");
-    setError("");
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/site/preview/refresh`, { method: "POST" }).catch(() => null);
-    if (response?.ok) setStatus("Preview refresh requested.");
-    else setError("The preview could not be refreshed.");
-    setBusy(false);
+  function refreshPreview() {
+    return refresh.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/site/preview/refresh`, { method: "POST" }).catch(() => null);
+      return response?.ok ? { message: "Preview refresh requested." } : { error: "The preview could not be refreshed." };
+    });
   }
 
   return (
@@ -558,13 +553,9 @@ function Hosting({ workspace, site, summary }: { workspace: WorkspaceRecord; sit
       <FramePanel role="region" aria-labelledby="hosting-title" className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="hosting-title" className="font-semibold">Hosting</h2>
-          <div className="flex items-center gap-2">
-            <StatusMessage status={status} className="text-xs text-muted-foreground" />
-            {error ? <p role="alert" className="text-xs">{error}</p> : null}
-            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void refreshPreview()}>
-              Refresh Preview
-            </Button>
-          </div>
+          <ActionButton type="button" variant="outline" size="sm" action={refresh} onClick={() => void refreshPreview()}>
+            Refresh Preview
+          </ActionButton>
         </div>
         <dl className="grid gap-3 sm:grid-cols-3">
           <Fact label="Worker requests">

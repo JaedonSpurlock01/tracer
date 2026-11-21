@@ -15,9 +15,9 @@ If these documents conflict, stop implementation and resolve the conflict before
 
 ## Current state
 
-- **Current milestone:** M28 - Workspace Overview Briefing, started on 2026-11-20
-- **Next milestone:** M29 - Forms, Settings, and Action Feedback, then M30
-- **Last completed:** M27 - Calls Absorbs Activity, on 2026-11-20, with its Staging acceptance riding with M28's
+- **Current milestone:** M29 - Forms, Settings, and Action Feedback, started on 2026-11-20
+- **Next milestone:** M30 - Detail Pages and Experience Acceptance
+- **Last completed:** M28 - Workspace Overview Briefing, on 2026-11-20, with its Staging acceptance and M27's riding with M29's
 - **Paused:** M18 - Production Hardening and Acceptance, deferred by the Product Owner on 2026-11-18 for the Experience Overhaul. M24's Staging gate and M19 wait behind it
 - **Why the plan changed:** the Product Owner reviewed the running application on 2026-11-18 and found it clunky and unfinished to use. Interface polish had been arriving as one-line additions to M18, which made M18 a catch-all and never addressed how whole pages read. The Experience Overhaul is its own phase so the interface is planned and verified as product work
 - **Current environment:** Local, Preview, and Staging application and data paths verified; Production deployed from `main` on 2026-11-18 ahead of M19 for Product Owner acceptance, with Production data empty since 2026-10-24
@@ -194,8 +194,8 @@ Use when a milestone changes dependencies, schema, migrations, bindings, build c
 | M25 | Interface Foundations | Complete | Local and Preview | M23 |
 | M26 | Home Briefing | Complete | Preview and Staging | M25 |
 | M27 | Calls Absorbs Activity | Complete | Preview and Staging | M26 |
-| M28 | Workspace Overview Briefing | In Progress | Preview and Staging | M27 |
-| M29 | Forms, Settings, and Action Feedback | Not Started | Preview and Staging | M28 |
+| M28 | Workspace Overview Briefing | Complete | Preview and Staging | M27 |
+| M29 | Forms, Settings, and Action Feedback | In Progress | Preview and Staging | M28 |
 | M30 | Detail Pages and Experience Acceptance | Not Started | Staging | M29 |
 | M18 | Production Hardening and Acceptance | Deferred | Staging | M30 |
 | M24 | Keyword Discovery | Deferred | Preview and Staging | M18 |
@@ -315,7 +315,7 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M28 - Workspace Overview Briefing
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Outcome:** Workspace Overview is the Briefing layout scoped to one Workspace, ordered by what an Operator checks first.
 - **Depends on:** M27
 - **Target environment:** Preview and Staging
@@ -323,6 +323,7 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 - **Started:** 2026-11-20, after M27 closed on its local gate. The Staging review covers M27's Calls and four rebuilt tables alongside Workspace Overview.
 - **Decision (2026-11-20):** the Product Owner chose the Side rail layout from a three-way prototype (Briefing, Health first, Side rail): Leads generated and Recent Calls fill the main column, and Routing health, Site, Call Flow, and Business stack in a right rail. The stat strip holds Total Calls, Answer Rate, Good Leads, Average Duration, Visit-to-Call when a Site is linked, and Profit for Operators, with the Monthly Cost and Deal on one line beneath it; Visits and Search Visibility move into the Site panel. The prototype is removed in the same change that builds the layout and remains in Git history as the record of the comparison.
 - **Progress (2026-11-20):** all three slices landed locally. Workspace Overview uses `PageHeader`, `StatStrip`, `Panel`, `FactList`, and `ListRow`: the header names the state, range, and reporting timezone beside the date controls and actions; Recent Calls show the short start time with the full timestamp on hover; Routing health shows its webhook Badge in the panel header, four facts, and the Recording, Spam gate, and Whisper settings on one line; an unlinked Site is one line with Link Site; the Business panel keeps the name, contact, niche, and city above a smaller map; and the Setup Required checklist shows a check or an empty circle with the state as screen-reader text. Removed from the Overview: the Scorecard, the KPI row, the Call Flow publication time and Whisper message in Routing health (the Call Flow panel carries the version), and the Business email and website (both remain in Site settings). The verification gate passed locally (757 unit and component tests, 556 integration tests with the Overview page budget unchanged, 14 Worker tests, 22 browser journeys, typecheck, lint with no new warnings, production build). Browser journey changes: the lifecycle journey expects the Overview stat strip to show two, three, then four Call stats per row like Home's instead of one, two, then four; the cost journey reads the Overview's Profit from the strip and the Deal from the Monthly Cost line, scoped to `main` because the dev server keeps a hidden streamed copy of the page that text queries also match; the search journey reads `73 of 100` from the Site panel instead of a Search Visibility tile. M28 remains In Progress until the Product Owner accepts Workspace Overview on Staging for an Active, a Setup Required, and an Archived Workspace, together with M27's Calls and four rebuilt tables.
+- **Completion (2026-11-20):** the Product Owner directed on 2026-11-20 that M28 close on its local gate and that its Staging acceptance of Workspace Overview for an Active, a Setup Required, and an Archived Workspace, together with M27's Calls and four rebuilt tables, ride with M29's Staging review.
 
 #### Vertical slices
 
@@ -346,10 +347,12 @@ The Briefing layout sets the shared pattern: a page header with its controls on 
 
 ### M29 - Forms, Settings, and Action Feedback
 
-- **Status:** Not Started
+- **Status:** In Progress
 - **Outcome:** Every form looks like the same form, and every action visibly starts, succeeds, or fails where the user pressed.
 - **Depends on:** M28
 - **Target environment:** Preview and Staging
+- **Started:** 2026-11-20, after M28 closed on its local gate. The Staging review covers M28's Workspace Overview and M27's Calls and four rebuilt tables alongside the forms and settings.
+- **Progress (2026-11-20):** all four slices landed locally. `components/tracer/form-parts.tsx` holds `SettingsSection`, `SwitchField`, `useAction`, and `ActionButton`, and `DESIGN.md` Foundations gains Forms and actions. Workspace Settings and Account Settings use a `PageHeader` and one panel per section with its own save, a description under each Recording and AI switch, and read-only values as facts; the shared busy flags in both are gone, so one action never disables another section. Every action that sends a request shows its own pending state, names a failure in the destructive style beside its button, and confirms beside it instead of the page header; a disabled action says why (an Archived Workspace, an Active Workspace that must detach its number before archiving, a Draft with issues). Confirmation dialogs stay open with their failure inside. The same treatment reached the Create Workspace wizard, Workspaces, Users, Integrations, the Call Flow editor (whose Edit Flow, Discard Draft, and Version history failures were silent), Forms rows (a failure now sits beneath its row), the Site Hosting panel and Site picker, Call Detail Retry and Purge Media, and Reports. Account Settings no longer hides the session list when a revoke fails. Users' Disable now keeps the Manage dialog open. The verification gate passed locally (798 unit and component tests, 556 integration tests, 14 Worker tests, 22 browser journeys, typecheck, lint with no new warnings, production build). The first browser run caught a confirmation repeated inside a closing Detach Number dialog; confirm buttons that close their dialog now leave the confirmation to the button that opened it. No browser journey assertion changed. M29 remains In Progress until the Product Owner accepts the forms and settings on Staging, together with M28's Workspace Overview and M27's Calls and four rebuilt tables.
 
 #### Vertical slices
 

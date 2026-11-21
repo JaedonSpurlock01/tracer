@@ -100,6 +100,7 @@ describe("ReportsView", () => {
     renderView();
 
     expect(await screen.findByText("Report history is unavailable.")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveClass("text-destructive");
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("link", { name: "Download PDF" })).toBeVisible();

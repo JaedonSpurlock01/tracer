@@ -311,6 +311,17 @@ describe("SiteView", () => {
     expect(await within(hosting).findByRole("status")).toHaveTextContent("Preview refresh requested.");
   });
 
+  it("names a failed Refresh Preview beside the button in the destructive style", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 502 })));
+    renderView();
+    const hosting = screen.getByRole("region", { name: "Hosting" });
+    fireEvent.click(within(hosting).getByRole("button", { name: "Refresh Preview" }));
+    const alert = await within(hosting).findByRole("alert");
+    expect(alert).toHaveTextContent("The preview could not be refreshed.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(within(hosting).getByRole("button", { name: "Refresh Preview" })).toHaveAccessibleDescription("The preview could not be refreshed.");
+  });
+
   it("hides Hosting, Replace Site, and the Worker name from a Client Viewer", () => {
     const viewerSite: SiteViewSite = {
       id: site.id,

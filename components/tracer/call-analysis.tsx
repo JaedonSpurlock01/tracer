@@ -259,7 +259,7 @@ function FailedNotice({ title, failureReason, retry }: { title: string; failureR
         <Button type="button" variant="outline" size="sm" disabled={retry.pending} onClick={retry.retry}>
           {retry.pending ? "Retrying..." : "Retry"}
         </Button>
-        {retry.error ? <p role="alert" className="text-sm">{retry.error}</p> : null}
+        {retry.error ? <p role="alert" className="text-sm text-destructive">{retry.error}</p> : null}
       </div>
     </Notice>
   );

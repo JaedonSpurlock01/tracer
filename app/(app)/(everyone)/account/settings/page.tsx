@@ -29,13 +29,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FrameDescription, FramePanel, FrameTitle } from "@/components/reui/frame";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AvatarPicker } from "@/components/tracer/avatar-picker";
+import { ActionButton, SettingsSection, useAction, type ActionResult } from "@/components/tracer/form-parts";
+import { FactList, PageHeader } from "@/components/tracer/page-parts";
 import { ThemePicker } from "@/components/tracer/theme-picker";
 import { isValidIanaTimezone, toCanonicalRole, type MembershipRole, type UserState } from "@/data/auth-policy";
 import { avatarImageToken, avatarInitials, avatarSeedFromImage } from "@/data/avatar";
@@ -80,9 +81,10 @@ export default function AccountSettingsPage() {
   const [securityLoading, setSecurityLoading] = useState(true);
   const [error, setError] = useState("");
   const [securityError, setSecurityError] = useState("");
-  const [profileMessage, setProfileMessage] = useState("");
-  const [preferencesMessage, setPreferencesMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [timezoneError, setTimezoneError] = useState("");
+  const profileSave = useAction();
+  const preferencesSave = useAction();
+  const revokeOthers = useAction();
 
   const loadSecurity = useCallback(async () => {
     setSecurityLoading(true);
@@ -147,57 +149,43 @@ export default function AccountSettingsPage() {
     return () => window.clearTimeout(timer);
   }, [loadSettings]);
 
-  async function saveProfile() {
-    setBusy(true);
-    setProfileMessage("");
-    try {
+  function saveProfile() {
+    return profileSave.run(async () => {
       const response = await fetch("/api/auth/update-user", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, image: avatarImageToken(avatarSeed) }),
-      });
-      setProfileMessage(response.ok ? "Profile saved." : "Profile could not be saved.");
+      }).catch(() => null);
+      if (!response?.ok) return { error: "Profile could not be saved." };
       // The Sidebar avatar is server-rendered; refresh so it shows the new style.
-      if (response.ok) router.refresh();
-    } catch {
-      setProfileMessage("Profile could not be saved.");
-    } finally {
-      setBusy(false);
-    }
+      router.refresh();
+      return { message: "Profile saved." };
+    });
   }
 
-  async function savePreferences() {
-    setPreferencesMessage("");
+  function savePreferences() {
+    setTimezoneError("");
     if (!isValidIanaTimezone(timezone)) {
-      setPreferencesMessage("Enter a valid IANA timezone.");
+      setTimezoneError("Enter a valid IANA timezone.");
       return;
     }
-    setBusy(true);
-    try {
+    return preferencesSave.run(async () => {
       const response = await fetch("/api/auth/update-user", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ timezone }),
-      });
-      setPreferencesMessage(response.ok ? "Preferences saved." : "Preferences could not be saved.");
-    } catch {
-      setPreferencesMessage("Preferences could not be saved.");
-    } finally {
-      setBusy(false);
-    }
+      }).catch(() => null);
+      return response?.ok ? { message: "Preferences saved." } : { error: "Preferences could not be saved." };
+    });
   }
 
-  async function revokeSession(token: string, current: boolean) {
-    setSecurityError("");
+  async function revokeSession(token: string, current: boolean): Promise<ActionResult> {
     const response = await fetch("/api/auth/revoke-session", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
     }).catch(() => null);
-    if (!response?.ok) {
-      setSecurityError("Session could not be revoked. Retry.");
-      return;
-    }
+    if (!response?.ok) return { error: "Session could not be revoked." };
     if (current) {
       window.sessionStorage.removeItem("tracer.pending-email");
       router.push("/sign-in");
@@ -206,14 +194,13 @@ export default function AccountSettingsPage() {
     await loadSecurity();
   }
 
-  async function revokeOtherSessions() {
-    setSecurityError("");
-    const response = await fetch("/api/auth/revoke-other-sessions", { method: "POST" }).catch(() => null);
-    if (!response?.ok) {
-      setSecurityError("Other sessions could not be revoked. Retry.");
-      return;
-    }
-    await loadSecurity();
+  function revokeOtherSessions() {
+    return revokeOthers.run(async () => {
+      const response = await fetch("/api/auth/revoke-other-sessions", { method: "POST" }).catch(() => null);
+      if (!response?.ok) return { error: "Other sessions could not be revoked." };
+      await loadSecurity();
+      return { message: "Other sessions revoked." };
+    });
   }
 
   const preview = useMemo(() => {
@@ -228,35 +215,47 @@ export default function AccountSettingsPage() {
   const otherSessions = sessions.filter((value) => value.token !== currentToken);
 
   if (loading) {
-    return <div className="flex w-full max-w-5xl flex-col gap-6 md:flex-row"><Skeleton className="h-28 w-full md:w-44" /><Skeleton className="min-h-96 flex-1" /></div>;
+    return <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 md:flex-row"><Skeleton className="h-28 w-full md:w-48" /><Skeleton className="min-h-96 flex-1" /></div>;
   }
   if (error || !session) {
-    return <div className="flex w-full max-w-5xl flex-col items-start gap-3"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></div>;
+    return <div className="mx-auto flex w-full max-w-6xl flex-col items-start gap-3"><p role="alert">{error || "Redirecting to sign in."}</p><Button variant="outline" onClick={() => void loadSettings()}>Retry</Button></div>;
   }
 
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-6 md:flex-row md:items-start">
-      <nav aria-label="Account settings" className="w-full shrink-0 md:w-44">
-        <div className="flex min-w-max flex-row gap-1 overflow-x-auto md:min-w-0 md:flex-col">
-          {sections.map((section) => (
-            <Button
-              key={section.id}
-              type="button"
-              variant={activeSection === section.id ? "secondary" : "ghost"}
-              aria-current={activeSection === section.id ? "page" : undefined}
-              className="justify-start"
-              onClick={() => setActiveSection(section.id)}
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+      <PageHeader title="Account Settings" description="Your profile, preferences, and sign-in sessions." />
+      <div className="grid items-start gap-5 md:grid-cols-[12rem_1fr]">
+        <nav aria-label="Account settings" className="min-w-0">
+          <div className="flex min-w-max flex-row gap-1 overflow-x-auto md:min-w-0 md:flex-col">
+            {sections.map((section) => (
+              <Button
+                key={section.id}
+                type="button"
+                variant={activeSection === section.id ? "secondary" : "ghost"}
+                aria-current={activeSection === section.id ? "page" : undefined}
+                className="justify-start"
+                onClick={() => setActiveSection(section.id)}
+              >
+                {section.label}
+              </Button>
+            ))}
+          </div>
+        </nav>
+        <div className="flex min-w-0 flex-1 flex-col gap-5">
+          {activeSection === "profile" ? (
+            <SettingsSection
+              title="Profile"
+              description="Keep your display name and avatar up to date."
+              footer={<ActionButton type="button" action={profileSave} onClick={() => void saveProfile()}>Save profile</ActionButton>}
             >
-              {section.label}
-            </Button>
-          ))}
-        </div>
-      </nav>
-      <Frame className="min-w-0 flex-1">
-        {activeSection === "profile" ? (
-          <FramePanel className="flex flex-col gap-6">
-            <SectionHeader title="Profile" description="Keep your display name and avatar up to date." />
-            <div className="flex flex-col gap-5">
+              <FactList
+                className="sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]"
+                facts={[
+                  { label: "Email", value: session.user.email },
+                  { label: "Role", value: role },
+                  { label: "User State", value: <Badge variant={stateVariant(session.user.state)}>{session.user.state}</Badge> },
+                ]}
+              />
               <Field>
                 <FieldLabel htmlFor="display-name">Display name</FieldLabel>
                 <Input id="display-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -264,56 +263,42 @@ export default function AccountSettingsPage() {
               <FieldSet className="gap-2">
                 <FieldLegend variant="label" className="mb-0">Avatar</FieldLegend>
                 <FieldDescription>Pick a face, or shuffle for new ones. Your name and email are never sent.</FieldDescription>
-                <AvatarPicker initials={avatarInitials(name || session.user.name)} value={avatarSeed} onValueChange={setAvatarSeed} disabled={busy} />
+                <AvatarPicker initials={avatarInitials(name || session.user.name)} value={avatarSeed} onValueChange={setAvatarSeed} disabled={profileSave.pending} />
               </FieldSet>
-              <Field>
-                <FieldLabel htmlFor="account-email">Email</FieldLabel>
-                <Input id="account-email" value={session.user.email} readOnly />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="account-role">Role</FieldLabel>
-                <Input id="account-role" value={role} readOnly />
-              </Field>
-              <Field>
-                <FieldLabel>User State</FieldLabel>
-                <div><Badge variant={stateVariant(session.user.state)}>{session.user.state}</Badge></div>
-              </Field>
-            </div>
-            <SectionFooter>
-              <Button type="button" onClick={() => void saveProfile()} disabled={busy}>Save profile</Button>
-              {profileMessage ? <FieldDescription role="status">{profileMessage}</FieldDescription> : null}
-            </SectionFooter>
-          </FramePanel>
-        ) : null}
-        {activeSection === "preferences" ? (
-          <FramePanel className="flex flex-col gap-6">
-            <SectionHeader title="Preferences" description="Choose how Tracer looks and the timezone used for dates and times." />
-            <div className="flex flex-col gap-5">
+            </SettingsSection>
+          ) : null}
+          {activeSection === "preferences" ? (
+            <SettingsSection
+              title="Preferences"
+              description="Choose how Tracer looks and the timezone used for dates and times."
+              footer={<ActionButton type="button" action={preferencesSave} onClick={() => void savePreferences()}>Save preferences</ActionButton>}
+            >
               <FieldSet className="gap-2">
                 <FieldLegend variant="label" className="mb-0">Theme</FieldLegend>
                 <FieldDescription>Applies right away and is remembered on this browser.</FieldDescription>
                 <ThemePicker />
               </FieldSet>
-              <Field data-invalid={Boolean(preferencesMessage && !isValidIanaTimezone(timezone))}>
+              <Field data-invalid={Boolean(timezoneError)}>
                 <FieldLabel htmlFor="timezone">Timezone</FieldLabel>
-                <Input id="timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} aria-invalid={Boolean(preferencesMessage && !isValidIanaTimezone(timezone))} />
+                <Input id="timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} aria-invalid={Boolean(timezoneError)} />
                 <FieldDescription>Preview: {preview}</FieldDescription>
-                {preferencesMessage && !isValidIanaTimezone(timezone) ? <FieldError>{preferencesMessage}</FieldError> : null}
+                {timezoneError ? <FieldError>{timezoneError}</FieldError> : null}
               </Field>
-            </div>
-            <SectionFooter>
-              <Button type="button" onClick={() => void savePreferences()} disabled={busy}>Save preferences</Button>
-              {preferencesMessage && isValidIanaTimezone(timezone) ? <FieldDescription role="status">{preferencesMessage}</FieldDescription> : null}
-            </SectionFooter>
-          </FramePanel>
-        ) : null}
-        {activeSection === "security" ? (
-          <FramePanel className="flex flex-col gap-6">
-            <SectionHeader title="Security" description="Email code sign-in is available." />
-            {securityLoading ? <div className="flex flex-col gap-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div> : null}
-            {!securityLoading && securityError ? <div className="flex flex-col items-start gap-3"><p role="alert">{securityError}</p><Button variant="outline" onClick={() => void loadSecurity()}>Retry</Button></div> : null}
-            {!securityLoading && !securityError ? (
-              <>
+            </SettingsSection>
+          ) : null}
+          {activeSection === "security" ? (
+            <SettingsSection
+              title="Security"
+              description="Email code sign-in is available."
+              footer={
+                !securityLoading && !securityError ? (
+                  <ActionButton type="button" variant="outline" action={revokeOthers} onClick={() => void revokeOtherSessions()} unavailable={otherSessions.length ? null : "No other sessions to revoke."}>Revoke other sessions</ActionButton>
+                ) : null
+              }
+            >
+              {securityLoading ? <div className="flex flex-col gap-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div> : null}
+              {!securityLoading && securityError ? <div className="flex flex-col items-start gap-3"><p role="alert">{securityError}</p><Button variant="outline" onClick={() => void loadSecurity()}>Retry</Button></div> : null}
+              {!securityLoading && !securityError ? (
                 <ul className="flex flex-col divide-y divide-border border-t border-border">
                   {currentSession ? (
                     <li className="flex items-center justify-between gap-4 py-3">
@@ -322,7 +307,7 @@ export default function AccountSettingsPage() {
                         <AlertDialogTrigger render={<Button type="button" variant="outline" />}>Revoke</AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader><AlertDialogTitle>Revoke current session?</AlertDialogTitle><AlertDialogDescription>You will return to Sign in on this browser.</AlertDialogDescription></AlertDialogHeader>
-                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => void revokeSession(currentSession.token, true)}>Revoke session</AlertDialogAction></AlertDialogFooter>
+                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><RevokeSessionButton variant="default" revoke={() => revokeSession(currentSession.token, true)}>Revoke session</RevokeSessionButton></AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
                     </li>
@@ -330,33 +315,25 @@ export default function AccountSettingsPage() {
                   {otherSessions.length ? otherSessions.map((value) => (
                     <li key={value.id} className="flex items-center justify-between gap-4 py-3">
                       <div className="flex min-w-0 flex-col gap-0.5"><p className="truncate text-sm">{value.userAgent || "Other session"}</p><p className="font-mono text-xs text-muted-foreground tabular-nums">Expires {new Date(value.expiresAt).toLocaleString()}</p></div>
-                      <Button type="button" variant="outline" onClick={() => void revokeSession(value.token, false)}>Revoke</Button>
+                      <RevokeSessionButton revoke={() => revokeSession(value.token, false)}>Revoke</RevokeSessionButton>
                     </li>
                   )) : <li className="py-3 text-sm text-muted-foreground">No other active sessions.</li>}
                 </ul>
-                <SectionFooter>
-                  <Button type="button" variant="outline" onClick={() => void revokeOtherSessions()} disabled={!otherSessions.length}>Revoke other sessions</Button>
-                </SectionFooter>
-              </>
-            ) : null}
-          </FramePanel>
-        ) : null}
-      </Frame>
+              ) : null}
+            </SettingsSection>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
 
-/** Panel title and description, aligned to the panel's content edge. */
-function SectionHeader({ title, description }: { title: string; description: string }) {
+/** One session's revoke with its own pending state and failure beside it. */
+function RevokeSessionButton({ revoke, variant = "outline", children }: { revoke: () => Promise<ActionResult>; variant?: "default" | "outline"; children: ReactNode }) {
+  const action = useAction();
   return (
-    <header className="flex flex-col gap-1">
-      <FrameTitle>{title}</FrameTitle>
-      <FrameDescription>{description}</FrameDescription>
-    </header>
+    <ActionButton type="button" variant={variant} action={action} onClick={() => void action.run(revoke)}>
+      {children}
+    </ActionButton>
   );
-}
-
-/** Panel actions, separated from the fields by one hairline. */
-function SectionFooter({ children }: { children: ReactNode }) {
-  return <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-4">{children}</footer>;
 }

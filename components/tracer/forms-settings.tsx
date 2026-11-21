@@ -24,17 +24,18 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ActionButton, SettingsSection, useAction } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 
 const maxForwardingRecipients = 10;
 
-export function ForwardingRecipientsSettings({ workspaceId, initial, hostname, onMessage }: { workspaceId: string; initial: string[]; hostname: string | null; onMessage: (message: string) => void }) {
+export function ForwardingRecipientsSettings({ workspaceId, initial, hostname }: { workspaceId: string; initial: string[]; hostname: string | null }) {
   const [emails, setEmails] = useState(initial);
   const [draft, setDraft] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const save = useAction();
+  const busy = save.pending;
   const atLimit = emails.length >= maxForwardingRecipients;
 
   function add() {
@@ -44,32 +45,39 @@ export function ForwardingRecipientsSettings({ workspaceId, initial, hostname, o
     setDraft("");
   }
 
-  async function save() {
-    setBusy(true);
-    setError("");
-    const response = await mutationFetch(`/api/workspaces/${workspaceId}/forms/forwarding`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ emails }),
-    }).catch(() => null);
-    if (!response?.ok) {
-      setError(response?.status === 400 ? `Enter up to ${maxForwardingRecipients} valid email addresses.` : "The Forwarding Recipients could not be saved.");
-    } else {
+  function saveRecipients() {
+    return save.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspaceId}/forms/forwarding`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ emails }),
+      }).catch(() => null);
+      if (!response?.ok) {
+        return { error: response?.status === 400 ? `Enter up to ${maxForwardingRecipients} valid email addresses.` : "The Forwarding Recipients could not be saved." };
+      }
       const body = (await response.json()) as { forwardTo: string[] };
       setEmails(body.forwardTo);
-      onMessage("Forwarding Recipients saved.");
-    }
-    setBusy(false);
+      return { message: "Forwarding Recipients saved." };
+    });
   }
 
   return (
-    <section role="region" aria-labelledby="forwarding-recipients-title" className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <h3 id="forwarding-recipients-title" className="font-semibold">Forwarding Recipients</h3>
-        <p className="text-sm text-muted-foreground">
-          Every Form Submission is emailed from <span className="font-mono">info@{hostname ?? "<the linked Site's hostname>"}</span> with Reply-To the customer. Without recipients, submissions are stored as Not forwarded.
-        </p>
-      </div>
+    <SettingsSection
+      title="Forwarding Recipients"
+      description={
+        <>
+          Every Form Submission is emailed from <span className="font-mono">info@{hostname ?? "<the linked Site's hostname>"}</span> with Reply-To the customer. Without recipients, submissions are stored as Not forwarded. The Forms key every Site posts with is managed on Integrations.
+        </>
+      }
+      footer={
+        <>
+          <ActionButton type="button" action={save} onClick={() => void saveRecipients()}>
+            Save Forwarding Recipients
+          </ActionButton>
+          <p className="text-xs text-muted-foreground tabular-nums">{emails.length} of {maxForwardingRecipients} recipients</p>
+        </>
+      }
+    >
       {emails.length === 0 ? (
         <p className="text-sm text-muted-foreground">No Forwarding Recipients yet.</p>
       ) : (
@@ -85,7 +93,7 @@ export function ForwardingRecipientsSettings({ workspaceId, initial, hostname, o
         </ul>
       )}
       <div className="flex flex-wrap items-end gap-2">
-        <Field className="w-full sm:w-72" data-invalid={Boolean(error)}>
+        <Field className="w-full sm:w-72">
           <FieldLabel htmlFor="forwarding-recipient-email">Add a recipient</FieldLabel>
           <Input
             id="forwarding-recipient-email"
@@ -100,18 +108,11 @@ export function ForwardingRecipientsSettings({ workspaceId, initial, hostname, o
               }
             }}
           />
-          {error ? <FieldError>{error}</FieldError> : null}
         </Field>
         <Button type="button" variant="outline" disabled={busy || atLimit || !draft.trim()} onClick={add}>
           Add
         </Button>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" disabled={busy} onClick={() => void save()}>
-          Save Forwarding Recipients
-        </Button>
-        <p className="text-xs text-muted-foreground tabular-nums">{emails.length} of {maxForwardingRecipients} recipients</p>
-      </div>
-    </section>
+    </SettingsSection>
   );
 }

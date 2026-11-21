@@ -308,7 +308,7 @@ export default function ReportsView({ scope }: { scope: GenerateReportScope }) {
   const loading = jobs === null && !failed;
   const emptyMessage = jobs === null && failed ? (
     <div className="flex flex-col items-center gap-3">
-      <p role="alert">Report history is unavailable.</p>
+      <p role="alert" className="text-sm text-destructive">Report history is unavailable.</p>
       <Button type="button" variant="outline" onClick={() => void refresh()}>
         Retry
       </Button>

@@ -198,6 +198,20 @@ describe("FormsView", () => {
     expect(within(row("Lee Caller")).getByText("Forward failed")).toBeVisible();
   });
 
+  it("names a failed action beside its row in the destructive style and shows the pending state on the pressed button", async () => {
+    let fail: (response: Response) => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { fail = resolve; })));
+    render(<FormsView list={list} />);
+
+    fireEvent.click(within(row("Lee Caller")).getByRole("button", { name: "Resend" }));
+    expect(within(row("Lee Caller")).getByRole("button", { name: "Resend" })).toHaveAttribute("aria-busy", "true");
+    fail(new Response(JSON.stringify({ error: "held" }), { status: 409 }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveClass("text-destructive");
+    expect(alert.closest("tr")?.previousElementSibling).toBe(row("Lee Caller"));
+  });
+
   it("explains the Empty state with and without a linked Site", () => {
     const { rerender } = render(<FormsView list={{ ...list, submissions: [], heldCount: 0 }} />);
     expect(screen.getByText("No Form Submissions yet")).toBeVisible();

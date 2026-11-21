@@ -270,7 +270,7 @@ describe("IntegrationsView", () => {
     expect(screen.getByRole("dialog", { name: "Connect Twilio" })).toBeVisible();
   });
 
-  it("shows connected Twilio details, numbers, test feedback, and retry", async () => {
+  it("shows connected Twilio details, numbers, and test feedback with Test Connection ready to retry", async () => {
     const fetch = fetchStub({
       ...responseRoutes({ connected: true, providers: twilioConnectedProviders }),
       "POST /api/integrations/twilio/test": [{ body: { connection: connected } }, { body: { error: "provider_unavailable", detail: "Twilio is unavailable" }, status: 502 }],
@@ -294,7 +294,65 @@ describe("IntegrationsView", () => {
     expect(await screen.findByText("Twilio connection verified.")).toBeVisible();
     fireEvent.click(within(region).getByRole("button", { name: "Test Connection" }));
     expect(await within(region).findByRole("alert")).toHaveTextContent("Twilio test failed.");
-    expect(within(region).getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(within(region).getByRole("button", { name: "Test Connection" })).toBeEnabled();
+  });
+
+  it("shows a pending Test Connection on its own button and keeps the other Twilio actions enabled", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
+    const region = detail("Twilio");
+    fireEvent.click(within(region).getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(within(region).getByRole("button", { name: "Test Connection" })).toHaveAttribute("aria-busy", "true"));
+    expect(within(region).getByRole("button", { name: "Test Connection" })).toBeDisabled();
+    for (const name of ["Sync Numbers", "Rotate Key", "Set Auth Token", "Disconnect"]) {
+      expect(within(region).getByRole("button", { name })).toBeEnabled();
+    }
+  });
+
+  it("confirms a Twilio test beside Test Connection and names a failure there in the destructive style", async () => {
+    const routes = { providers: twilioConnectedProviders, twilio: connected, numbers, cloudflare: null };
+    vi.stubGlobal("fetch", fetchStub({
+      "POST /api/integrations/twilio/test": [{ body: { connection: connected } }, { body: { error: "provider_unavailable", detail: "Twilio is unavailable" }, status: 502 }],
+      "GET /api/integrations": [{ body: routes }, { body: routes }],
+    }));
+    render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
+    const region = detail("Twilio");
+    fireEvent.click(within(region).getByRole("button", { name: "Test Connection" }));
+    expect(await within(region).findByRole("status")).toHaveTextContent("Twilio connection verified.");
+    fireEvent.click(within(region).getByRole("button", { name: "Test Connection" }));
+    const alert = await within(region).findByRole("alert");
+    expect(alert).toHaveTextContent("Twilio test failed. Twilio is unavailable");
+    expect(alert).toHaveClass("text-destructive");
+    expect(within(region).getByRole("button", { name: "Test Connection" })).toHaveAccessibleDescription("Twilio test failed. Twilio is unavailable");
+  });
+
+  it("names a rejected credential beside Connect inside the dialog and keeps the entered values", async () => {
+    vi.stubGlobal("fetch", fetchStub({ "POST /api/integrations/twilio/connect": { body: { error: "authentication_failed", detail: "Twilio rejected the credential (HTTP 401)" }, status: 422 } }));
+    render(<IntegrationsView initial={initialData()} provider="twilio" />);
+    fireEvent.click(within(detail("Twilio")).getByRole("button", { name: "Connect Twilio" }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Twilio" });
+    fireEvent.change(within(dialog).getByLabelText("Account SID"), { target: { value: accountSid } });
+    fireEvent.change(within(dialog).getByLabelText("API Key SID"), { target: { value: apiKeySid } });
+    fireEvent.change(within(dialog).getByLabelText("API Key Secret"), { target: { value: secret } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("Twilio rejected the credential. Twilio rejected the credential (HTTP 401)");
+    expect(alert).toHaveClass("text-destructive");
+    expect(within(dialog).getByRole("button", { name: "Connect" })).toHaveAccessibleDescription("Twilio rejected the credential. Twilio rejected the credential (HTTP 401)");
+    expect(within(dialog).getByLabelText("Account SID")).toHaveValue(accountSid);
+    expect(within(dialog).getByLabelText("API Key SID")).toHaveValue(apiKeySid);
+    expect(document.body.textContent).not.toContain(secret);
+  });
+
+  it("states why Disconnect anyway is unavailable until the ended Number Assignments are acknowledged", async () => {
+    vi.stubGlobal("fetch", fetchStub({ "POST /api/integrations/twilio/disconnect": { body: { error: "active_workspaces", activeWorkspaceCount: 2 }, status: 409 } }));
+    render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
+    fireEvent.click(within(detail("Twilio")).getByRole("button", { name: "Disconnect" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Disconnect Twilio?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    const anyway = await within(dialog).findByRole("button", { name: "Disconnect anyway" });
+    expect(anyway).toBeDisabled();
+    expect(anyway).toHaveAccessibleDescription(expect.stringContaining("Acknowledge the ended Number Assignments first."));
   });
 
   it("saves the webhook Auth Token without rendering it", async () => {
@@ -393,6 +451,18 @@ describe("IntegrationsView", () => {
     expect(screen.getByRole("heading", { name: "Twilio" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("names a failed refresh in the destructive style with Retry", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ verified: true }));
+      throw new Error("network");
+    }));
+    render(<IntegrationsView initial={initialData({ providers: twilioConnectedProviders, twilio: connected })} provider="twilio" />);
+    fireEvent.click(within(detail("Twilio")).getByRole("button", { name: "Test Connection" }));
+    const alert = await screen.findByText("Integrations could not be refreshed.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 
   it("shows the R2 bucket and the Recording transfer history for R2 and Trigger.dev before any transfer", async () => {
@@ -618,7 +688,7 @@ describe("IntegrationsView", () => {
     expect(within(region).queryByRole("button", { name: "Connect DataForSEO" })).not.toBeInTheDocument();
     fireEvent.click(within(region).getByRole("button", { name: "Test Connection" }));
     expect(await within(region).findByRole("alert")).toHaveTextContent("DataForSEO test failed. DataForSEO request failed (HTTP 503)");
-    expect(within(region).getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(within(region).getByRole("button", { name: "Test Connection" })).toBeEnabled();
   });
 
   it("rotates the DataForSEO password and disconnects after confirmation", async () => {
@@ -675,5 +745,23 @@ describe("IntegrationsView", () => {
     expect(await within(panel).findByText("No key yet")).toBeVisible();
     expect(within(panel).queryByText("tfk_secret_once")).not.toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Generate Forms key" })).toBeVisible();
+  });
+
+  it("confirms a generated Forms key beside its button and names a failed revoke inside the confirmation", async () => {
+    vi.stubGlobal("fetch", fetchStub({
+      "POST /api/integrations/forms-key": { body: { key: "tfk_secret_once", createdAt: "2026-10-21T12:00:00.000Z" }, status: 201 },
+      "DELETE /api/integrations/forms-key": { body: { error: "unavailable" }, status: 500 },
+    }));
+    render(<IntegrationsView initial={{ ...initialData({ providers: cloudflareConnectedProviders, cloudflare: cloudflareConnected, sites }), formsKey: null }} provider="cloudflare" />);
+    const panel = within(detail("Cloudflare")).getByRole("region", { name: "Forms key" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Generate Forms key" }));
+    expect(await within(panel).findByRole("status")).toHaveTextContent("Forms key generated.");
+    fireEvent.click(within(panel).getByRole("button", { name: "Revoke Forms key" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Revoke the Forms key?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Forms key" }));
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("The Forms key could not be revoked.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(screen.getByRole("alertdialog", { name: "Revoke the Forms key?" })).toBeVisible();
   });
 });

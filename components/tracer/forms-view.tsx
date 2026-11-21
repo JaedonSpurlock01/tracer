@@ -79,7 +79,7 @@ function actionError(action: string, status: number | undefined): string {
   return `The Form Submission could not be ${action}.`;
 }
 
-function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmissionRecord; busy: boolean; onReview: (classification: LeadClassification, note: string) => Promise<boolean> }) {
+function ReviewPopover({ submission, busy, pending, onReview }: { submission: FormSubmissionRecord; busy: boolean; pending: boolean; onReview: (classification: LeadClassification, note: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [classification, setClassification] = useState<LeadClassification | null>(submission.review?.classification ?? null);
   const [note, setNote] = useState(submission.review?.note ?? "");
@@ -118,6 +118,7 @@ function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmiss
             type="button"
             size="sm"
             disabled={busy || !classification || noteTooLong}
+            aria-busy={pending || undefined}
             onClick={async () => {
               if (classification && (await onReview(classification, note.trim()))) setOpen(false);
             }}
@@ -133,13 +134,15 @@ function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmiss
 function SubmissionRow({
   submission,
   operator,
-  busy,
+  pending,
+  error,
   onAction,
   onReview,
 }: {
   submission: FormSubmissionRecord;
   operator: boolean;
-  busy: boolean;
+  pending: string | null;
+  error: string | null;
   onAction: (path: "approve" | "reject" | "resend" | "review", init?: RequestInit) => Promise<boolean>;
   onReview: (classification: LeadClassification, note: string) => Promise<boolean>;
 }) {
@@ -148,6 +151,7 @@ function SubmissionRow({
   const [forwardLabel, forwardVariant] = forwardBadges[submission.forward.status];
   const summary = otherFields(submission);
   const canResend = submission.forward.status === "Failed" || submission.forward.status === "Not configured";
+  const busy = pending !== null;
   return (
     <>
       <tr className="border-t border-border">
@@ -211,22 +215,22 @@ function SubmissionRow({
           <div className="flex justify-end gap-1">
             {operator && submission.held ? (
               <>
-                <Button type="button" size="sm" disabled={busy} onClick={() => void onAction("approve")}>
+                <Button type="button" size="sm" disabled={busy} aria-busy={pending === "approve" || undefined} onClick={() => void onAction("approve")}>
                   Approve
                 </Button>
-                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void onAction("reject")}>
+                <Button type="button" variant="outline" size="sm" disabled={busy} aria-busy={pending === "reject" || undefined} onClick={() => void onAction("reject")}>
                   Reject
                 </Button>
               </>
             ) : null}
-            {operator && !submission.held ? <ReviewPopover key={submission.review?.reviewedAt ?? "none"} submission={submission} busy={busy} onReview={onReview} /> : null}
+            {operator && !submission.held ? <ReviewPopover key={submission.review?.reviewedAt ?? "none"} submission={submission} busy={busy} pending={pending === "review"} onReview={onReview} /> : null}
             {operator && submission.review ? (
-              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void onAction("review", { method: "DELETE" })}>
+              <Button type="button" variant="ghost" size="sm" disabled={busy} aria-busy={pending === "review" || undefined} onClick={() => void onAction("review", { method: "DELETE" })}>
                 Clear review
               </Button>
             ) : null}
             {operator && canResend ? (
-              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void onAction("resend")}>
+              <Button type="button" variant="outline" size="sm" disabled={busy} aria-busy={pending === "resend" || undefined} onClick={() => void onAction("resend")}>
                 Resend
               </Button>
             ) : null}
@@ -237,6 +241,15 @@ function SubmissionRow({
           </div>
         </td>
       </tr>
+      {error ? (
+        <tr>
+          <td colSpan={7} className={`${bodyCell} pt-0 whitespace-normal`}>
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          </td>
+        </tr>
+      ) : null}
       {expanded ? (
         <tr>
           <td colSpan={7} className={`${bodyCell} pt-0 whitespace-normal`}>
@@ -269,23 +282,23 @@ function SubmissionRow({
 
 export default function FormsView({ list, readOnly = false }: { list: FormSubmissionList; readOnly?: boolean }) {
   const [submissions, setSubmissions] = useState(list.submissions);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [pending, setPending] = useState<{ id: string; path: string } | null>(null);
+  const [failure, setFailure] = useState<{ id: string; text: string } | null>(null);
   const operator = !readOnly;
   const heldCount = submissions.filter((submission) => submission.held).length;
 
-  async function act(submission: FormSubmissionRecord, path: string, init: RequestInit, failure: string): Promise<boolean> {
-    setBusyId(submission.id);
-    setError("");
+  async function act(submission: FormSubmissionRecord, path: string, init: RequestInit, verb: string): Promise<boolean> {
+    setPending({ id: submission.id, path });
+    setFailure(null);
     const response = await mutationFetch(`/api/workspaces/${list.workspace.id}/forms/${submission.id}/${path}`, init).catch(() => null);
     if (!response?.ok) {
-      setError(actionError(failure, response?.status));
-      setBusyId(null);
+      setFailure({ id: submission.id, text: actionError(verb, response?.status) });
+      setPending(null);
       return false;
     }
     const body = (await response.json()) as { submission: FormSubmissionRecord };
     setSubmissions((current) => current.map((item) => (item.id === submission.id ? body.submission : item)));
-    setBusyId(null);
+    setPending(null);
     return true;
   }
 
@@ -303,11 +316,6 @@ export default function FormsView({ list, readOnly = false }: { list: FormSubmis
         }
       />
       <Panel>
-        {error ? (
-          <p role="alert" className="border-b border-border px-4 py-3 text-sm">
-            {error}
-          </p>
-        ) : null}
         {submissions.length === 0 ? (
           <div className="px-4 py-6">
             <EmptyState
@@ -342,7 +350,8 @@ export default function FormsView({ list, readOnly = false }: { list: FormSubmis
                     key={submission.id}
                     submission={submission}
                     operator={operator}
-                    busy={busyId === submission.id}
+                    pending={pending?.id === submission.id ? pending.path : null}
+                    error={failure?.id === submission.id ? failure.text : null}
                     onAction={(path, init) => act(submission, path, init ?? { method: "POST" }, failures[path])}
                     onReview={(classification, note) =>
                       act(submission, "review", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ classification, note: note || null }) }, "reviewed")
