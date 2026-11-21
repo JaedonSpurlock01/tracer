@@ -38,7 +38,6 @@
 "use client";
 
 import {
-  Activity,
   ArrowLeft,
   Check,
   ChevronsUpDown,
@@ -102,7 +101,6 @@ interface NavigationItem {
 
 const navigation: NavigationItem[] = [
   { label: "Home", href: "/", icon: House, exact: true },
-  { label: "Activity", href: "/activity", icon: Activity },
   { label: "Calls", href: "/calls", icon: Phone },
   { label: "Workspaces", href: "/workspaces", icon: LayoutGrid },
   { label: "Reports", href: "/reports", icon: FileText },
@@ -271,7 +269,13 @@ export default function AppSidebar({ actor, organization }: AppSidebarProps) {
         <AccountMenu actor={actor} organization={organization} />
       </SidebarHeader>
       <SidebarContent>
-        {workspace ? <WorkspaceNavigation workspace={workspace} /> : <NavigationMenu items={navigation} operator={operator} />}
+        {workspace ? (
+          <WorkspaceNavigation workspace={workspace} />
+        ) : (
+          <SidebarGroup>
+            <NavigationMenu items={navigation} operator={operator} />
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   );

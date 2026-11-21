@@ -33,10 +33,10 @@
 
 import { useEffect, useId, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { DealActions, describeDeal } from "@/components/tracer/deal-editor";
+import { ActionButton, SettingsSection, useAction } from "@/components/tracer/form-parts";
 import LocationMap from "@/components/tracer/location-map";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import type { BusinessRecord } from "@/data/business";
@@ -44,65 +44,63 @@ import type { DealRecord } from "@/data/deals";
 import type { PlaceRecord } from "@/data/places-client";
 import type { SiteDomainRenewal } from "@/data/sites";
 
-export function DomainRenewalSettings({ workspaceId, initial, onMessage }: { workspaceId: string; initial: SiteDomainRenewal; onMessage: (message: string) => void }) {
+export function DomainRenewalSettings({ workspaceId, initial }: { workspaceId: string; initial: SiteDomainRenewal }) {
   const [registrar, setRegistrar] = useState(initial.registrar ?? "");
   const [price, setPrice] = useState(initial.renewalCents === null ? "" : (initial.renewalCents / 100).toFixed(2));
   const [renewsOn, setRenewsOn] = useState(initial.renewsOn ?? "");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const save = useAction();
 
-  async function save() {
+  function saveRenewal() {
     const renewalCents = price === "" ? null : Math.round(Number(price) * 100);
     if (renewalCents !== null && (!Number.isFinite(renewalCents) || renewalCents < 0)) {
       setError("Enter the annual price in dollars.");
       return;
     }
-    setBusy(true);
     setError("");
-    const response = await mutationFetch(`/api/workspaces/${workspaceId}/site/domain`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ registrar: registrar.trim() || null, renewalCents, renewsOn: renewsOn || null }),
-    }).catch(() => null);
-    if (!response?.ok) {
-      setError(response?.status === 400 ? "Enter a registrar of at most 80 characters, a price in dollars, and a renewal date." : "The Domain renewal could not be saved.");
-    } else {
+    return save.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspaceId}/site/domain`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ registrar: registrar.trim() || null, renewalCents, renewsOn: renewsOn || null }),
+      }).catch(() => null);
+      if (!response?.ok) {
+        return { error: response?.status === 400 ? "Enter a registrar of at most 80 characters, a price in dollars, and a renewal date." : "The Domain renewal could not be saved." };
+      }
       const body = (await response.json()) as { domain: SiteDomainRenewal };
       setRegistrar(body.domain.registrar ?? "");
       setPrice(body.domain.renewalCents === null ? "" : (body.domain.renewalCents / 100).toFixed(2));
       setRenewsOn(body.domain.renewsOn ?? "");
-      onMessage("Domain renewal saved.");
-    }
-    setBusy(false);
+      return { message: "Domain renewal saved." };
+    });
   }
 
   return (
-    <section role="region" aria-labelledby="domain-renewal-title" className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <h3 id="domain-renewal-title" className="font-semibold">Domain renewal</h3>
-        <p className="text-sm text-muted-foreground">What the Site&apos;s domain costs per year. One twelfth counts toward each month&apos;s cost.</p>
-      </div>
+    <SettingsSection
+      title="Domain renewal"
+      description="What the Site's domain costs per year. One twelfth counts toward each month's cost."
+      footer={
+        <ActionButton type="button" variant="outline" action={save} onClick={() => void saveRenewal()}>
+          Save Domain renewal
+        </ActionButton>
+      }
+    >
       <div className="grid gap-3 sm:grid-cols-3">
         <Field>
           <FieldLabel htmlFor="domain-registrar">Registrar</FieldLabel>
-          <Input id="domain-registrar" value={registrar} maxLength={80} disabled={busy} onChange={(event) => setRegistrar(event.target.value)} />
+          <Input id="domain-registrar" value={registrar} maxLength={80} disabled={save.pending} onChange={(event) => setRegistrar(event.target.value)} />
         </Field>
         <Field data-invalid={Boolean(error)}>
           <FieldLabel htmlFor="domain-renewal-price">Annual price</FieldLabel>
-          <Input id="domain-renewal-price" type="number" inputMode="decimal" min="0" step="0.01" value={price} disabled={busy} onChange={(event) => setPrice(event.target.value)} />
+          <Input id="domain-renewal-price" type="number" inputMode="decimal" min="0" step="0.01" value={price} disabled={save.pending} onChange={(event) => setPrice(event.target.value)} />
           {error ? <FieldError>{error}</FieldError> : null}
         </Field>
         <Field>
           <FieldLabel htmlFor="domain-renews-on">Renewal date</FieldLabel>
-          <Input id="domain-renews-on" type="date" value={renewsOn} disabled={busy} onChange={(event) => setRenewsOn(event.target.value)} />
+          <Input id="domain-renews-on" type="date" value={renewsOn} disabled={save.pending} onChange={(event) => setRenewsOn(event.target.value)} />
         </Field>
       </div>
-      <div>
-        <Button type="button" variant="outline" disabled={busy} onClick={() => void save()}>
-          Save Domain renewal
-        </Button>
-      </div>
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -195,55 +193,52 @@ function CityLookup({ city, point, disabled, onChange }: { city: string; point: 
   );
 }
 
-export function BusinessAndDealSettings({ workspaceId, initialBusiness, initialDeal, onMessage }: { workspaceId: string; initialBusiness: BusinessRecord | null; initialDeal: DealRecord | null; onMessage: (message: string) => void }) {
+export function BusinessAndDealSettings({ workspaceId, initialBusiness, initialDeal }: { workspaceId: string; initialBusiness: BusinessRecord | null; initialDeal: DealRecord | null }) {
   const [deal, setDeal] = useState(initialDeal);
   const [saved, setSaved] = useState<BusinessDraft>(initialBusiness ?? emptyBusiness);
   const [draft, setDraft] = useState<BusinessDraft>(initialBusiness ?? emptyBusiness);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const save = useAction();
+  const busy = save.pending;
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
 
-  async function save() {
-    setBusy(true);
-    setError("");
-    const response = await mutationFetch(`/api/workspaces/${workspaceId}/business`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft),
-    }).catch(() => null);
-    if (!response?.ok) {
-      setError(response?.status === 400 ? "Enter a valid email and website, and keep each field within its length." : "The Business could not be saved.");
-    } else {
+  function saveBusiness() {
+    return save.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspaceId}/business`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(draft),
+      }).catch(() => null);
+      if (!response?.ok) {
+        return { error: response?.status === 400 ? "Enter a valid email and website, and keep each field within its length." : "The Business could not be saved." };
+      }
       const body = (await response.json()) as { business: BusinessRecord };
       setSaved(body.business);
       setDraft(body.business);
-      onMessage("Business saved.");
-    }
-    setBusy(false);
+      return { message: "Business saved." };
+    });
   }
 
   return (
-    <section role="region" aria-labelledby="business-deal-title" className="flex flex-col gap-4">
-      <div className="flex flex-col gap-0.5">
-        <h3 id="business-deal-title" className="font-semibold">Business and Deal</h3>
-        <p className="text-sm text-muted-foreground">The client behind this Workspace and what they pay. At most one Deal is open at a time; ending one keeps it in history.</p>
-      </div>
+    <SettingsSection
+      title="Business and Deal"
+      className="overflow-visible"
+      description="The client behind this Workspace and what they pay. At most one Deal is open at a time; ending one keeps it in history."
+    >
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="flex flex-col gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
             {businessFields.map((field) => (
-              <Field key={field.key} className={field.wide ? "sm:col-span-2" : ""} data-invalid={Boolean(error) && (field.key === "email" || field.key === "website")}>
+              <Field key={field.key} className={field.wide ? "sm:col-span-2" : ""} data-invalid={Boolean(save.error) && (field.key === "email" || field.key === "website")}>
                 <FieldLabel htmlFor={`business-${field.key}`}>{field.label}</FieldLabel>
                 <Input id={`business-${field.key}`} type={field.type ?? "text"} value={draft[field.key] ?? ""} maxLength={field.maxLength} disabled={busy} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} />
               </Field>
             ))}
             <CityLookup city={draft.city ?? ""} point={draft.cityPoint} disabled={busy} onChange={(city, cityPoint) => setDraft({ ...draft, city, cityPoint })} />
           </div>
-          {error ? <FieldError>{error}</FieldError> : null}
-          <div className="flex items-center gap-3">
-            <Button type="button" variant="outline" disabled={busy || !dirty} onClick={() => void save()}>
+          <div className="flex flex-wrap items-center gap-3">
+            <ActionButton type="button" variant="outline" action={save} disabled={!dirty} onClick={() => void saveBusiness()}>
               Save Business
-            </Button>
+            </ActionButton>
             {dirty ? <span className="text-xs text-muted-foreground">Unsaved changes</span> : null}
           </div>
           <div className="flex flex-col gap-2 border-t pt-4">
@@ -251,11 +246,11 @@ export function BusinessAndDealSettings({ workspaceId, initialBusiness, initialD
               <span className="font-medium">Deal: </span>
               {describeDeal(deal)}
             </p>
-            <DealActions workspaceId={workspaceId} deal={deal} onChange={setDeal} onMessage={onMessage} />
+            <DealActions workspaceId={workspaceId} deal={deal} onChange={setDeal} />
           </div>
         </div>
         <LocationMap point={draft.cityPoint} zoom={11} label={draft.city ? `Map of ${draft.city}` : "Map"} className="h-64 lg:h-full lg:min-h-80" placeholder="Pick a city to place this Business on the map." />
       </div>
-    </section>
+    </SettingsSection>
   );
 }

@@ -4,13 +4,15 @@
  * @brief  Verifies the Home dashboard regions and their states.
  *
  * @description
- *  Covers the header scope, date controls, and Generate Report opening the
- *  dialog over every accessible Workspace;
- *  Workspace performance shown only when the summary carries it; Recent
- *  Calls linking to Call Detail with the global Calls list as its source
- *  and View Calls carrying the range; a failed region showing Retry while
- *  every other region stays; the Operator first-Workspace state; and zero
- *  KPIs with an explanation before the first inbound Call.
+ *  Covers the Briefing layout: the header sentence with the date controls
+ *  and Generate Report on one row, the stat strip that merges the KPIs
+ *  with the Operator-only money, the Workspaces list shown only when the
+ *  summary carries Workspace performance, Recent Calls as one-line rows
+ *  linking to Call Detail with the global Calls list as its source and
+ *  View Calls carrying the range, a failed region showing Retry while
+ *  every other region stays, the Operator first-Workspace state, zero
+ *  stats with an explanation before the first inbound Call, and a Client
+ *  Viewer never seeing cost, revenue, or profit.
  *
  * @remarks
  *  Navigation is faked at the next/navigation boundary. ResizeObserver is
@@ -112,17 +114,17 @@ afterEach(() => {
 });
 
 describe("HomeDashboard", () => {
-  it("shows the scope, the date controls, and Generate Report", () => {
+  it("states the scope and range beside the date controls and Generate Report", () => {
     const { rerender } = render(<HomeDashboard {...props} />);
     expect(screen.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
-    expect(screen.getByText("All Workspaces")).toBeVisible();
+    expect(screen.getByText("All Workspaces, the last 7 days.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Generate Report" })).toBeEnabled();
     expect(within(screen.getByRole("group", { name: "Date range" })).getByRole("button", { name: "7 Days" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "90 Days" }));
     expect(router.push).toHaveBeenCalledWith("/?range=90d", { scroll: false });
 
-    rerender(<HomeDashboard {...props} operator={false} workspaceCount={3} />);
-    expect(screen.getByText("3 Workspaces")).toBeVisible();
+    rerender(<HomeDashboard {...props} operator={false} workspaceCount={3} range={{ kind: "all" }} />);
+    expect(screen.getByText("3 Workspaces, all time.")).toBeVisible();
   });
 
   it("opens Generate Report over every accessible Workspace", async () => {
@@ -134,45 +136,67 @@ describe("HomeDashboard", () => {
     expect(screen.getByRole("checkbox", { name: "Quiet Dental" })).toBeChecked();
   });
 
-  it("compares Workspaces only when the summary carries Workspace performance", () => {
-    const { rerender } = render(<HomeDashboard {...props} />);
-    const grid = screen.getByRole("region", { name: "Workspace performance" });
-    expect(within(grid).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Workspace", "Tracking Number", "Total Calls", "Answer Rate", "Good Leads", "Lead Rate"]);
-    const north = within(grid).getByRole("link", { name: "North Plumbing" });
-    expect(north).toHaveAttribute("href", "/workspaces/north");
-    expect(within(north.closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["North Plumbing", "+14155550101", "17", "63.6%", "5", "29.4%"]);
-    expect(within(within(grid).getByRole("link", { name: "Setup Roofing" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Setup Roofing", "-", "0", "-", "0", "-"]);
-
-    rerender(<HomeDashboard {...props} summary={{ ...summary, workspacePerformance: null }} />);
-    expect(screen.queryByRole("region", { name: "Workspace performance" })).not.toBeInTheDocument();
+  it("shows the headline numbers in one stat strip with their change", () => {
+    render(<HomeDashboard {...props} summary={{ ...summary, goodLeadForms: 2 }} />);
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("26")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("+100%")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("75%")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Answer Rate" })).getByText("+25 pts")).toBeVisible();
+    expect(screen.getByRole("group", { name: "Good Leads" })).toHaveAccessibleDescription("Good Lead Calls and Form Submissions, 2 from Forms");
+    expect(within(screen.getByRole("group", { name: "Average Duration" })).getByText("1:35")).toBeVisible();
   });
 
-  it("lists the five newest Calls linking to Call Detail from the Calls list, with View Calls carrying the range", () => {
+  it("lists the Workspaces only when the summary carries Workspace performance", () => {
+    const { rerender } = render(<HomeDashboard {...props} />);
+    const list = screen.getByRole("region", { name: "Workspaces" });
+    const north = within(list).getByRole("link", { name: /North Plumbing/ });
+    expect(north).toHaveAttribute("href", "/workspaces/north");
+    expect(north).toHaveTextContent("+14155550101");
+    expect(north).toHaveTextContent("17 Calls");
+    expect(north).toHaveTextContent("5 Good Leads");
+    expect(north).toHaveTextContent("63.6% answered");
+    const setup = within(list).getByRole("link", { name: /Setup Roofing/ });
+    expect(setup).toHaveTextContent("No Tracking Number");
+    expect(setup).toHaveTextContent("0 Calls");
+    expect(setup).not.toHaveTextContent("answered");
+    expect(within(list).getByRole("link", { name: "View all" })).toHaveAttribute("href", "/workspaces");
+
+    rerender(<HomeDashboard {...props} summary={{ ...summary, workspacePerformance: null }} />);
+    expect(screen.queryByRole("region", { name: "Workspaces" })).not.toBeInTheDocument();
+  });
+
+  it("lists the five newest Calls as one-line rows linking to Call Detail, with View Calls carrying the range", () => {
     render(<HomeDashboard {...props} />);
     const recent = screen.getByRole("region", { name: "Recent Calls" });
-    const rows = within(recent).getAllByRole("row").slice(1);
+    const rows = within(recent).getAllByRole("link").filter((link) => link.getAttribute("href")?.includes("/calls/"));
     expect(rows).toHaveLength(5);
-    expect(within(rows[0]).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Answered", "+13125550142", "North Plumbing", "Oct 18, 2026, 10:04:05 AM", "1:23", "Good Lead"]);
-    expect(within(rows[1]).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["In Progress", "Unknown caller", "North Plumbing", "Oct 18, 2026, 10:04:05 AM", "-", "-"]);
-    expect(within(rows[0]).getByRole("link")).toHaveAttribute("href", "/workspaces/north/calls/call-7?back=%2Fcalls");
-    fireEvent.click(rows[2]);
-    expect(router.push).toHaveBeenCalledWith("/workspaces/north/calls/call-5?back=%2Fcalls");
+    expect(rows[0]).toHaveAttribute("href", "/workspaces/north/calls/call-7?back=%2Fcalls");
+    expect(rows[0]).toHaveTextContent("+13125550142");
+    expect(rows[0]).toHaveTextContent("North Plumbing");
+    expect(rows[0]).toHaveTextContent("Oct 18");
+    expect(rows[0]).toHaveTextContent("1:23");
+    expect(rows[0]).toHaveTextContent("Good Lead");
+    expect(within(rows[0]).getByTitle("Oct 18, 2026, 10:04:05 AM")).toBeVisible();
+    expect(rows[1]).toHaveTextContent("Unknown caller");
+    expect(rows[1]).toHaveTextContent("In Progress");
     expect(within(recent).getByRole("link", { name: "View Calls" })).toHaveAttribute("href", "/calls?from=2026-10-12&to=2026-10-18");
   });
 
-  it("fails only the analytics regions and retries without blanking the page", () => {
+  it("fails only the analytics regions and retries while Recent Calls stays readable", () => {
     render(<HomeDashboard {...props} summary={null} />);
     expect(screen.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Analytics are unavailable.");
-    expect(within(screen.getByRole("region", { name: "Recent Calls" })).getAllByRole("row")).toHaveLength(6);
+    expect(screen.queryByRole("region", { name: "Leads generated" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Recent Calls" })).getAllByRole("link", { name: /\+13125550142/ })[0]).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(router.refresh).toHaveBeenCalled();
   });
 
-  it("fails only Recent Calls and keeps the KPIs", () => {
+  it("fails only Recent Calls and keeps the stats and the chart", () => {
     render(<HomeDashboard {...props} recentCalls={null} />);
     expect(within(screen.getByRole("region", { name: "Recent Calls" })).getByRole("alert")).toHaveTextContent("Recent Calls are unavailable.");
     expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("26")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Leads generated" })).toBeVisible();
   });
 
   it("explains the Twilio number an Operator needs before the first Workspace", () => {
@@ -182,7 +206,7 @@ describe("HomeDashboard", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("keeps the KPIs at zero and explains that activity appears after the first inbound Call", () => {
+  it("keeps the stats at zero and explains that activity appears after the first inbound Call", () => {
     const empty: AnalyticsSummary = {
       ...summary,
       kpis: {
@@ -197,6 +221,7 @@ describe("HomeDashboard", () => {
     render(<HomeDashboard {...props} summary={empty} recentCalls={{ ...recentCalls, calls: [], total: 0, hasCalls: false }} />);
     expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("0")).toBeVisible();
     expect(within(screen.getByRole("group", { name: "Good Leads" })).getByText("0")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Average Duration" })).getByText("None")).toBeVisible();
     expect(screen.getAllByText("Activity appears after the first inbound Call.").length).toBeGreaterThan(0);
   });
 });
@@ -207,20 +232,17 @@ const money = {
   byWorkspace: { north: { costCents: 878, revenueCents: 5000 } },
 };
 
-describe("HomeDashboard Money row", () => {
-  it("shows Monthly Cost with the yearly projection, Monthly Revenue, and Profit for Operators with Cost and Revenue columns", () => {
+describe("HomeDashboard money", () => {
+  it("adds Monthly Revenue and Profit to the stat strip, names the cost beneath it, and shows each Workspace's profit", () => {
     render(<HomeDashboard {...props} money={money} />);
-    const tile = (name: string) => within(screen.getByRole("group", { name }));
-    expect(tile("Monthly Cost").getByText("$12.44")).toBeVisible();
-    expect(tile("Monthly Cost").getByText("Projected $149.28 per year")).toBeVisible();
-    expect(tile("Monthly Revenue").getByText("$983.33")).toBeVisible();
-    expect(tile("Monthly Revenue").getByText("Open Deals for October 2026")).toBeVisible();
-    expect(tile("Profit").getByText("$970.89")).toHaveClass("text-success");
+    expect(within(screen.getByRole("group", { name: "Monthly Revenue" })).getByText("$983.33")).toBeVisible();
+    expect(screen.getByRole("group", { name: "Monthly Revenue" })).toHaveAccessibleDescription("Open Deals for October 2026");
+    expect(within(screen.getByRole("group", { name: "Profit" })).getByText("$970.89")).toHaveClass("text-success");
+    expect(screen.getByText(/Monthly Cost \$12\.44, projected \$149\.28 per year\./)).toBeVisible();
     expect(screen.getByRole("link", { name: "Pricing guide" })).toHaveAttribute("href", "/pricing");
-    const grid = screen.getByRole("region", { name: "Workspace performance" });
-    expect(within(grid).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Workspace", "Tracking Number", "Total Calls", "Answer Rate", "Good Leads", "Lead Rate", "Cost", "Revenue"]);
-    expect(within(within(grid).getByRole("link", { name: "North Plumbing" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["North Plumbing", "+14155550101", "17", "63.6%", "5", "29.4%", "$8.78", "$50.00"]);
-    expect(within(within(grid).getByRole("link", { name: "Setup Roofing" }).closest("tr")!).getAllByRole("cell").slice(-2).map((cell) => cell.textContent)).toEqual(["$0.00", "$0.00"]);
+    const list = screen.getByRole("region", { name: "Workspaces" });
+    expect(within(list).getByRole("link", { name: /North Plumbing/ })).toHaveTextContent("$41.22 profit");
+    expect(within(list).getByRole("link", { name: /Setup Roofing/ })).toHaveTextContent("$0.00 profit");
   });
 
   it("colors a loss in the destructive color and shows Retry when cost and revenue fail", () => {
@@ -229,12 +251,13 @@ describe("HomeDashboard Money row", () => {
     cleanup();
     render(<HomeDashboard {...props} money={null} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Cost and revenue are unavailable.");
+    expect(within(screen.getByRole("group", { name: "Total Calls" })).getByText("26")).toBeVisible();
   });
 
-  it("shows no money for a Client Viewer", () => {
-    render(<HomeDashboard {...props} operator={false} workspaceCount={3} />);
-    expect(screen.queryByRole("group", { name: "Monthly Cost" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Profit")).not.toBeInTheDocument();
+  it("never shows a Client Viewer cost, revenue, or profit", () => {
+    render(<HomeDashboard {...props} operator={false} workspaceCount={3} money={money} />);
+    expect(screen.getAllByRole("group").map((group) => group.getAttribute("aria-labelledby") && document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent).filter(Boolean)).toEqual(["Total Calls", "Answer Rate", "Good Leads", "Average Duration"]);
+    expect(screen.queryByText(/cost|revenue|profit/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Pricing guide" })).not.toBeInTheDocument();
   });
 });

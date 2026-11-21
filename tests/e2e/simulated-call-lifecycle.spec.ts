@@ -1,33 +1,34 @@
 /**
  * -------------------------------------------------------------------------
  * @file   simulated-call-lifecycle.spec.ts
- * @brief  Follows one simulated Twilio Call into Activity, Calls, and Call Detail.
+ * @brief  Follows one simulated Twilio Call into Calls and Call Detail.
  *
  * @description
  *  An Operator activates a recording Workspace through the fake Twilio
  *  boundary, and signed voice, Forward Call, Recording, and status
  *  callbacks deliver one answered inbound Call through the public webhook
- *  routes. Activity shows one entry for it under Today with its steps, and
- *  redelivering the same webhooks adds no entry or step after a manual
- *  Refresh. Calls shows the row with its outcome and connected duration,
- *  a Call Outcome filter keeps it, a non-matching outcome shows the
- *  no-matches state with Clear Filters, and Call Detail opened from the
- *  filtered list returns to the same URL. The responsive tests check
- *  Calls, Workspace Calls, Activity, Home, Workspace Overview, and Call
- *  Detail at 390px, the md breakpoint, and a wide viewport for horizontal
- *  page scroll, grid scrolling inside its Frame, the Sidebar Sheet below
- *  md, the KPI grid at one, two, then four columns, a visible chart
- *  legend, and reachable search, filter, paging, Refresh, date range,
- *  View Calls, Back, and Previous and Next controls.
+ *  routes. The retired `/activity` address lands on Calls, which shows the
+ *  Call once by caller search, and redelivering the same webhooks adds no
+ *  row. The row shows its outcome and connected duration, a Call Outcome
+ *  filter keeps it, a non-matching outcome shows the no-matches state with
+ *  Clear Filters, and Call Detail opened from the filtered list returns to
+ *  the same URL. The responsive tests check Calls, Workspace Calls, Home,
+ *  Workspace Overview, and Call Detail at 390px, the md breakpoint, and a
+ *  wide viewport for horizontal page scroll, Started, Caller, and Outcome
+ *  fitting the grid at 390px, the grid scrolling inside its Panel at the
+ *  md breakpoint, no wrapped Started time at 1440px, the Sidebar Sheet
+ *  below md, the KPI grid at one, two, then four columns, a visible chart
+ *  legend, and reachable search, filter, paging, date range, View Calls,
+ *  Back, and Previous and Next controls.
  *
  * @remarks
  *  Trigger.dev does not run in the browser suite and no secret key is set,
- *  so the Recording stays Pending: Activity shows Recording processing,
- *  Calls shows Processing, and Call Detail shows the processing player.
- *  tests/e2e/call-detail-playback.spec.ts covers a Stored Recording. The
- *  caller number is unique per run so earlier journeys' Calls never match
- *  the caller search. The responsive tests deliver 25 more short Calls to
- *  the same Workspace once so both Calls scopes have a second page.
+ *  so the Recording stays Pending and Call Detail shows the processing
+ *  player. tests/e2e/call-detail-playback.spec.ts covers a Stored
+ *  Recording. The caller number is unique per run so earlier journeys'
+ *  Calls never match the caller search. The responsive tests deliver 25
+ *  more short Calls to the same Workspace once so both Calls scopes have a
+ *  second page.
  *
  * @see
  *  docs/SPECIFICATION.md
@@ -95,16 +96,11 @@ async function deliverPagedCalls(request: APIRequestContext, assignmentId: strin
   pagedCallsDelivered = true;
 }
 
-// Calls and Activity fetch their list once hydrated, so waiting for that request keeps a click from landing on inert server HTML.
+// Calls fetches its list once hydrated, so waiting for that request keeps a click from landing on inert server HTML.
 async function gotoHydrated(page: Page, path: string): Promise<void> {
-  const api = path.startsWith("/activity") ? "/api/activity" : "/api/calls";
-  const hydrated = page.waitForResponse((response) => new URL(response.url()).pathname === api);
+  const hydrated = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/calls");
   await page.goto(path);
   await hydrated;
-}
-
-function todayEntries(page: Page): Locator {
-  return page.locator("section").filter({ has: page.getByRole("heading", { level: 2, name: "Today", exact: true }) });
 }
 
 async function expectNoHorizontalPageScroll(page: Page): Promise<void> {
@@ -112,24 +108,32 @@ async function expectNoHorizontalPageScroll(page: Page): Promise<void> {
   expect(overflow, page.url()).toBeLessThanOrEqual(0);
 }
 
-async function expectGridScrollsInsideFrame(page: Page): Promise<void> {
+async function gridOverflow(page: Page): Promise<number> {
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
-  const scrolled = await table.evaluate((element) => {
+  return table.evaluate((element) => {
     let node = element.parentElement;
     while (node && node !== document.body) {
       const overflowX = getComputedStyle(node).overflowX;
-      if ((overflowX === "auto" || overflowX === "scroll") && node.scrollWidth > node.clientWidth) {
-        node.scrollLeft = node.scrollWidth;
-        return { overflowing: true, scrollLeft: node.scrollLeft, insideFrame: node.closest("[data-slot=frame]") !== null };
-      }
+      if (overflowX === "auto" || overflowX === "scroll") return node.scrollWidth - node.clientWidth;
       node = node.parentElement;
     }
-    return { overflowing: false, scrollLeft: 0, insideFrame: false };
+    return 0;
   });
-  expect(scrolled.overflowing).toBe(true);
-  expect(scrolled.scrollLeft).toBeGreaterThan(0);
-  expect(scrolled.insideFrame).toBe(true);
+}
+
+async function expectGridLayout(page: Page, viewport: { width: number }): Promise<void> {
+  if (viewport.width < 768) {
+    expect(await gridOverflow(page)).toBeLessThanOrEqual(0);
+    for (const name of ["Started", "Caller", "Outcome"]) await expectReachable(page.getByRole("columnheader", { name }));
+  } else if (viewport.width < 1440) {
+    expect(await gridOverflow(page)).toBeGreaterThan(0);
+  } else {
+    expect(await gridOverflow(page)).toBeLessThanOrEqual(0);
+    const startedLines = await page.getByRole("table").locator("tbody tr td:first-child a").evaluateAll((links) => links.map((link) => link.getClientRects().length));
+    expect(startedLines.length).toBeGreaterThan(0);
+    expect(startedLines.every((lines) => lines === 1)).toBe(true);
+  }
   await expectNoHorizontalPageScroll(page);
 }
 
@@ -137,9 +141,9 @@ async function expectSidebarLayout(page: Page, viewport: { width: number }): Pro
   // Scope to the desktop Sidebar: the header breadcrumbs also name the
   // current page, and on phones the Sidebar lives only in the Sheet. Inside
   // a Workspace the Sidebar swaps to that Workspace's pages, so the link
-  // that proves the desktop Sidebar is All Workspaces there and Activity
+  // that proves the desktop Sidebar is All Workspaces there and Home
   // elsewhere; Calls exists in both.
-  const name = /\/workspaces\/[^/?#]+/.test(new URL(page.url()).pathname) ? "All Workspaces" : "Activity";
+  const name = /\/workspaces\/[^/?#]+/.test(new URL(page.url()).pathname) ? "All Workspaces" : "Home";
   const sidebarLink = page.locator('[data-slot="sidebar-container"]').getByRole("link", { name, exact: true });
   if (viewport.width < 768) {
     await expect(sidebarLink).toBeHidden();
@@ -164,7 +168,7 @@ async function expectReachable(locator: Locator): Promise<void> {
 }
 
 test.describe.serial("simulated Twilio lifecycle", () => {
-  test("a simulated Twilio lifecycle produces Activity, Calls, and Call Detail data", async ({ page, request }) => {
+  test("a simulated Twilio lifecycle produces Calls and Call Detail data", async ({ page, request }) => {
     test.setTimeout(180_000);
     const pool = new Pool({ connectionString: databaseUrl });
     try {
@@ -182,33 +186,18 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       simulated = { assignmentId: assignment.id, workspaceId, callId, callerNumber };
 
       await gotoHydrated(page, "/activity");
-      await page.getByRole("searchbox", { name: "Search caller number" }).fill(callerNumber);
-      await expect(page).toHaveURL(/\/activity\?q=/);
-      const today = todayEntries(page);
-      const entryLink = today.getByRole("link", { name: new RegExp(callerNumber.replace("+", "\\+")) });
-      await expect(entryLink).toHaveCount(1);
-      await expect(page.getByText("1 Call in view")).toBeVisible();
-      await expect(today.getByText("Answered", { exact: true })).toBeVisible();
-      await today.getByRole("button", { name: new RegExp(workspaceName) }).click();
-      const steps = today.locator("[data-step-label]");
-      const expectedSteps = ["Call received", "Forwarding attempted", "Call answered", "Recording processing"];
-      await expect(steps).toHaveText(expectedSteps);
-
-      await deliverAnsweredCall(request, assignment.id, callSid, callerNumber);
-      await page.getByRole("button", { name: "Refresh" }).click();
-      await expect(page.getByText("Updated just now")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-      await expect(entryLink).toHaveCount(1);
-      await expect(steps).toHaveText(expectedSteps);
-      expect((await pool.query("select 1 from call where twilio_call_sid = $1", [callSid])).rowCount).toBe(1);
-
-      await gotoHydrated(page, "/calls");
+      await expect(page).toHaveURL((url) => url.pathname === "/calls" && url.search === "");
+      await expect(page.getByRole("heading", { level: 1, name: "Calls" })).toBeVisible();
       await page.getByRole("searchbox", { name: "Search Calls" }).fill(callerNumber);
       const row = page.getByRole("row", { name: new RegExp(callerNumber.replace("+", "\\+")) });
       await expect(row).toHaveCount(1);
       await expect(row.getByText("Answered", { exact: true })).toBeVisible();
       await expect(row.getByText("0:42", { exact: true })).toBeVisible();
-      await expect(row.getByText("Processing", { exact: true })).toBeVisible();
+
+      await deliverAnsweredCall(request, assignment.id, callSid, callerNumber);
+      await gotoHydrated(page, `/calls?q=${encodeURIComponent(callerNumber)}`);
+      await expect(row).toHaveCount(1);
+      expect((await pool.query("select 1 from call where twilio_call_sid = $1", [callSid])).rowCount).toBe(1);
 
       const toolbar = page.getByRole("toolbar", { name: "Filters" });
       await page.getByRole("button", { name: "Add Filter" }).click();
@@ -231,7 +220,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
       await page.goto(filteredPath);
       await page.waitForLoadState("networkidle");
       await expect(row).toHaveCount(1);
-      await row.getByRole("link", { name: "Open Call" }).click();
+      await row.getByRole("link").click();
       await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}/calls/${callId}\\?`));
       await expect(page.getByRole("heading", { level: 1, name: callerNumber })).toBeVisible();
       await expect(page.getByText("Recording processing")).toBeVisible();
@@ -244,7 +233,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
   });
 
   for (const viewport of viewports) {
-    test(`Calls, Activity, Home, Workspace Overview, and Call Detail fit a ${viewport.width}px viewport`, async ({ page, request }) => {
+    test(`Calls, Home, Workspace Overview, and Call Detail fit a ${viewport.width}px viewport`, async ({ page, request }) => {
       test.setTimeout(120_000);
       expect(simulated).toBeDefined();
       const { assignmentId, workspaceId, callId, callerNumber } = simulated!;
@@ -262,27 +251,14 @@ test.describe.serial("simulated Twilio lifecycle", () => {
         await expectReachable(page.getByRole("button", { name: /Advanced Filters/ }));
         await expectReachable(page.getByRole("button", { name: "Go to next page" }));
         await expectReachable(page.getByRole("button", { name: "Go to previous page" }));
-        await expectGridScrollsInsideFrame(page);
+        await expectGridLayout(page, viewport);
         await page.getByRole("button", { name: "Go to next page" }).click();
         await expect(page).toHaveURL(/[?&]page=2/);
         await expectReachable(page.getByRole("button", { name: "Go to previous page" }));
         await page.getByRole("searchbox", { name: "Search Calls" }).fill(callerNumber);
-        await expectReachable(page.getByRole("row", { name: new RegExp(callerNumber.replace("+", "\\+")) }).getByRole("link", { name: "Open Call" }));
+        await expectReachable(page.getByRole("row", { name: new RegExp(callerNumber.replace("+", "\\+")) }).getByRole("link"));
         await expectNoHorizontalPageScroll(page);
       }
-
-      await gotoHydrated(page, "/activity");
-      await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
-      await expectNoHorizontalPageScroll(page);
-      await expectSidebarLayout(page, viewport);
-      await expectReachable(page.getByRole("button", { name: "Refresh" }));
-      await expectReachable(page.getByRole("searchbox", { name: "Search caller number" }));
-      await expectReachable(page.getByRole("button", { name: "Add Filter" }));
-      const entry = todayEntries(page).getByRole("button").first();
-      await expectReachable(entry);
-      await entry.click();
-      await expect(todayEntries(page).locator("[data-step-label]").first()).toBeVisible();
-      await expectNoHorizontalPageScroll(page);
 
       for (const path of ["/", `/workspaces/${workspaceId}`]) {
         await page.goto(path);
@@ -296,7 +272,7 @@ test.describe.serial("simulated Twilio lifecycle", () => {
         for (const tile of tiles) await expect(tile).toBeVisible();
         const tops = await Promise.all(tiles.map(async (tile) => (await tile.boundingBox())!.y));
         const columns = tops.filter((top) => Math.abs(top - tops[0]) < 1).length;
-        expect(columns).toBe(viewport.width < 640 ? 1 : viewport.width < 1280 ? 2 : 4);
+        expect(columns).toBe(viewport.width < 640 ? 2 : viewport.width < 1280 ? 3 : 4);
         await expect(page.getByRole("region", { name: "Leads generated" }).getByRole("list", { name: "Chart legend" })).toBeVisible();
         await expectReachable(page.getByRole("link", { name: "View Calls" }));
         await expectNoHorizontalPageScroll(page);

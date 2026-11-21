@@ -5,7 +5,7 @@
  *
  * @description
  *  Covers the Workspace header with Open Site and Replace Site, the hero
- *  preview with its cache-busted image and definition list, the KPI row
+ *  preview with its cache-busted image and fact list, the stat strip
  *  with Visit-to-Call, the Traffic and Calls series joined by day, Top
  *  pages, Referrers, Performance thresholds, the Search panel with its
  *  score, trend, and Keyword positions, the Operator-only Hosting
@@ -186,18 +186,41 @@ describe("SiteView", () => {
     expect(within(hero).getByText(/^Preview captured /)).toBeVisible();
   });
 
-  it("renders Visits, Page Views, Calls, and Visit-to-Call in the accent over the range", () => {
+  it("reads Visits, Page Views, Calls, and Visit-to-Call over the range as one stat strip", () => {
     renderView();
-    const tile = (name: string) => within(screen.getByRole("group", { name }));
-    expect(tile("Visits").getByText("1,234")).toBeVisible();
-    expect(tile("Page Views").getByText("2,468")).toBeVisible();
-    expect(tile("Calls").getByText("17")).toBeVisible();
-    const funnel = tile("Visit-to-Call").getByText("1.4%");
-    expect(funnel).toHaveClass("text-[var(--chart-1)]");
+    const stat = (name: string) => screen.getByRole("group", { name });
+    expect(within(stat("Visits")).getByText("1,234")).toBeVisible();
+    expect(within(stat("Page Views")).getByText("2,468")).toBeVisible();
+    expect(within(stat("Calls")).getByText("17")).toBeVisible();
+    expect(within(stat("Visit-to-Call")).getByText("1.4%")).toBeVisible();
+    expect(stat("Visit-to-Call")).toHaveAccessibleDescription("Calls divided by Visits");
+    const strip = stat("Visits").parentElement;
+    expect(["Page Views", "Calls", "Visit-to-Call"].every((name) => stat(name).parentElement === strip)).toBe(true);
   });
 
-  it("changes the range in the URL like the Overview", () => {
+  it("names every absent Site value instead of printing a dash", () => {
+    renderView({
+      workspace: { ...workspace, trackingNumber: null },
+      site: { ...site, lastDeployedAt: null, uptime30d: { ratio: 0.992, medianResponseMs: null, checks: 720 }, latestCheck: { checkedAt: "2026-10-18T15:04:05.000Z", ok: false, statusCode: null, responseMs: null } },
+      summary: { ...summary, requests: undefined, errors: undefined, vitals: { lcpMs: null, inpMs: 250, cls: 0.02 } },
+      analytics: null,
+      search: { ...search, score: null },
+    });
+    expect(screen.queryByText("-")).not.toBeInTheDocument();
+    expect(screen.getByText("No Tracking Number")).toBeVisible();
+    expect(screen.getByText("99.2%")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Calls" })).getByText("None")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Largest Contentful Paint" })).getByText("No samples")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Search" })).getByText("No score yet")).toBeVisible();
+    const hosting = screen.getByRole("region", { name: "Hosting" });
+    expect(within(hosting).getByText("Worker requests").nextElementSibling).toHaveTextContent("None");
+  });
+
+  it("changes the range in the URL like the Overview, from the page header", () => {
     renderView();
+    const titleRow = screen.getByRole("heading", { level: 1, name: "Pocatello Paving" }).parentElement?.parentElement;
+    if (!titleRow) throw new Error("Site header missing");
+    expect(within(titleRow).getByRole("button", { name: "7 Days" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "7 Days" }));
     expect(router.push).toHaveBeenCalledWith("/workspaces/workspace-1/site?range=7d", { scroll: false });
   });
@@ -258,7 +281,7 @@ describe("SiteView", () => {
       ["asphalt paving pocatelloLocal pack", "5", "2", "+3"],
       ["driveway paving pocatello", "1", "14", "-2"],
       ["paving contractor pocatello", "2", "7", "0"],
-      ["sealcoating pocatello", "1", "Not ranking", "-"],
+      ["sealcoating pocatello", "1", "Not ranking", ""],
     ]);
     expect(within(table).getByText("+3")).toBeVisible();
     expect(within(table).getByText("-2")).toBeVisible();
@@ -309,6 +332,17 @@ describe("SiteView", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace-1/site/preview/refresh", expect.objectContaining({ method: "POST" })));
     await waitFor(() => expect(refreshClientCache).toHaveBeenCalled());
     expect(await within(hosting).findByRole("status")).toHaveTextContent("Preview refresh requested.");
+  });
+
+  it("names a failed Refresh Preview beside the button in the destructive style", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 502 })));
+    renderView();
+    const hosting = screen.getByRole("region", { name: "Hosting" });
+    fireEvent.click(within(hosting).getByRole("button", { name: "Refresh Preview" }));
+    const alert = await within(hosting).findByRole("alert");
+    expect(alert).toHaveTextContent("The preview could not be refreshed.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(within(hosting).getByRole("button", { name: "Refresh Preview" })).toHaveAccessibleDescription("The preview could not be refreshed.");
   });
 
   it("hides Hosting, Replace Site, and the Worker name from a Client Viewer", () => {

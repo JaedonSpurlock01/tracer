@@ -12,7 +12,7 @@
  *
  * @remarks
  *  The refusal lives here, above the (viewer) and (operator) route groups
- *  and their loading boundaries, so an ungranted Workspace URL answers with
+ *  and their pages' loading boundaries, so an ungranted Workspace URL answers with
  *  a real 404 status before anything streams; each page keeps its own check
  *  as well. The lookup is the request's one Workspace lookup, shared with
  *  the page through findRequestWorkspace.

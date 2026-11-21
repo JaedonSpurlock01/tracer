@@ -6,7 +6,9 @@
  * @description
  *  Covers loading, empty, retry, setup state rows, Workspace creation, the
  *  Site step with Skip, Link Site, the disconnected Cloudflare account,
- *  and the read-only Site Link on Resume Setup.
+ *  the read-only Site Link on Resume Setup, and the wizard's switch
+ *  descriptions, Review facts, per-action pending states, failures beside
+ *  their actions, and the activation confirmation beside Create Workspace.
  *
  * @remarks
  *  Requests are faked only at the public HTTP boundary.
@@ -116,11 +118,30 @@ describe("WorkspacesView", () => {
       },
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listed), { status: 200 })));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T18:00:00.000Z"));
     render(<WorkspacesView {...initial} initialResult={listed} initialTimezone="America/Chicago" />);
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Workspace", "Tracking Number", "Calls (30d)", "Good Leads (30d)", "Lead Rate", "Last Call", "Attention", "Actions"]);
     const cells = (name: RegExp) => within(screen.getByRole("link", { name }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent);
-    await waitFor(() => expect(cells(/^North Plumbing/).slice(2, 7)).toEqual(["17", "5", "29%", "Oct 18, 2026, 10:04:05 AM", "Healthy"]));
-    expect(cells(/^South Dental/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Needs attentionNo accepted Twilio webhook yet"]);
-    expect(cells(/^Phoenix Office/).slice(2, 7)).toEqual(["0", "0", "-", "-", "Not applicable"]);
+    await waitFor(() => expect(cells(/^North Plumbing/).slice(2, 7)).toEqual(["17", "5", "29%", "Oct 18", "Healthy"]));
+    expect(within(screen.getByRole("link", { name: /^North Plumbing/ }).closest("tr")!).getByText("Oct 18")).toHaveAttribute("title", "Oct 18, 2026, 10:04:05 AM");
+    expect(cells(/^South Dental/).slice(2, 7)).toEqual(["0", "0", "None", "No Calls", "Needs attention: No accepted Twilio webhook yet"]);
+    expect(cells(/^Phoenix Office/).slice(1, 7)).toEqual(["No Tracking Number", "0", "0", "None", "No Calls", "Next: Tracking Number"]);
+    vi.useRealTimers();
+  });
+
+  it("reads each ledger row on one line, with the reporting timezone and Destination Number on hover and no monospace counts", () => {
+    const north = { ...workspace, id: "north", name: "North Plumbing", state: "Active" as const, trackingNumber: "+14155550101", destinationNumber: "+14155550199" };
+    const stats = { north: { callsLast30Days: 17, goodLeadsLast30Days: 5, lastCallAt: null, lastSuccessfulInboundCallAt: null, integrationHealth: { status: "Healthy" as const, lastAcceptedVoiceWebhookAt: null }, siteHealth: null, attention: { status: "Healthy" as const, reason: null } } };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<WorkspacesView {...initial} initialResult={{ ...result, workspaces: [north], stats }} initialTimezone="America/Chicago" />);
+    const link = screen.getByRole("link", { name: /^North Plumbing/ });
+    expect(link).toHaveAttribute("title", "America/Chicago");
+    const row = link.closest("tr")!;
+    expect(within(row).getByText("+14155550101")).toHaveAttribute("title", "Forwards to +14155550199");
+    expect(within(row).getByText("Active")).toBeVisible();
+    for (const cell of within(row).getAllByRole("cell")) expect(cell).toHaveClass("whitespace-nowrap");
+    expect(within(row).getByText("17")).not.toHaveClass("font-mono");
   });
 
   it("groups Workspaces in triage order and names the next setup step", async () => {
@@ -510,6 +531,52 @@ describe("WorkspacesView", () => {
     );
   });
 
+  it("slides each later setup step in from the direction of travel, and not the step the wizard opens on", async () => {
+    const graph = generateInitialCallFlow({
+      destinationNumber: "+14155550101",
+      recordingEnabled: false,
+      spamGateEnabled: false,
+      whisperEnabled: false,
+      whisperMessage: null,
+      disclosureVoice: "Polly.Joanna",
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      if (url.endsWith("/routing") && init?.method === "PATCH")
+        return new Response(JSON.stringify({ workspace: { ...workspace, destinationNumber: "+14155550101" } }), { status: 200 });
+      if (url.endsWith("/flow"))
+        return new Response(
+          JSON.stringify({
+            draft: { graph, basedOnVersion: null, updatedAt: "2026-01-01T00:00:00.000Z" },
+            validation: { valid: true, issues: [] },
+            versions: [],
+            published: null,
+            recordingEnabled: false,
+            workspaceState: "Setup Required",
+          }),
+          { status: 200 },
+        );
+      if (url.endsWith("/activate") && init?.method === "POST") return new Response(JSON.stringify({}), { status: 502 });
+      return new Response(JSON.stringify(result), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" cloudflareConnected={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("button", { name: "Skip" })).toBeVisible();
+    expect(dialog.querySelector("[data-step-direction]")).toBeNull();
+    await skipSite();
+    const numberStep = (await screen.findByRole("radio", { name: /\+14155550100/ })).closest("[data-step-direction]");
+    expect(numberStep).toHaveAttribute("data-step-direction", "forward");
+    fireEvent.click(screen.getByRole("radio", { name: /\+14155550100/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create and Activate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose another number" }));
+    expect((await screen.findByRole("radio", { name: /\+14155550100/ })).closest("[data-step-direction]")).toHaveAttribute("data-step-direction", "back");
+  });
+
   it("offers the Site step after Basics and reaches Number on Skip", async () => {
     const created = { ...workspace, id: "workspace-new", name: "New Office" };
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -608,5 +675,136 @@ describe("WorkspacesView", () => {
     const emptyState = await screen.findByTestId("workspace-empty-state");
     expect(within(emptyState).getByText("No Workspaces are shared with you.")).toBeVisible();
     expect(within(emptyState).queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("Create Workspace wizard form pattern and action feedback", () => {
+  const graph = generateInitialCallFlow({
+    destinationNumber: "+14155550101",
+    recordingEnabled: false,
+    spamGateEnabled: false,
+    whisperEnabled: false,
+    whisperMessage: null,
+    disclosureVoice: "Polly.Joanna",
+  });
+  const flowBody = { draft: { graph, basedOnVersion: null, updatedAt: "2026-01-01T00:00:00.000Z" }, validation: { valid: true, issues: [] }, versions: [], published: null, recordingEnabled: false, workspaceState: "Setup Required" };
+
+  function routed(overrides: { routing?: () => Promise<Response> | Response; activate?: () => Promise<Response> | Response; create?: () => Promise<Response> | Response } = {}) {
+    return vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url === "/api/workspaces" && init?.method === "POST") return overrides.create ? overrides.create() : new Response(JSON.stringify({ workspace }), { status: 201 });
+      if (url.endsWith("/api/workspaces/numbers")) return new Response(JSON.stringify({ numbers: [number] }), { status: 200 });
+      if (url.endsWith("/routing") && init?.method === "PATCH")
+        return overrides.routing ? overrides.routing() : new Response(JSON.stringify({ workspace: { ...workspace, destinationNumber: "+14155550101" } }), { status: 200 });
+      if (url.endsWith("/flow")) return new Response(JSON.stringify(flowBody), { status: 200 });
+      if (url.endsWith("/activate") && init?.method === "POST")
+        return overrides.activate ? overrides.activate() : new Response(JSON.stringify({ workspace: { ...workspace, state: "Active" } }), { status: 200 });
+      return new Response(JSON.stringify(result), { status: 200 });
+    });
+  }
+
+  async function toRouting() {
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
+    fireEvent.click(await screen.findByRole("radio", { name: /\+14155550100/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByLabelText("Destination Number");
+  }
+
+  async function toReview() {
+    await toRouting();
+    fireEvent.change(screen.getByLabelText("Destination Number"), { target: { value: "+14155550101" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("button", { name: "Create and Activate" });
+  }
+
+  it("describes each Routing switch beneath its label", async () => {
+    vi.stubGlobal("fetch", routed());
+    await toRouting();
+    expect(screen.getByRole("switch", { name: "Recording enabled" })).toHaveAccessibleDescription("Records each answered Call after the Recording Disclosure plays.");
+    expect(screen.getByRole("switch", { name: "Analysis enabled" })).toHaveAccessibleDescription("Transcribes Recordings with at least 15 seconds of speech and assesses each Lead. Needs recording.");
+    expect(screen.getByRole("switch", { name: "Spam gate enabled" })).toHaveAccessibleDescription("Asks callers to press a key before the Call is forwarded.");
+    expect(screen.getByRole("switch", { name: "Whisper enabled" })).toHaveAccessibleDescription("Plays a short message to whoever answers before the caller is connected.");
+  });
+
+  it("shows the Review values as facts that name an absent Site", async () => {
+    vi.stubGlobal("fetch", routed());
+    await toReview();
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getAllByRole("term").map((term) => term.textContent)).toEqual(["Site", "Number", "Destination Number", "Recording", "Analysis", "Spam gate", "Whisper"]);
+    expect(within(dialog).getAllByRole("definition")[0]).toHaveTextContent("No Site");
+  });
+
+  it("states why Next is unavailable on the Number step until a number is selected", async () => {
+    vi.stubGlobal("fetch", routed());
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Setup" }));
+    await skipSite();
+    await screen.findByRole("radio", { name: /\+14155550100/ });
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toHaveAccessibleDescription("Select a number to continue.");
+  });
+
+  it("shows the Routing save pending on its own Next button", async () => {
+    vi.stubGlobal("fetch", routed({ routing: () => new Promise<Response>(() => undefined) }));
+    await toRouting();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("names a failed Routing save beside Next and keeps the entered Destination Number", async () => {
+    vi.stubGlobal("fetch", routed({ routing: () => new Response(JSON.stringify({ error: "unavailable" }), { status: 500 }) }));
+    await toRouting();
+    fireEvent.change(screen.getByLabelText("Destination Number"), { target: { value: "+14155550101" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const alert = await within(screen.getByRole("dialog")).findByRole("alert");
+    expect(alert).toHaveTextContent("Routing settings could not be saved.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(screen.getByRole("button", { name: "Next" })).toHaveAccessibleDescription("Routing settings could not be saved.");
+    expect(screen.getByLabelText("Destination Number")).toHaveValue("+14155550101");
+  });
+
+  it("shows Create Workspace pending on its own button and names a failed request beside it", async () => {
+    let fail: (value: Response) => void = () => undefined;
+    vi.stubGlobal("fetch", routed({ create: () => new Promise<Response>((resolve) => { fail = resolve; }) }));
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.click(screen.getByRole("button", { name: "Create Workspace" }));
+    fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "New Office" } });
+    const submit = within(screen.getByRole("dialog")).getByRole("button", { name: "Create Workspace" });
+    fireEvent.click(submit);
+    await waitFor(() => expect(submit).toHaveAttribute("aria-busy", "true"));
+    expect(submit).toBeDisabled();
+    await act(async () => fail(new Response(JSON.stringify({ error: "unavailable" }), { status: 500 })));
+    expect(submit).toHaveAccessibleDescription("Workspace could not be created.");
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveClass("text-destructive");
+    expect(screen.getByLabelText("Workspace name")).toHaveValue("New Office");
+  });
+
+  it("names a refused activation beside Create and Activate in the destructive style", async () => {
+    vi.stubGlobal("fetch", routed({ activate: () => new Response(JSON.stringify({}), { status: 502 }) }));
+    await toReview();
+    const activate = screen.getByRole("button", { name: "Create and Activate" });
+    fireEvent.click(activate);
+    await waitFor(() => expect(activate).toHaveAccessibleDescription(/Twilio could not be updated. The Workspace remains Setup Required./));
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveClass("text-destructive");
+    expect(screen.getByRole("button", { name: "Choose another number" })).toBeVisible();
+  });
+
+  it("confirms activation beside Create Workspace in the page header", async () => {
+    vi.stubGlobal("fetch", routed());
+    await toReview();
+    fireEvent.click(screen.getByRole("button", { name: "Create and Activate" }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Phoenix Office is Active.");
+    expect(within(status.parentElement!).getByRole("button", { name: "Create Workspace" })).toBeVisible();
+  });
+
+  it("shows load failures in the destructive style", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+    render(<WorkspacesView {...initial} initialTimezone="America/Chicago" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workspaces" }), { target: { value: "gamma" } });
+    expect(await screen.findByRole("alert")).toHaveClass("text-destructive");
   });
 });

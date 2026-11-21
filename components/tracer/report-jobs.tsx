@@ -27,7 +27,6 @@
  * @see
  *  data/reports-handler.ts
  *  components/tracer/report-notifications.tsx
- *  components/tracer/activity-view.tsx
  *  DESIGN.md
  *
  * @author Jaedon Spurlock

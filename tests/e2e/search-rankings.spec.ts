@@ -85,7 +85,7 @@ test.describe.serial("Search rankings", () => {
     await expect(table.getByRole("row", { name: /driveway paving pocatello/ })).toContainText("3");
 
     await page.goto(`/workspaces/${workspaceId}`);
-    await expect(page.getByRole("group", { name: "Search Visibility" })).toContainText("73");
+    await expect(page.getByRole("region", { name: "Site" }).getByText("73 of 100")).toBeVisible();
   });
 
   test.afterAll(async ({ browser, request }) => {

@@ -54,25 +54,7 @@ describe("Call Detail source list", () => {
     });
   });
 
-  it("reads Activity with only its search and Activity filters, for any Call's Workspace", () => {
-    const adv = { combinator: "or", rules: [{ field: "outcome", values: ["Voicemail"] }] };
-    const back = `/activity?q=312&outcome=Answered&analysis=Pending&scoreMin=40&recording=Ready&page=2&sort=leadScore&order=asc&adv=${encodeURIComponent(JSON.stringify(adv))}`;
-    const source = callSourceFromBack(back, "workspace-1");
-    expect(source).toEqual({
-      scope: "activity",
-      query: { page: 1, sort: defaultCallSort, filters: { ...emptyCallFilters, search: "312", outcomes: ["Answered"], analysisStatus: ["Pending"] } },
-      href: "/activity?q=312&outcome=Answered&analysis=Pending",
-    });
-    expect(callSourceFromBack("/activity", "workspace-2")?.href).toBe("/activity");
-    expect(callSourceListQuery(source, "workspace-1")).toEqual({ ...source!.query, workspaceId: undefined, callerSearchOnly: true });
-    expect(callDetailNavigation(source, "workspace-1", { previous: null, next: { id: "call-2", workspaceId: "workspace-2", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" } })).toEqual({
-      back: "/activity?q=312&outcome=Answered&analysis=Pending",
-      previous: null,
-      next: { href: "/workspaces/workspace-2/calls/call-2?back=%2Factivity%3Fq%3D312%26outcome%3DAnswered%26analysis%3DPending", callerNumber: "+13125550100", startedAt: "2026-10-16T21:00:00.000Z" },
-    });
-  });
-
-  it.each([["a trailing slash", "/activity/"], ["a nested path", "/activity/x"], ["an encoded dot segment", "/activity/%2e%2e/users"]])("rejects Activity with %s", (_name, back) => {
+  it.each([["the retired Activity page", "/activity"], ["Activity with filters", "/activity?q=312&outcome=Answered"], ["a nested Activity path", "/activity/x"]])("rejects %s", (_name, back) => {
     expect(callSourceFromBack(back, "workspace-1")).toBeNull();
   });
 

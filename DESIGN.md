@@ -27,9 +27,9 @@ Tracer follows a call from first contact through routing, recording, transcripti
 
 ### Line art
 
-Empty states use single-weight vector line art drawn in `components/tracer/line-art.tsx`: dashed isometric orbits with one small subject, stroked in the muted foreground at reduced opacity. Scenes are decorative, hidden from assistive technology, and sit only in Empty states, never behind data. The scenes are No Activity (a listening tracking line), No Calls (an empty call log card), No Transcript (a recording strip at 0:00, used when a Transcript was skipped or never existed), No Reports (a report page with empty bars), No Workspaces (an open slot), and No Results (a lens over the field). Other Empty states use the shared `EmptyState` without art until a scene is approved for them.
+Empty states use single-weight vector line art drawn in `components/tracer/line-art.tsx`: dashed isometric orbits with one small subject, stroked in the muted foreground at reduced opacity. Scenes are decorative, hidden from assistive technology, and sit only in Empty states, never behind data. The scenes are No Calls (an empty call log card), No Transcript (a recording strip at 0:00, used when a Transcript was skipped or never existed), No Reports (a report page with empty bars), No Workspaces (an open slot), and No Results (a lens over the field). Other Empty states use the shared `EmptyState` without art until a scene is approved for them.
 
-Three scenes carry slow ambient motion, defined in `globals.css` under `.line-art-motion`: the Activity sweep circles its orbit with a ping once per pass, the Reports page drifts up and down, and the Calls row markers spin now and then. Motion only moves elements the static drawing already has, is skipped for viewers who prefer reduced motion, and switches off everywhere through the `lineArtMotion` constant in `line-art.tsx`, which restores the static scenes exactly.
+Two scenes carry slow ambient motion, defined in `globals.css` under `.line-art-motion`: the Reports page drifts up and down, and the Calls row markers spin now and then. Motion only moves elements the static drawing already has, is skipped for viewers who prefer reduced motion, and switches off everywhere through the `lineArtMotion` constant in `line-art.tsx`, which restores the static scenes exactly.
 
 ### Color
 
@@ -60,9 +60,9 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 
 ### Typography
 
-- Use Geist throughout the product and generated reports.
-- Use Instrument Sans Semibold for the wordmark and page headings.
-- Use Geist Mono (`font-mono`) for identifiers: phone numbers, Organization slugs, timestamps, durations, scores, and KPI values. Body copy, labels, headings, and navigation stay in Instrument Sans.
+- Use Instrument Sans for the interface: body copy, labels, headings, navigation, numbers, and the wordmark (Semibold).
+- Use Geist in generated PDF reports.
+- Use Geist Mono (`font-mono`) only for phone numbers and identifiers such as Organization slugs and provider SIDs. Timestamps, durations, scores, money, and stat values are Instrument Sans with tabular numerals. Pages built before M25 still set those in Geist Mono until the milestone that rebuilds them.
 - Use `text-sm` for body content and `text-xs` for metadata, never smaller.
 - Use tabular numerals for phone numbers, durations, dates, scores, and KPIs.
 - Keep page and panel titles to one to three words where possible.
@@ -75,19 +75,96 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 - State destructive consequences precisely.
 - Never present an AI Lead Assessment as certain or final when no Lead Review exists.
 
+## Foundations
+
+These rules apply to every page. They were written in M25 after a review of the whole running application, and each page adopts them in the Phase 9 milestone that rebuilds it. Where a per-page section below disagrees with a rule here, the rule here wins and the page section is out of date.
+
+### What a page is for
+
+Every page answers one question first. Its regions are ordered by how often that question needs them, not by the order features were built, and at most one region per page is visually dominant. A region that has nothing to show shrinks to a line with its action; it never holds a large empty panel above populated ones.
+
+### Shared parts
+
+Pages are composed from the parts in `components/tracer/page-parts.tsx` rather than hand-written markup:
+
+| Part | Use | Rules |
+| --- | --- | --- |
+| `PageHeader` | The top of every page | The page's only `h1` at `text-xl`, one line of context beneath it, and the page's controls and primary action on the same row to the right. No badge row under the title. |
+| `StatStrip` | A page's headline numbers | One bordered strip, never separate tiles. Label at `text-xs`, value at `text-2xl`. A change against the previous period appears only when a previous period exists and the change is not zero. The definition is available on hover and to assistive technology, never printed. At most six stats. |
+| `Panel` | Every bordered region | An optional 44px header bar with an `h2` at `text-sm` and at most one quiet action on the right. The panel is a region named by that heading. |
+| `FactList` | Read-only details | Label over value. An absent value is named, never a dash. |
+| `ListRow` | Feeds of records | One link per row: the primary value, one muted detail line, and badges on the right. |
+
+Forms are composed from the parts in `components/tracer/form-parts.tsx`:
+
+| Part | Use | Rules |
+| --- | --- | --- |
+| `SettingsSection` | Every settings or form section | A `Panel` whose header bar names the section, one muted line saying what it controls, the fields, and a footer bar holding the section's actions. One save per section. |
+| `SwitchField` | Every on or off setting | The label with a one-line description beneath it, both announced with the switch. |
+| `ActionButton` with `useAction` | Every button that starts a request | See Forms and actions. |
+
+### Type scale
+
+- `text-xl` semibold: the page heading, once per page.
+- `text-2xl` semibold: stat values only.
+- `text-sm` medium: panel headings and row primary values.
+- `text-sm`: body copy, form labels, and table cells.
+- `text-xs` muted: metadata, stat labels, table headers, and detail lines.
+
+Nothing is smaller than `text-xs`, and form labels are never larger than `text-sm`.
+
+### Timestamps
+
+Lists, feeds, and tables show the short form from `formatShortTime` in `components/tracer/call-format.ts`: the time of day for a moment today in the reporting timezone (`7:28 PM`), a short date for an earlier day this year (`Nov 17`), and a date with its year otherwise (`Dec 31, 2025`). The full timestamp from `formatCallTime` is the element's hover title. Seconds appear only where the moment itself is the subject: Call Detail facts and the Processing timeline. A timestamp never wraps onto a second line.
+
+### Absent values
+
+An absent value is named in muted text: `None` by default, or wording that says what is missing, such as `No Deal`, `No Tracking Number`, or `Not forwarded`. A dash is never a value. A comparison that cannot be made shows nothing.
+
+### Labels
+
+Interface labels are the shortest plain words a client would use: `Lead` rather than `Effective Lead Classification`, `Duration` rather than `Connected Duration`, `Recording` rather than `Recording Availability`. The canonical terms in `CONTEXT.md` remain the language of code, tests, and documentation.
+
+### Width and density
+
+- Reading pages (Home, Workspace Overview, settings, detail pages) cap their content at `max-w-6xl`, centered. Tables may use the full width.
+- A table row is one line at 1440px. A column that cannot fit moves behind the row instead of wrapping or forcing a horizontal scroll.
+- Panels on one page share a 20px gap.
+
+### Loading states
+
+Each page has its own loading state in `components/tracer/page-loading.tsx`, re-exported by the `loading.tsx` beside the page. It keeps the page's width, shows Skeletons of the page header, stat strip, and ledger, and renders the panels the page always shows with their real headings, so nothing moves when the page arrives. Panels shown only for some roles or states stay out of it. A route group never holds a loading state: Next prefetches only to the first boundary, so a group's state would stand in for every page in the group.
+
+### Actions
+
+- Each page has at most one filled primary Button, and it is the action the page exists for.
+- An action that navigates is a link styled with `buttonVariants`, never a Button wrapping a link.
+
+### Forms and actions
+
+- Labels are `text-sm` and sit above their field. Read-only values are a `FactList`, never a read-only input or a `Label: value` sentence.
+- Every action that sends a request has its own pending state: its button shows a spinner, is marked busy, and is disabled. Nothing else on the page is disabled while it runs; a page never shares one busy flag across actions.
+- A failure is named in the destructive style beside the button that caused it and is that button's accessible description. The entered values stay. A failure from a confirmation dialog appears inside the dialog, which stays open. On success the dialog closes and the confirmation appears once, beside the button that opened it.
+- A confirmation appears beside the action that caused it, never in the page header. When the action's button leaves the page with its result (Detach Site, Archive Workspace), the confirmation stays in the same section.
+- A disabled action says why in muted text beside it, linked as its accessible description, such as `Restore this Workspace to edit its settings.`
+- Field validation that the browser can decide before sending (an empty phrase, an invalid timezone) stays under its field as a `FieldError`.
+
 ## ReUI composition rules
 
 - Treat every application page as an operational surface.
 - Use the shadcn Sidebar as the application shell, with the account menu at the top and no Workspace switcher. The content header holds the Sidebar trigger, route breadcrumbs (every segment linked but the current page, with Workspace and Call segments named by their records), and the notification popover.
-- Prefer Frame-led pages and dense controls. Each FramePanel is one flat surface; headings live inside the panel.
+- Prefer dense controls. Every page uses `Panel` from the shared parts for its bordered regions; each Panel is one flat surface and its heading lives in its header bar. Frame and FramePanel remain only on the error pages: the application error page and Call Detail's error and not-found pages.
 - Use ReUI Data Grid and Filters for record management. The server-backed starting pattern is [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp).
-- Use ReUI Timeline for Activity. The closest starting composition is [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp).
-- Use shadcn Chart with Recharts inside a Frame when no strong ReUI example matches the required multi-series line chart.
+- Use shadcn Chart with Recharts inside a Panel when no strong ReUI example matches the required multi-series line chart.
 - Use semantic Badge variants for state and neutral outline badges for identifiers.
 - Render a page's first data on the server and prefetch its primary navigation links in full, so frequently used pages open without Skeletons; each view then revalidates quietly in the background. Use Skeletons in the final region layout only for data that loads after the page renders, such as a new filter, page, or deferred region, together with an action-oriented Empty state and an inline Retry state for every data region.
 - Clear the browser's client cache after every successful write, so a prefetched or previously visited page never shows data from before the change; a reload is never required to see it.
 - Keep server-paginated list state (search, filters, and page) in the URL so a refresh, a shared link, or a prefetch renders the same page.
 - Use no page-load motion on operational screens. Keep installed ReUI motion unchanged and use `transition-colors` for custom hover feedback.
+- Installed overlays (Dialog, AlertDialog, Popover, DropdownMenu, Select, Tooltip, Cascader) open and close with their installed enter and exit animations. For viewers who prefer reduced motion, their slide and zoom are pinned to neutral so they only fade.
+- Show action confirmations with `StatusMessage`, which `ActionButton` renders beside its button. Each confirmation fades in over 200ms with a 2px rise (opacity only for reduced motion) and replays when the same message repeats, so every save is visibly acknowledged.
+- `CollapsibleContent` grows and shrinks between zero and its measured height over 200ms with a fade, instead of snapping open (a fade alone for reduced motion). The panel clips its overflow while it moves, so keep padding and borders on an inner element and leave focus rings at least 3px of room from the panel edge.
+- A pressed Button shrinks to 97% over 150ms on the same curve and springs back on release, so every click is felt. Popup triggers (`aria-haspopup`) do not shrink, so their popup stays anchored. The Button transitions colors and `scale` only; focus rings and disabled opacity change instantly.
 - Never nest a Card inside a Frame or a Frame inside a Card.
 
 ## Application shell
@@ -95,12 +172,13 @@ Chart identities are Brand orange for Good Leads, zinc-50 for Answered Calls, an
 ### Global navigation
 
 1. Home
-2. Activity
-3. Calls
-4. Workspaces
-5. Reports
-6. Users, Operator only
-7. Integrations, Operator only
+2. Calls
+3. Workspaces
+4. Reports
+5. Users, Operator only
+6. Integrations, Operator only
+
+Activity was folded into Calls in M27; `/activity` redirects to Calls.
 
 ### Account menu
 
@@ -124,16 +202,16 @@ Inside a Workspace (any route under `/workspaces/[id]` except Call Detail's brea
 5. **Reports**
 6. **Settings**, Operator only
 
-The Workspace Sidebar replaced the Workspace tabs in M20. Every Workspace page marks its own item as current; Workspace Settings sections all mark Settings. Call Detail keeps the Workspace Sidebar with Calls current. The content header breadcrumbs are unchanged. Outside a Workspace the global navigation above applies. The Workspace layout registers the Workspace name, state, and the actor's role for the Sidebar the way it registers the breadcrumb label.
+The Workspace Sidebar replaced the Workspace tabs in M20. Every Workspace page marks its own item as current; Workspace Settings sections all mark Settings. Call Detail keeps the Workspace Sidebar with Calls current. The content header breadcrumbs are unchanged. Outside a Workspace the global navigation above applies.
 
 Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Viewer lands on that Workspace Overview. A multi-Workspace Client Viewer lands on a Home dashboard scoped to granted Workspaces. Operators land on the global Home dashboard.
 
 ### Responsive behavior
 
 - At widths below `md`, the Sidebar becomes a Sheet.
-- KPI grids collapse to one column, then two columns, before reaching four columns at wide sizes.
+- A `StatStrip` shows two columns, three from `sm`, and every stat in one row from `xl`.
 - Record-detail side columns stack below the main content.
-- Data grids scroll within their Frame and never create horizontal page scrolling.
+- Data grids scroll within their Panel and never create horizontal page scrolling.
 - Every action remains reachable at 390px; actions removed from a toolbar move into an overflow menu.
 
 ## Page inventory
@@ -146,7 +224,6 @@ Client Viewers do not see Flow or Workspace Settings. A one-Workspace Client Vie
 ### Global
 
 - Home
-- Activity
 - Calls
 - Workspaces
 - Reports
@@ -176,44 +253,38 @@ Workspace creation, user provisioning, report generation, and export requests us
 
 ## Home
 
+Home answers one question: how is every Workspace doing in this range. It was rebuilt in M26 as the Briefing layout the Product Owner chose from a three-way prototype, from the parts in Foundations, capped at `max-w-6xl`.
+
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Dashboard grid
-3. **Container family:** Frame-led
+2. **Archetype:** Briefing
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Header and date controls, KPI row, trend chart, Workspace performance, recent Calls
+5. **Regions, by priority:** `PageHeader`, one `StatStrip`, Leads generated beside Recent Calls, then Workspaces
 6. **States:** Region-level Skeleton, Empty, and Retry states
 7. **Motion:** None
 
 ### Header
 
 - Title: `Home`
-- Description: one clause describing the active scope
-- Scope indicator: All Workspaces or the accessible Workspace count
-- Date controls: 7 Days, 30 Days, 90 Days, All Time, and Custom
-- Primary action: Generate Report
+- Description: one sentence naming the scope and the range, such as `All Workspaces, the last 7 days.` or `3 Workspaces, all time.`
+- Controls on the same row: the date range (7 Days, 30 Days, 90 Days, All Time, and Custom) and Generate Report
 
-### KPI row
+### Stat strip
 
-1. **Total Calls:** Count in the selected period
+1. **Total Calls:** count in the selected period
 2. **Answer Rate:** Answered Calls divided by eligible forwarding attempts
-3. **Good Leads:** Calls and Form Submissions classified as Good Lead, using Lead Review before Lead Assessment, with a muted `N from Forms` line beneath the value when any are Form Submissions
-4. **Average Duration:** Average connected talk time, excluding prompts and ringing
+3. **Good Leads:** Calls and Form Submissions classified as Good Lead, using Lead Review before Lead Assessment; the hover definition says how many came from Forms
+4. **Average Duration:** average connected talk time, excluding prompts and ringing
+5. **Monthly Revenue** (Operator only): the projected revenue of open Deals in scope this calendar month
+6. **Profit** (Operator only): revenue minus cost, in the success color when positive and the destructive color when negative
 
-Each KPI includes a comparison with the immediately preceding period of equal length. The value is the focal point; comparison and definition remain secondary.
-
-### Money row (M22, Operator only)
-
-A second row of three tiles below the KPI row, hidden from Client Viewers:
-
-1. **Monthly Cost:** this calendar month's projected cost across the Workspaces in scope, with the yearly projection beneath
-2. **Monthly Revenue:** the projected revenue of open Deals in scope
-3. **Profit:** revenue minus cost, shown in the success color when positive and the destructive color when negative
-
-Workspace performance gains Cost and Revenue columns for Operators.
+Each Call stat shows its change against the immediately preceding period of equal length when one exists. For Operators, one muted line beneath the strip names the Monthly Cost with its yearly projection and links the Pricing guide. Client Viewers never see cost, revenue, or profit.
 
 ### Leads generated
+
+Two thirds of the row at `lg` and wider, full width below.
 
 - Four line series: Total Calls, Answered Calls, Good Leads (Calls and Form Submissions together), and Forms (every Form Submission received, M23)
 - Daily points for 7-day and 30-day ranges
@@ -223,110 +294,36 @@ Workspace performance gains Cost and Revenue columns for Operators.
 - Tooltip values always include the period label and explicit series name
 - Legend remains visible and does not rely on color alone
 
-### Workspace performance
-
-Show this region only when the user can access more than one Workspace.
-
-Columns:
-
-- Workspace
-- Tracking Number
-- Total Calls
-- Answer Rate
-- Good Leads
-- Lead Rate
-
-Rows sort by Total Calls by default. Selecting a row opens that Workspace Overview.
-
 ### Recent Calls
 
-Show the five newest Calls in scope with:
+The remaining third beside the chart. The five newest Calls in scope, each a `ListRow`: the caller number (or `Unknown caller`), then the Workspace, the short start time with the full timestamp on hover, and the connected duration on the detail line. The badge on the right is the effective Lead classification, or the Call Outcome when there is none. A row opens Call Detail with the global Calls list as its source. The panel action `View Calls` opens Calls with the current range as the Started filter.
 
-- Outcome
-- Caller number
-- Workspace
-- Start time
-- Connected duration
-- Effective lead classification
+### Workspaces
 
-Selecting a row opens Call Detail. A `View Calls` secondary action opens the Calls page with the current scope and date range preserved.
+Shown only when the user can access more than one Workspace. One `ListRow` per Workspace: the name, the Tracking Number (or `No Tracking Number`) beneath it, and on the right the Calls, then the Good Leads and the answer rate when there were Calls (both hidden below `sm` so the name stays readable), and, for Operators, this month's profit. A row opens that Workspace Overview. The panel action `View all` opens Workspaces.
 
 ### States
 
 - **No Workspaces, Operator:** Explain that Tracer needs an imported Twilio number and offer `Create Workspace`.
-- **No Calls:** Keep KPI values at zero and explain that activity appears after the first inbound Call.
-- **Loading:** Use KPI, chart, and row Skeletons in their final layouts.
-- **Partial error:** Fail only the affected region and show Retry without blanking the page.
-
-## Activity
-
-### Composition plan
-
-1. **Surface:** Operational
-2. **Archetype:** Frame stack
-3. **Container family:** Frame-led
-4. **Density:** Dense
-5. **Regions:** Header and freshness status, filter toolbar, day-grouped Call timeline
-6. **States:** Timeline Skeletons, no-results Empty state, and inline Retry
-7. **Motion:** No entrance; changed data appears without positional animation
-
-### Header and filters
-
-- Title: `Activity`
-- Description: count of Calls currently in view
-- Freshness label: `Updated just now` or the elapsed time since the last successful refresh
-- Manual action: Refresh
-- Search: caller phone number
-- Filters: Workspace, call outcome, effective lead classification, processing state, and date
-- Refresh every 30 seconds while the browser tab is visible and pause while it is hidden
-
-### Timeline
-
-Use the ReUI Timeline API and adapt the collapsible pipeline composition from [c-timeline-6](https://reui.io/preview/base/components/c-timeline-6?ref=mcp). Group entries under Today, Yesterday, or a calendar date.
-
-Each top-level entry represents one Call and shows:
-
-- Start time
-- Caller number
-- Workspace
-- Current or final call outcome
-- Effective lead classification when available
-- Connected duration
-- Expand control
-
-Expanding an entry reveals only lifecycle events that occurred:
-
-1. Call received
-2. Spam gate passed or failed, when enabled
-3. Forwarding attempted
-4. Answered, missed, rejected, or failed
-5. Recording transferred or transfer failed
-6. Transcript completed, skipped, expired, or failed
-7. Lead Assessment completed or failed
-8. Lead Review added
-9. Media purged
-
-Outcome and processing states use one semantic Badge per row. Infrastructure details remain behind concise user-facing status copy. Selecting the entry header opens Call Detail.
-
-### States
-
-- **No Activity:** Explain that call events appear after the first inbound Call.
-- **No results:** Preserve active filters and offer `Clear Filters`.
-- **Loading:** Render timeline-shaped Skeletons under the current day labels.
-- **Refresh error:** Keep existing entries visible, mark freshness as unavailable, and offer Retry.
-- **Processing:** Show pending nested steps with neutral status rather than a page-level loader.
+- **No Calls:** Keep the stats at zero (`None` where a rate or average cannot be computed) and explain that activity appears after the first inbound Call.
+- **Loading:** A range change shows the strip and chart as Skeletons in their final layout.
+- **Partial error:** Fail only the affected region and show Retry without blanking the page. Without analytics, Recent Calls spans the full width.
 
 ## Calls
+
+Calls answers one question: which Calls came in, and what happened on each.
 
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
-5. **Regions:** Header and export actions, search and filters, server-backed Calls grid
+3. **Container family:** `PageHeader`, then one `Panel` holding the search and filter row, the ledger, and pagination
+4. **Density:** Dense, one line per row
+5. **Regions, by priority:** `PageHeader` with the export actions, the search and filter row, then the server-backed Calls grid
 6. **States:** Data Grid Skeleton rows, filter-aware Empty state, and inline Retry
-7. **Motion:** None
+7. **Motion:** None; a background refresh updates rows in place
+
+Calls serves both browsing history and watching what just happened. It absorbed Activity in M27: the list refreshes every 30 seconds while the browser tab is visible, pauses while it is hidden, and refreshes at once on return when the last load is 30 seconds old. A refresh rereads the same page, sort, search, and filters without Skeletons and keeps the scroll position; a failed refresh keeps the rows and the next one tries again. The per-Call steps Activity expanded are on Call Detail's Processing timeline.
 
 ### Header and actions
 
@@ -340,7 +337,7 @@ Both exports operate on the current scope, date range, search, and filters. Trac
 
 ### Search and filters
 
-Use ReUI Filters with the server-backed Data Grid pattern. Start from [c-data-grid-34](https://reui.io/preview/base/components/c-data-grid-34?ref=mcp) and adapt the advanced popover behavior from [c-filters-10](https://reui.io/preview/base/components/c-filters-10?ref=mcp).
+Use ReUI Filters with the server-backed Data Grid.
 
 - Search: caller phone number or Workspace name
 - Date range
@@ -358,17 +355,14 @@ Basic filters remain visible in the toolbar. Less common combinations open in th
 
 Columns:
 
-1. Started
+1. Started, the short time with the full timestamp on hover
 2. Caller
 3. Workspace
-4. Call Outcome
-5. Connected Duration
-6. Effective Lead Classification
-7. Lead Score
-8. Recording Availability
-9. Row actions
+4. Outcome
+5. Duration, `None` before the Call connects
+6. Lead, `None` until a Lead classification exists
 
-Rows use server-side pagination and sorting. Started sorts descending by default. Selecting a row opens Call Detail. Row actions offer Play Recording when available, Open Call, and Download MP3 when retained.
+Every row is one line. The Lead Score, Recording availability, Play Recording, and Download MP3 sit behind the row on Call Detail. Below `md` only Started, Caller, and Outcome show, sized to their content, so the grid fits a 390px screen without scrolling. Rows use server-side pagination and sorting. Started sorts descending by default. Selecting a row or its Started link opens Call Detail.
 
 ### Call Outcomes
 
@@ -389,35 +383,36 @@ Provider-specific status remains diagnostic metadata and does not appear as a co
 - **No matches:** Preserve filters and offer `Clear Filters`.
 - **Loading:** Use Data Grid Skeleton rows with stable column widths.
 - **Fetch error:** Render the error and Retry inside the grid without removing the toolbar.
-- **Expired Recording:** Keep the Call row and show recording availability as Expired.
-- **Purged Recording:** Keep the Call row and show recording availability as Purged, ahead of Expired, without Play Recording or Download MP3. The Recording availability filter offers Purged beside Expired.
+- **Expired or Purged Recording:** Keep the Call row. Call Detail shows the Recording as Expired or Purged, Purged ahead of Expired, without Play Recording or Download MP3. The Recording availability filter offers Purged beside Expired.
 
 ## Call Detail
+
+Call Detail answers one question: what happened on this Call, and was it a lead.
 
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Reader with a now-playing bar
-3. **Container family:** Frame-led
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Default for reading, dense for metadata and controls
-5. **Regions:** Header, verdict strip, Transcript, rail of Call facts and processing timeline, now-playing bar
+5. **Regions, by priority:** Header, verdict strip, Transcript, now-playing bar, then a rail of Call facts and the Processing timeline
 6. **States:** Independent media, Transcript, analysis, and timeline states
-7. **Motion:** No entrance; only playhead, seek, and installed control feedback
+7. **Motion:** No entrance; only playhead, seek, installed control feedback, and the shared Collapsible height transition on the rail sections and lead details
 
 ### Header
 
-One line, the way a reader's title bar reads:
+Two rows. The first names the Call and holds its controls; the second gives its context:
 
 - A back icon link to the list the Call was opened from
-- Primary identity: caller phone number
+- Primary identity: caller phone number, or `Unknown caller`
 - Badges: Call Outcome and effective lead classification
-- Context: Workspace, Tracking Number, and start time
+- Context, on the second row: Workspace, linked to its Overview, Tracking Number, and start time
 - Previous and next Call steps that name the Call they go to, as its caller number and time of day, with the date in the accessible name; a step with no Call reads `None` and is disabled; on phones the steps are icon only; the steps preserve the source list's filters
 - A Call actions menu holding Download MP3, Export Call, and the Operator-only Purge Media
 
 ### Verdict strip
 
-A Frame directly under the header that answers "what was this Call" before the reader scrolls:
+A Panel directly under the header that answers "what was this Call" before the reader scrolls:
 
 - The effective lead classification, labeled automated until a Lead Review exists
 - The Lead Assessment score and its one-sentence summary
@@ -426,7 +421,7 @@ A Frame directly under the header that answers "what was this Call" before the r
 
 ### Transcript and rail
 
-The Transcript is the page. It takes the main column, stays pinned while the rail scrolls, and keeps its own bounded, scrolling list. A rail beside it holds Call facts, open by default, and the processing timeline, closed by default, each in a Frame whose header is one line level with the Transcript's.
+The Transcript is the page. It takes the main column, stays pinned while the rail scrolls, and keeps its own bounded, scrolling list. A rail beside it holds Call facts, open by default, and the processing timeline, closed by default, each in a Panel whose header bar is one line level with the Transcript's and holds its expand and collapse toggle.
 
 ### Now-playing bar
 
@@ -439,7 +434,7 @@ The Recording player is a bar pinned to the bottom of the content, the way music
 - Who is speaking, from the Transcript, and whether the audio is dual-channel, on the left
 - Playback speed, mute, and volume on the right
 
-Generate waveform peaks in Trigger.dev after a verified R2 Recording upload, using its Audio Waveform build extension. Store derived peak data in R2. Peaks are not authoritative audio and expire or are purged with the Recording. The player must expose equivalent keyboard controls and text labels; the waveform is not the only way to seek.
+Generate waveform peaks in Trigger.dev after a verified R2 Recording upload. Store derived peak data in R2. Peaks are not authoritative audio and expire or are purged with the Recording. The player must expose equivalent keyboard controls and text labels; the waveform is not the only way to seek.
 
 ### Transcript
 
@@ -480,7 +475,7 @@ When present, place Lead Review beside the AI assessment in the verdict strip's 
 
 ### Call facts
 
-Use a dense definition layout in the rail for:
+A `FactList` in the rail, naming an absent value (`None`, or `Not forwarded` for the Destination Number) instead of printing a dash:
 
 - Call start and end
 - Total and connected duration
@@ -520,13 +515,15 @@ Purge Media is Operator only and uses an AlertDialog with explicit irreversible 
 
 ## Workspaces
 
+Workspaces answers one question: which Workspaces need an Operator, and how is each of the rest doing.
+
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
-5. **Regions:** Header, Workspace State chips and search, server-backed triage ledger
+3. **Container family:** `PageHeader`, then one `Panel` holding the State chips and search, the ledger, and pagination
+4. **Density:** Dense, one line per row
+5. **Regions, by priority:** `PageHeader` with Create Workspace, the Workspace State chips and search, then the server-backed triage ledger
 6. **States:** Server-rendered first page, in-place refresh after each action, Skeleton rows for later filter or page changes, first-Workspace Empty state, and inline Retry
 7. **Motion:** None
 
@@ -548,14 +545,16 @@ One table grouped in triage order, each group with a collapsible heading and cou
 
 Columns:
 
-1. Workspace: name, Workspace State Badge, and the reporting timezone, or `Next: <requirement>` from the setup checklist while Setup Required
-2. Routing: Tracking Number over `→ Destination Number`, in Geist Mono
-3. Calls, last 30 days
-4. Good Leads, last 30 days
-5. Lead rate: Good Leads over Calls as a bar and percentage, blank without Calls
-6. Last Call, in the reporting timezone
-7. Attention: the analytics roll-up (Healthy, Needs attention, or Not applicable) with its reason beneath, such as `Site Down` or `No accepted Twilio webhook yet`
+1. Workspace: name and Workspace State Badge, with the reporting timezone on hover
+2. Tracking Number, in Geist Mono, with the Destination Number on hover; `No Tracking Number` until one is assigned
+3. Calls (30d)
+4. Good Leads (30d)
+5. Lead Rate: Good Leads over Calls as a bar and percentage, `None` without Calls
+6. Last Call: the short time in the reporting timezone with the full timestamp on hover, `No Calls` before the first
+7. Attention: `Next: <requirement>` from the setup checklist while Setup Required, otherwise the analytics roll-up (Healthy, Needs attention, or Not applicable) as a status dot with its reason beside it, such as `Site Down` or `No accepted Twilio webhook yet`, truncated with the full text on hover
 8. Row action: Resume Setup while Setup Required for Operators, otherwise Open
+
+Every row is one line. Counts and rates use tabular figures, not monospace.
 
 Workspace State and attention are separate. State describes lifecycle; attention reports whether Twilio, routing, or the linked Site needs an Operator, and the analytics module owns that rule so every view agrees. Selecting a row opens Workspace Overview.
 
@@ -569,7 +568,9 @@ Tracer has no Paused state in the first release.
 
 ### Create Workspace wizard
 
-Use a focused wizard Dialog with ReUI Stepper, owned by `components/tracer/workspace-setup-wizard.tsx` and mounted fresh by the list for each creation or resume. The visual direction starts from [c-stepper-17](https://reui.io/preview/base/components/c-stepper-17?ref=mcp), adapted to five labeled steps: Basics, Site, Number, Routing, Review.
+Use a focused wizard Dialog with ReUI Stepper and five labeled steps: Basics, Site, Number, Routing, Review. Each creation or resume opens a fresh wizard.
+
+Each step after the one the wizard opens on slides 8px in from the side it travels from over 200ms with a fade: forward steps from the right, and Choose another number back from the left (a fade alone for reduced motion). The opening step does not move, so the wizard has one entrance.
 
 #### Step 1: Basics
 
@@ -633,120 +634,92 @@ If the Workspace record is created but external configuration does not complete,
 
 ## Workspace Overview
 
+Workspace Overview answers how one Workspace is doing and whether it is routing. It was rebuilt in M28 as the Briefing layout scoped to one Workspace, with a right rail the Product Owner chose from a three-way prototype (Briefing, Health first, Side rail), from the parts in Foundations, capped at `max-w-6xl`.
+
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Dashboard grid
-3. **Container family:** Frame-led
+2. **Archetype:** Briefing with a right rail
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Workspace header, KPI row, trend chart, Business (Operator only), routing health and Call Flow summary, recent Calls
+5. **Regions, by priority:** `PageHeader`, one `StatStrip`, then a main column (Leads generated, Recent Calls) two thirds wide beside a rail (Routing health, Site, Call Flow, Business)
 6. **States:** Region-level Skeleton, Empty, and Retry states
 7. **Motion:** None
 
 ### Header
 
-- Workspace name
-- Workspace State Badge
-- Tracking Number
-- Destination Number
-- Reporting timezone
-- Date controls: 7 Days, 30 Days, 90 Days, All Time, and Custom
-- Operator primary action: Edit Flow
-- Client Viewer primary action: Generate Report
-- Secondary action: Workspace Settings for Operators or Reports for Client Viewers
+- Title: the Workspace name
+- Description: the Workspace State Badge and one phrase naming the range and reporting timezone, such as `the last 30 days in America/Chicago`; while setup is incomplete, the timezone alone
+- Controls on the same row: the date range (7 Days, 30 Days, 90 Days, All Time, and Custom), hidden while setup is incomplete
+- Operators: Workspace Settings, then Edit Flow (Active), Resume Setup (Setup Required), or Restore (Archived)
+- Client Viewers: Reports and Generate Report scoped to this Workspace and its reporting timezone
 
-### Scorecard
+### Stat strip
 
-Above the Call analytics, one row of six dense tiles summarizes the business (the row the shell prototype settled on). Tiles whose milestone has not shipped are omitted, never shown empty:
+1. **Total Calls**
+2. **Answer Rate**
+3. **Good Leads**, with the Forms share in the hover definition
+4. **Average Duration**
+5. **Visit-to-Call** when a Site is linked: Calls divided by the Site's Visits, with both counts in the hover definition
+6. **Profit** (Operator only), in the success color when positive and the destructive color when negative
 
-1. **Visits** over the range, from the linked Site
-2. **Calls**
-3. **Visit-to-Call:** Calls divided by Visits, in the brand accent
-4. **Search Visibility** (M21), with `of 100`
-5. **Monthly Cost** (M22, Operator only), with the yearly projection beneath
-6. **Profit** (M22, Operator only), with the Deal beneath
+The Call stats use Home's definitions and show their change against the preceding period. For Operators, one muted line beneath the strip names the Monthly Cost with its yearly projection and the Deal. Client Viewers never see cost, profit, or the Deal.
 
-Without a linked Site the row shows only the tiles that need no Site, and the Site summary panel offers Link Site.
+### Main column
 
-### Site summary
+- **Leads generated:** the same four-series chart as Home in the Workspace reporting timezone. Workspace Overview does not include the fleet-level Workspace performance grid.
+- **Recent Calls:** the five newest Calls, each a `ListRow` with the caller number (or `Unknown caller`), the short start time with the full timestamp on hover, the connected duration, and the Call Outcome badge. A row opens Call Detail; the panel action `View Calls` opens Workspace Calls over the current range.
 
-One compact panel between the Scorecard and the analytics: the preview thumbnail, primary hostname, Site Health Badge, uptime over 30 days, and last deployment, linking to the Site page. Without a Site Link it is an Empty state with Link Site for Operators and a one-line explanation for Client Viewers.
+### Rail
 
-### Analytics
-
-Use the same definitions and visual order as Home:
-
-1. Total Calls
-2. Answer Rate
-3. Good Leads
-4. Average Connected Duration
-
-The three-series chart shows Total Calls, Answered Calls, and Good Leads. Workspace Overview does not include the fleet-level Workspace performance grid.
-
-### Business
-
-Operators see one panel below Leads generated with the same Business fields as Site settings (name, contact, email, niche, website, and city) beside the city's location map, with Edit Business opening Site settings. Without a Business it shows a one-line explanation. Client Viewers never see it.
-
-### Routing health
-
-Show one compact Frame with:
-
-- Current Tracking Number and Number Assignment start
-- Destination Number
-- Twilio webhook health
-- Last successful inbound Call
-- Recording setting
-- Spam gate setting
-- Whisper setting
-- Active Call Flow publication time
-
-Lifecycle state and health remain separate. An Active Workspace can still show an integration warning that needs attention.
-
-### Call Flow summary
-
-Render the published graph read-only as a spine rather than the editable canvas: the main path (next, Open, Pass, Answered) runs top to bottom, each step with its icon, title, and detail line, and every other branch hangs beneath its step as an exit chip naming the branch in its tone and where it leads (the Outcome, or the steps on the way to it). The panel heading carries the version Badge and, for Operators of an Active Workspace, Open Flow.
-
-### Recent Calls
-
-Show the five newest Calls with Call Outcome, caller, start time, connected duration, and effective lead classification. Selecting a row opens Call Detail. `View Calls` opens Workspace Calls with the active date range preserved.
+- **Routing health:** the Twilio webhook health Badge in the panel header; the Tracking Number, Destination Number, last successful inbound Call, and Number Assignment start as a two-column fact list; and the Recording, Spam gate, and Whisper settings on one muted line. A webhook Warning appears inside the panel with an Operator-only Review Number Settings action. Lifecycle state and health remain separate.
+- **Site:** the preview thumbnail, primary hostname, and Site Health Badge, then Visits, Search Visibility (`42 of 100`, or `No score yet`), the last check, and the last deploy. The panel action `View Site` opens the Site page. Without a Site Link the panel is one line, `No Site is linked to this Workspace.`, with Link Site for Operators.
+- **Call Flow:** the published graph read-only as a spine: the main path (next, Open, Pass, Answered) runs top to bottom, each step with its icon, title, and detail line, and every other branch hangs beneath its step as an exit chip naming the branch in its tone and where it leads. The panel header carries the version Badge and, for Operators of an Active Workspace, Open Flow.
+- **Business** (Operator only): the Business name, contact, niche, and city above the city's location map, with Edit Business opening Site settings. Without a Business it shows a one-line explanation.
 
 ### States
 
-- **Setup Required:** Replace live analytics emphasis with a Resume Setup action and a checklist of incomplete requirements.
-- **No Calls:** Keep configuration visible and show zero-value analytics with an explanatory Empty state.
+- **Setup Required:** No stat strip or chart. A Setup Required panel lists each requirement with a check icon when complete and an empty circle when not, each with its state as screen-reader text, above the rail panels.
+- **No Calls:** Keep configuration visible and explain that Calls appear after the first inbound Call.
 - **Routing warning:** Keep analytics usable and isolate the warning in routing health with an Operator-only recovery action.
-- **Archived:** Keep historical analytics and Calls readable, label the archived period, and remove live-routing actions.
+- **Archived:** Keep historical analytics and Calls readable, label the archived date beneath the header, offer Restore only to Operators, and remove live-routing actions.
 
 ## Site
+
+Site answers one question: is this Workspace's Site up, and is it bringing in Calls.
 
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Dashboard stack with a hero
-3. **Container family:** Frame-led
+2. **Archetype:** Reading page with a hero, capped at `max-w-6xl`
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Workspace header, hero preview, KPI row, traffic chart, pages and referrers, performance and search, deal and cost, hosting
+5. **Regions, by priority:** `PageHeader`, the Site preview, one `StatStrip`, Traffic and Calls, Top pages beside Referrers, Performance beside Search, then Deal and cost and Hosting for Operators
 6. **States:** Region-level Skeleton, Empty, and Retry states; No Site; Preview pending; Syncing; Cloudflare disconnected
 7. **Motion:** None
 
-The Site page is `/workspaces/[id]/site`, reachable from the Website group of the Workspace Sidebar and from the Overview Site summary. It shows the linked Site; Workspaces without a Site Link show an Empty state with Link Site for Operators.
+The Site page is `/workspaces/[id]/site`, reachable from the Website group of the Workspace Sidebar and from the Overview Site summary. It shows the linked Site; Workspaces without a Site Link show an Empty state with Link Site for Operators. Every region is a Panel with a header bar, except the Site preview, which is an untitled Panel region.
 
 ### Header
 
-The Workspace header (name, state, Tracking Number, primary hostname, timezone) with Replace Site for Operators and Open Site, which opens the apex URL in a new tab.
+- Title: the Workspace name
+- Description: the Workspace State Badge, `Tracking <number>` or `No Tracking Number`, the primary hostname, and the reporting timezone
+- Controls on the same row: the date range, Replace Site (Operators), and Open Site, the primary action, which opens the apex URL in a new tab
 
 ### Hero preview
 
-One panel. Left, the preview image at 16:10 inside a hairline rounded-md frame, object-fit cover aligned to the top, linking to the Site in a new tab with an `Open` affordance on hover. Right, a dense definition list: Site Health Badge, Uptime over 30 days with the median response time, Last deploy, Hostnames (apex, then www), and for Operators the Worker name. Beneath, the capture time: `Preview captured 2 hours ago` or `Preview pending` while the first capture runs. Health rules are in the roadmap M20 note and the Warning or Down reason appears as one sentence next to the Badge.
+An untitled Panel region named `Site preview`. Left, the preview image at 16:10, cropped from the top, linking to the Site in a new tab with an `Open` affordance on hover. Right, a `FactList`: the Site Health Badge with its Warning or Down reason as one sentence beside it, Uptime over 30 days with the median response time (`No checks yet` before the first), Last check (`No check yet`), Last deploy, Hostnames (apex, then www), for Operators the Worker name, and Site Link since. Beneath the image, the capture time: `Preview captured 2 hours ago`, `Preview pending` while the first capture runs, or `Preview failed at <stage>: <reason>` when the last sync failed. Health rules are in the roadmap M20 note.
 
-### Date controls and KPI row
+### Stat strip
 
-The Workspace date controls, then four tiles:
+One `StatStrip`, each stat with its definition on hover:
 
 1. **Visits:** sessions on the Site
-2. **Page Views**
+2. **Page Views:** pages loaded on the Site
 3. **Calls:** Calls to the Tracking Number over the same range
-4. **Visit-to-Call:** Calls divided by Visits, in the brand accent
+4. **Visit-to-Call:** Calls divided by Visits, `None` without Visits
+
+No stat takes an accent color.
 
 ### Traffic and Calls
 
@@ -754,41 +727,43 @@ One two-series line chart in the Workspace timezone: Visits in the muted series 
 
 ### Pages and referrers
 
-Two panels side by side. Top pages lists up to eight paths with page views as a muted proportional bar behind the mono path; Referrers lists up to eight hosts the same way, with `(direct)` for empty referrers and the device split in one line beneath.
+Two Panels side by side. Top pages lists up to eight paths with page views as a muted proportional bar behind the mono path; Referrers lists up to eight hosts the same way, with `(direct)` for empty referrers and the device split in one line beneath (`No device data` without any). Without page views each reads `No page views in this range.`
 
 ### Performance
 
-Largest Contentful Paint, Interaction to Next Paint, and Cumulative Layout Shift at the 75th percentile over the range, each with a Good or Needs work Badge at the Core Web Vitals thresholds (2.5 s, 200 ms, 0.1).
+Largest Contentful Paint, Interaction to Next Paint, and Cumulative Layout Shift at the 75th percentile over the range, each with a Good or Needs work Badge at the Core Web Vitals thresholds (2.5 s, 200 ms, 0.1), or `No samples` when there are none.
 
 ### Search (M21)
 
-Beside Performance: the Search Visibility score as `42` with a muted `/100`, a 30-day sparkline, and a table of Keywords with weight, position, and 7-day change (green up, red down, muted zero, `Not ranking`). Before M21 ships the panel is omitted, never shown empty.
+Beside Performance: the Search Visibility score as `42` with a muted `/100` (`No score yet` without one), a 30-day sparkline, and a table of Keywords with weight, position, and 7-day change (a success Badge up, a destructive Badge down, a muted `0`, and nothing when there is no comparison). A Keyword without a position reads `Not ranking`, `Not checked`, or `Check failed`. Before the first rank check the panel reads `No rankings yet`, with a Keywords link for Operators. Before M21 ships the panel is omitted, never shown empty.
 
 ### Deal and cost (M22, Operator only)
 
-Deal, Cost, and Profit per month in a three-column definition list with Edit Deal, and one line naming what cost includes. Hidden from Client Viewers.
+Deal, Cost, and Profit per month in a three-column `FactList`, with Add, Edit, and End Deal in the panel header and profit in the success or destructive color. One line beneath names what cost includes for the month, the cost per Good Lead when there are Good Leads, and links the Pricing guide. Hidden from Client Viewers.
 
 ### Hosting (Operator only)
 
-Requests and errors over 7 days, hostname certificates as a count Badge, Refresh Preview, and the last ten deployments with short version, source, time, and a `Live` Badge on the current one. Hidden from Client Viewers.
+Refresh Preview, then Worker requests and errors over 7 days as facts (`None` before they are synced), hostname certificates as a count Badge, and the last ten deployments with short version, source, time, and a `Live` Badge on the current one (`No deployments recorded.` without any). Hidden from Client Viewers.
 
 ### States
 
 - **No Site:** Empty state with the No Workspaces line art, Link Site for Operators, and `No Site is linked to this Workspace` for Client Viewers.
-- **Syncing:** before the first sync, tiles and chart show Skeletons with `First sync in progress`.
+- **Syncing:** before the first sync, `First sync in progress` above the stat strip and chart as Skeletons.
 - **Preview pending:** the hero shows a Skeleton at 16:10 with the capture status.
 - **Cloudflare disconnected:** keep the last synced data and show a warning line in the hero with a link to Integrations for Operators.
 - **Down:** the hero Badge reads Down with the last check time; analytics stay readable.
 
 ## Forms
 
+Forms answers one question: which Form Submissions came in from this Workspace's Site, and where did each one go.
+
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around the header and the ledger
-4. **Density:** Dense
-5. **Regions:** Header, Form Submissions ledger with expandable rows
+3. **Container family:** `PageHeader`, then one `Panel` holding the ledger
+4. **Density:** Dense, one line per row
+5. **Regions, by priority:** `PageHeader`, then the Form Submissions ledger with expandable rows
 6. **States:** No Form Submissions, No Site, inline action error
 7. **Motion:** None
 
@@ -803,15 +778,15 @@ The Forms page is `/workspaces/[id]/forms`, the Website group's second item in t
 
 Columns:
 
-1. Received, in Geist Mono
+1. Received: the short time in UTC with the full UTC timestamp on hover, because the list carries no Workspace timezone
 2. Name
-3. Contact: phone and email in Geist Mono
-4. Fields: every field except Name, Phone, and Email as `Key: value`, muted and truncated
-5. Forwarding: `Forwarded` with the send time, `Forward failed` with the provider's reason beneath, `Not forwarded` when the Workspace had no Forwarding Recipients, `Held`, or `Rejected`
-6. Lead: the effective classification Badge, `Awaiting approval` while Held, with the reviewer's note beneath
+3. Contact: the phone in Geist Mono, then the email muted on the same line
+4. Fields: every field except Name, Phone, and Email as `Key: value` on one muted, truncated line
+5. Forwarding: `Forwarded`, `Forward failed` with the provider's reason beside it, `Not forwarded` when the Workspace had no Forwarding Recipients, `Held`, or `Rejected`
+6. Lead: the effective classification Badge, `Awaiting approval` while Held, with the reviewer's note beside it
 7. Row actions
 
-`Details` on any row expands it to a definition list of the page, the recipients, and every field in full.
+Every row is one line; long values truncate with the full text on hover, and an absent Contact or Fields value reads `None`. `Details` on any row expands it to a definition list of the page, the recipients (`No recipients` when there were none), the forwarding time, and every field in full.
 
 ### Row actions (Operator only)
 
@@ -819,7 +794,7 @@ Columns:
 - `Review` opens a small popover with the Lead classification and an optional note, mirroring the Call Lead Review; `Clear review` returns the row to the default Good Lead
 - `Resend` on a `Forward failed` or `Not forwarded` row
 
-Every action replaces the row with the submission the route returns; a failed action shows one inline error above the ledger and leaves the row unchanged.
+Every action replaces the row with the submission the route returns. While it runs, the pressed button is busy and the row's other actions wait. A failed action names the failure in the destructive style on a line directly beneath its row and leaves the row unchanged.
 
 ### States
 
@@ -828,13 +803,15 @@ Every action replaces the row with the submission the route returns; a failed ac
 
 ## Workspace Flow
 
+Workspace Flow answers one question: what happens when someone calls this Workspace's Tracking Number.
+
 ### Composition plan
 
 1. **Surface:** Operational tool
 2. **Archetype:** Three-pane builder
-3. **Container family:** Frame-led controls around a React Flow canvas
+3. **Container family:** A toolbar row above one bordered React Flow canvas
 4. **Density:** Dense
-5. **Regions:** Publish toolbar; a canvas with the node palette, the inspector, and validation issues docked inside it
+5. **Regions, by priority:** the Publish toolbar, then the canvas with the inspector, validation issues, and node palette docked inside it
 6. **States:** Canvas Skeleton, empty draft guidance, validation errors, and save or publish Retry
 7. **Motion:** React Flow pan and zoom only; no entrance animation
 
@@ -938,18 +915,22 @@ Validation runs on every change. The toolbar shows Publishable or the issue coun
 - **No draft:** Show the published graph read-only with Edit Flow.
 - **Unsaved changes:** Show saving status without blocking canvas work.
 - **Invalid draft:** Preserve the draft and disable Publish; never discard invalid work automatically.
-- **Publish failure:** Keep the published version active and the draft intact with Retry.
+- **Publish failure:** Keep the published version active and the draft intact, and name the failure beside Publish, which stays available to try again.
+- **Publish unavailable:** Say beside Publish why it is disabled: the Workspace is not yet Active, no Draft is open, or the Draft has issues to fix.
+- **Edit Flow, Discard Draft, or Version history failure:** Name the failure beside the action, inside its dialog when it has one, and change nothing.
 - **Archived Workspace:** Show historical Flow Versions read-only.
 
 ## Reports
 
+Reports answers one question: where are the reports and exports I asked for, and are they ready.
+
 ### Composition plan
 
 1. **Surface:** Operational
-2. **Archetype:** Frame stack with a table-backed history region
-3. **Container family:** Frame-led
-4. **Density:** Dense
-5. **Regions:** Header, report generator, report history Data Grid
+2. **Archetype:** Table-backed history
+3. **Container family:** `PageHeader` with Generate Report, then one `Panel` holding the history grid and pagination
+4. **Density:** Dense, one line per row
+5. **Regions, by priority:** `PageHeader` with Generate Report, which opens the report generator, then the report history Data Grid
 6. **States:** Generator validation, history Skeleton rows, Empty state, and inline Retry
 7. **Motion:** None
 
@@ -1023,16 +1004,15 @@ The CSV contains every matching Call with:
 
 Columns:
 
-1. Requested
-2. Requested By
-3. Scope
-4. Period
-5. Files
-6. Status
-7. Expires
-8. Row actions
+1. Requested: the short time with the full timestamp on hover
+2. Scope
+3. Period, truncated with the full text on hover
+4. Files
+5. Status, with a Failed reason truncated beside the Badge
+6. Expires: a short date, or `None`
+7. Row actions
 
-Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. A Recording ZIP or Export Call that includes a Recording whose media an Operator purges expires at the purge, so its row shows Expired with Regenerate, and the regenerated export omits that Recording as Purged. Job metadata and parameters remain for 90 days.
+The history lists only the requester's own jobs, so the requester appears in View Parameters rather than as a column. Download actions show an icon and the file label (`PDF`, `CSV`, `ZIP`) with the accessible name `Download PDF` and so on, so every row is one line at 1440px. Below `md` the grid shows only Period, Status, and Actions, and each row's actions (Download for each file, Regenerate or Retry, and View Parameters) move into one `Report actions` menu, so nothing scrolls sideways at 390px. Rows support Download, Regenerate, and View Parameters while authorization remains valid. Generated PDF, CSV, and ZIP artifacts remain in R2 for 7 days. A Recording ZIP or Export Call that includes a Recording whose media an Operator purges expires at the purge, so its row shows Expired with Regenerate, and the regenerated export omits that Recording as Purged. Job metadata and parameters remain for 90 days.
 
 ### States
 
@@ -1044,13 +1024,15 @@ Rows support Download, Regenerate, and View Parameters while authorization remai
 
 ## Users
 
+Users answers one question: who can sign in to Tracer, and which Workspaces can each one see.
+
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Table-backed management
-3. **Container family:** One Frame around toolbar, ledger, and pagination
-4. **Density:** Dense
-5. **Regions:** Header, role and state filters, server-backed user grid
+3. **Container family:** `PageHeader`, then one `Panel` holding the toolbar, grid, and pagination
+4. **Density:** Dense, one line per row
+5. **Regions, by priority:** `PageHeader` with Provision User, the search and filters, then the server-backed user grid
 6. **States:** Server-rendered user list, in-place refresh after each action, Data Grid Skeleton rows only while reloading after a Retry, first-user protection, and inline Retry
 7. **Motion:** None
 
@@ -1070,15 +1052,15 @@ Users is visible to Operators only. Client Viewers cannot discover other users o
 
 Columns:
 
-1. User
+1. User: name with the muted email beside it, truncated
 2. Role
-3. User State
-4. Workspace Access
-5. Last Sign-In
-6. Provisioned By
+3. State
+4. Workspaces: `All Workspaces` for Operators, otherwise the granted names truncated, or `None`
+5. Last Sign-In: the short time in the Operator's account timezone with the full timestamp on hover, or `Never`
+6. Added By: the provisioning Operator, or `Initial setup` for the bootstrap Operator
 7. Row actions
 
-Use state Badges for Provisioned, Active, and Disabled. Selecting a row opens the management Dialog rather than a permanent detail page.
+Every row is one line. Use state Badges for Provisioned, Active, and Disabled. Selecting a row opens the management Dialog rather than a permanent detail page.
 
 ### Provision User
 
@@ -1127,13 +1109,15 @@ Safeguards:
 
 ## Authentication
 
+Authentication answers one question: how does a provisioned user get into Tracer with an email code.
+
 ### Composition plan
 
 1. **Surface:** Flow
 2. **Archetype:** Auth card
 3. **Container family:** One centered Card
 4. **Density:** Default
-5. **Regions:** Brand, email-code action, support copy
+5. **Regions, by priority:** the email-code step in the Card, the Tracer lockup above it, then support copy
 6. **States:** Inline field errors, busy actions, and recoverable provider errors
 7. **Motion:** One subtle Card reveal with reduced-motion fade; no animated orb
 
@@ -1153,8 +1137,6 @@ Only provisioned, non-disabled identities may continue. Email-code authenticatio
 
 ### Verify Email Code
 
-Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=mcp).
-
 - Six-digit code
 - Five-minute expiration
 - Three verification attempts before requiring a new code
@@ -1163,6 +1145,7 @@ Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=
 - Change Email action returns to Sign In
 - Display the normalized destination email in masked form
 - Successful verification marks a Provisioned user Active and creates a session
+- Outside production builds, a `Use local code` outline action below Verify reads the code from the local sign-in fake and verifies with it in one click; it reports `No local code is available` when the fake is off and never appears in Production
 
 ### Authentication rules
 
@@ -1176,24 +1159,25 @@ Adapt [c-input-otp-6](https://reui.io/preview/base/components/c-input-otp-6?ref=
 
 ## Account Settings
 
+Account Settings answers one question: how is my own account set up.
+
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Vertical rail settings
-3. **Container family:** Frame-led
+3. **Container family:** `PageHeader` and one `SettingsSection` per section
 4. **Density:** Default
-5. **Regions:** Section rail and one active settings section
-6. **States:** Field Skeletons, inline validation, save success, and Retry
+5. **Regions, by priority:** `PageHeader`, the one active settings section, and the section rail beside it (Profile, Preferences, Security)
+6. **States:** Field Skeletons, inline validation, per-action pending, failure, and confirmation, and Retry
 7. **Motion:** Installed section control behavior only
 
-The rail becomes horizontally scrollable below `md`. Use [c-field-7](https://reui.io/preview/base/components/c-field-7?ref=mcp) as the form-composition reference, with working submit behavior and dynamic validation.
+The rail becomes horizontally scrollable below `md`.
 
 ### Profile
 
+- Sign-in email, role, and User State as read-only facts
 - Display name
-- Read-only sign-in email
-- Read-only role
-- Read-only User State
+- Avatar
 - Save action
 
 Users cannot change their own sign-in email. Operators replace it through Users with verification and uniqueness checks.
@@ -1204,7 +1188,7 @@ Users cannot change their own sign-in email. Operators replace it through Users 
 - Date and time preview
 - Save action
 
-Global dashboards, Activity grouping, and multi-Workspace report defaults use this timezone. Workspace views and single-Workspace reports use the Workspace reporting timezone.
+Global dashboards, global Calls, and multi-Workspace report defaults use this timezone. Workspace views and single-Workspace reports use the Workspace reporting timezone.
 
 ### Security
 
@@ -1218,29 +1202,31 @@ There is no password section. Revoking the current session redirects to Sign In.
 
 ### States
 
-- **No other sessions:** Show the current session only.
-- **Save success:** Use a concise toast.
-- **Session revoke failure:** Keep the session visible and offer Retry.
+- **No other sessions:** Show the current session only, and say beside Revoke other sessions that there are none to revoke.
+- **Save success:** Confirm beside the section's save button.
+- **Session revoke failure:** Keep the session visible and name the failure beside its Revoke button, which stays available to try again.
 
 ## Integrations
+
+Integrations answers one question: is every provider Tracer depends on ready, and if not, what fixes it.
 
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Master-detail
-3. **Container family:** Frame-led
+3. **Container family:** `Panel` from the shared parts
 4. **Density:** Dense
-5. **Regions:** Header with a readiness line, a Needs attention lane, a provider navigation, and one provider's detail Frame
+5. **Regions, by priority:** `PageHeader` with the readiness line, Needs attention when anything does, the selected provider's detail beside the provider navigation, then that provider's table Panels
 6. **States:** Server-rendered provider health, configured or missing state, test progress, and an inline Retry when a background refresh fails
 7. **Motion:** None
 
 ### Layout
 
-The header states how many providers are ready beside a status dot that turns to warning while anything needs attention. Below it, a **Needs attention** lane appears only when there is something an Operator can resolve from this page: an Organization credential that can be connected (with its Connect action inline), a connected Twilio account without a webhook Auth Token (Set Auth Token), and any degraded provider with its failure detail and a View link. The lane is omitted when nothing needs attention.
+The `PageHeader` states how many providers are ready beside a status dot that turns to warning while anything needs attention. A failed background refresh is named beneath it with Retry and keeps the current data. Below it, a **Needs attention** `Panel` appears only when there is something an Operator can resolve from this page: an Organization credential that can be connected (with its Connect action inline), a connected Twilio account without a webhook Auth Token (Set Auth Token), and any degraded provider with its failure detail and a View link. The lane is omitted when nothing needs attention.
 
-The page then splits into a provider navigation and a detail. The navigation, a 15rem column at `md` and a horizontal chip row below it, groups providers as **Organization connections** (Twilio, Cloudflare, DataForSEO) and **Platform services** (Hyperdrive, Cloudflare Email Service, Cloudflare R2, OpenAI, Trigger.dev). Each item shows the provider's monochrome mark from `components/tracer/provider-logo.tsx`, its name, a one-line summary (account and number count, Sites and linked count, Keywords and lookups, models, bucket, or sending address), and a status dot. The selected provider is kept in the `provider` search parameter, defaulting to Twilio, so other pages link straight to a provider, for example `/integrations?provider=cloudflare` from the Workspace wizard's Site step.
+The page then splits into a provider navigation and a detail. The navigation, a 15rem column at `md` and a horizontal chip row below it, groups providers as **Organization connections** (Twilio, Cloudflare, DataForSEO) and **Platform services** (Hyperdrive, Cloudflare Email Service, Cloudflare R2, OpenAI, Trigger.dev). Each item shows the provider's monochrome mark, its name, a one-line summary (account and number count, Sites and linked count, Keywords and lookups, models, bucket, or sending address), and a status dot. The selected provider is kept in the `provider` search parameter, defaulting to Twilio, so other pages link straight to a provider, for example `/integrations?provider=cloudflare` from the Workspace wizard's Site step.
 
-The detail is one Frame. Its first panel carries the mark, the provider name, the state Badge, the summary line, the action toolbar on the right, any error line with Retry, and a three-column fact list. Further panels hold the provider's tables at full width: Numbers for Twilio, Sites for Cloudflare, Recording transfer failures for R2 and Trigger.dev, and Media cleanup for Trigger.dev. Placeholders for data that does not exist yet are not rendered.
+The detail is one `Panel` carrying the mark, the provider name, the state Badge, the summary line, the action toolbar on the right, the shared `FactList` in up to three columns, and the provider's note. Each provider table is its own titled `Panel` beneath the detail, at full width: Numbers for Twilio, Sites and Forms key for Cloudflare, Recording transfer failures for R2 and Trigger.dev, and Media cleanup for Trigger.dev. Placeholders for data that does not exist yet are not rendered.
 
 ### Access and secrets
 
@@ -1248,15 +1234,15 @@ Integrations is visible to Operators only. R2, Hyperdrive, OpenAI, Trigger.dev, 
 
 ### Cloudflare
 
-The Cloudflare Frame holds Connect (Account ID and API token, with a link to Cloudflare's token page and the four permissions the token needs listed), then once connected the account identifier, Connected by and time, Last verified, Test, Rotate Token, Disconnect (blocked while any Site Link is open, with the count), Last sync time with an Operator Sync now action, and a Sites table: preview thumbnail, primary hostname, Site Health Badge, last deployment, 30-day visits, and `Linked to <Workspace>` or `Not linked`. Workers without a custom domain never appear.
+The Cloudflare detail holds Connect (Account ID and API token, with a link to Cloudflare's token page and the four permissions the token needs listed), then once connected the account identifier, Connected by and time, Last verified, Test, Rotate Token, Disconnect (blocked while any Site Link is open, with the count), Last sync time with an Operator Sync now action, and a Sites table: preview thumbnail, primary hostname, Site Health Badge, last deployment, 30-day visits, and `Linked to <Workspace>` or `Not linked`. Workers without a custom domain never appear.
 
-Below the Sites table, the Forms key panel (M23) holds the Organization's one Forms key: `Generated <date>` or `No key yet`, Generate or Rotate revealing the new key once in Geist Mono beside Copy with one line to set it once as `TRACER_FORM_KEY` in the site repository's deploy environment, and Revoke behind a confirmation. Every Site posts the same key with its hostname.
+Below the Sites Panel, the Forms key Panel (M23) holds the Organization's one Forms key: `Generated <date>` or `No key yet`, Generate or Rotate revealing the new key once in Geist Mono beside Copy with one line to set it once as `TRACER_FORM_KEY` in the site repository's deploy environment, and Revoke behind a confirmation. Every Site posts the same key with its hostname.
 
 ### DataForSEO (M21)
 
 Connect (API login and password), the login shown once connected, Test, Rotate, Disconnect, last check time, lookups this month, and Keywords tracked.
 
-Each provider Frame shows:
+Each provider detail shows:
 
 - Connection state
 - Non-secret account or resource identifier
@@ -1325,26 +1311,60 @@ Cloudflare Email Service requires Cloudflare DNS and Workers Paid for arbitrary 
 
 - **Not configured:** Explain the missing deployment binding or secret without exposing values.
 - **Degraded:** Keep unaffected providers usable and show the failing capability.
-- **Test running:** Show progress only inside the tested provider Frame.
+- **Test running:** Show progress only inside the tested provider's detail.
 - **Test failed:** Preserve the last successful check and show Retry.
 
+## Pricing guide
+
+The Pricing guide answers one question: what does Tracer pay for a Call and a month, and how is revenue projected. It is Operator only, linked from Home's Monthly Cost line and the Site Deal and cost panel, and listed nowhere in the Sidebar.
+
+### Composition plan
+
+1. **Surface:** Reference
+2. **Archetype:** Reading page, capped at `max-w-6xl`
+3. **Container family:** `PageHeader` and `Panel` from the shared parts
+4. **Density:** Default
+5. **Regions, by priority:** `PageHeader`, Rates, then A two-hour Call beside Monthly cost and revenue
+6. **States:** None beyond the page's loading state; the guide shows the same rate table Tracer uses to project cost
+7. **Motion:** None
+
+### Header
+
+- Title: `Pricing`
+- Description: one sentence saying the rates are maintained by hand and naming the date they were last checked
+
+### Rates
+
+Every rate with its price, unit, and what it pays for. Below `md` each rate's explanation sits under its name instead of in its own column, so the table never scrolls sideways.
+
+### A two-hour Call
+
+A connected, recorded, transcribed, and assessed two-hour Call worked line by line to its total, with one line noting that storing the Recording adds well under a cent per month and the number rental is shared by every Call in the month.
+
+### Monthly cost and revenue
+
+How each cost category (Telephony, Processing, Hosting, Search, and Domain) is computed for a Workspace's month, then how each Deal type projects revenue, with profit as revenue minus cost, the yearly projection as twelve months, and Cost per Good Lead as cost divided by Good Leads.
+
 ## Workspace Settings
+
+Workspace Settings answers one question: how is this Workspace configured, one section at a time.
 
 ### Composition plan
 
 1. **Surface:** Operational
 2. **Archetype:** Vertical rail settings
-3. **Container family:** Frame-led
+3. **Container family:** `PageHeader` and one `SettingsSection` per section
 4. **Density:** Default forms with dense metadata
-5. **Regions:** General, Site, Forms, Number, Recording and AI, Access, Danger
-6. **States:** Server-rendered section data, inline validation, save success, and Retry
+5. **Regions, by priority:** `PageHeader`, the one active section, and the section rail beside it: General, Site, Forms, Number, Recording and AI, Access, Danger
+6. **States:** Server-rendered section data, inline validation, per-action pending, failure, and confirmation, and Retry
 7. **Motion:** Installed section control behavior only
 
 Workspace Settings is Operator only. Client Viewers do not see the tab. Each section is its own page at `/workspaces/[id]/settings/[section]` (`general`, `site`, `forms`, `number`, `recording`, `access`, `danger`), selected from the vertical rail; `/workspaces/[id]/settings` opens General.
 
 ### Site
 
-- Linked Site with preview thumbnail, primary hostname, and Site Link start time, or an Empty state with Link Site
+- Linked Site with preview thumbnail, and its primary hostname, Site Link start time, and Site Health as facts, or an Empty state with Link Site
+- Service Area, Keywords, Suggested Keywords, Domain renewal, and Business and Deal each follow as their own section with their own save
 - Replace Site opens the same Site picker as the wizard and ends the current Site Link before starting the new one
 - Detach Site ends the Site Link after confirmation and never changes Cloudflare
 - Service Area (M21): city, region, and country
@@ -1419,8 +1439,12 @@ Tracer does not permanently delete a Workspace in the first release.
 - **Setup Required:** Emphasize incomplete number or routing configuration and Resume Setup.
 - **Number replacement failure:** Keep the current Tracking Number and Number Assignment, and explain that the replacement did not complete.
 - **Access removal conflict:** Keep the current list and explain why the grant was not removed.
-- **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore.
+- **Archived:** General information remains readable; Number, Recording and AI, and Access controls are disabled until Restore, and each disabled save says `Restore this Workspace to edit its settings.`
+- **Active Workspace in Danger:** Archive Workspace is disabled and says `Detach the Tracking Number before archiving an Active Workspace.`
+- **Recording and AI switches:** each switch has a one-line description beneath its label saying what it does.
 
 ## Workspace Calls and Reports
 
-Workspace Calls reuses the global Calls page with Workspace scope fixed and the Workspace filter removed. Workspace Reports reuses Reports with Workspace selection fixed. Both preserve the Workspace tab shell and use its reporting timezone.
+Workspace Calls and Workspace Reports answer the Calls and Reports questions for one Workspace, with the same regions in the same priority.
+
+Workspace Calls reuses the global Calls page with Workspace scope fixed and the Workspace filter removed. Workspace Reports reuses Reports with Workspace selection fixed. Both keep the Workspace Sidebar and use its reporting timezone.

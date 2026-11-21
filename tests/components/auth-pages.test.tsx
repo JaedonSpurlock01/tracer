@@ -16,7 +16,7 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -88,6 +88,48 @@ describe("authentication pages", () => {
     expect(router.push).toHaveBeenCalledWith("/sign-in");
   });
 
+  it("signs in with the local code in one click when the local sign-in fake holds one", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "operator@example.com");
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/test/auth-otp") return response({ code: "482913" });
+      return response({ token: "session-token", user: {} });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/account/settings"));
+    expect(fetch).toHaveBeenCalledWith("/api/auth/sign-in/email-otp", expect.objectContaining({ body: JSON.stringify({ email: "operator@example.com", otp: "482913" }) }));
+  });
+
+  it("says no local code is available when the local sign-in fake is off", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "operator@example.com");
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    expect(await screen.findByText("No local code is available. Send a sign-in code first.")).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("explains that a refused local code may belong to another email", async () => {
+    window.sessionStorage.setItem("tracer.pending-email", "someone@example.com");
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/test/auth-otp") return response({ code: "482913" });
+      return response({ message: "invalid" }, 400);
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<VerifyEmailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use local code" }));
+
+    expect(await screen.findByText("The local code is not for this email. Only a provisioned, allowed email receives a code.")).toBeVisible();
+  });
+
   it("redirects unauthenticated users without rendering settings data", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(null)));
     render(<AccountSettingsPage />);
@@ -105,12 +147,51 @@ describe("authentication pages", () => {
     });
     vi.stubGlobal("fetch", fetch);
     render(<AccountSettingsPage />);
-    await screen.findByDisplayValue("Operator");
+    await screen.findByRole("region", { name: "Profile" });
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     fireEvent.change(screen.getByLabelText("Timezone"), { target: { value: "not-a-timezone" } });
     fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
     expect(await screen.findByText("Enter a valid IANA timezone.")).toBeVisible();
     expect(fetch).not.toHaveBeenCalledWith("/api/auth/update-user", expect.anything());
+  });
+
+  it("keeps Save preferences enabled while the profile saves, and shows the save pending on Save profile", async () => {
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("get-session")) return response({ user: { id: "user-1", name: "Example Operator", email: "operator@example.com", state: "Active", timezone: "America/Chicago" }, session: { token: "current-token" } });
+      if (url.includes("get-full-organization")) return response({ members: [{ user: { id: "user-1" }, role: "owner" }] });
+      if (url.includes("list-sessions")) return response([{ id: "current", token: "current-token", expiresAt: new Date().toISOString() }]);
+      if (url.includes("update-user")) return new Promise<Response>(() => undefined);
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<AccountSettingsPage />);
+    await screen.findByRole("region", { name: "Profile" });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save profile" })).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+    expect(screen.getByRole("button", { name: "Save preferences" })).toBeEnabled();
+  });
+
+  it("names a failed session revoke beside its Revoke button and keeps the session listed", async () => {
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("get-session")) return response({ user: { id: "user-1", name: "Example Operator", email: "operator@example.com", state: "Active", timezone: "America/Chicago" }, session: { token: "current-token" } });
+      if (url.includes("get-full-organization")) return response({ members: [{ user: { id: "user-1" }, role: "owner" }] });
+      if (url.includes("list-sessions")) return response([{ id: "current", token: "current-token", expiresAt: new Date().toISOString() }, { id: "other", token: "other-token", userAgent: "Other browser", expiresAt: new Date().toISOString() }]);
+      if (url.includes("revoke-session")) return response({ error: "unavailable" }, 500);
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<AccountSettingsPage />);
+    await screen.findByRole("region", { name: "Profile" });
+    fireEvent.click(screen.getByRole("button", { name: "Security" }));
+    const other = screen.getByText("Other browser").closest("li")!;
+    fireEvent.click(within(other).getByRole("button", { name: "Revoke" }));
+    const alert = await within(other).findByRole("alert");
+    expect(alert).toHaveTextContent("Session could not be revoked.");
+    expect(alert).toHaveClass("text-destructive");
+    expect(screen.getByText("Other browser")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Revoke other sessions" })).toBeEnabled();
   });
 
   it("confirms current-session revocation with its token and redirects to Sign in", async () => {
@@ -123,7 +204,7 @@ describe("authentication pages", () => {
     });
     vi.stubGlobal("fetch", fetch);
     render(<AccountSettingsPage />);
-    await screen.findByDisplayValue("Operator");
+    await screen.findByRole("region", { name: "Profile" });
     fireEvent.click(screen.getByRole("button", { name: "Security" }));
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
     fireEvent.click(screen.getByRole("button", { name: "Revoke session" }));
@@ -144,7 +225,10 @@ describe("authentication pages", () => {
     vi.stubGlobal("fetch", fetch);
     render(<AccountSettingsPage />);
 
-    expect(await screen.findByDisplayValue("Client Viewer")).toBeVisible();
+    const profile = await screen.findByRole("region", { name: "Profile" });
+    expect(within(profile).getAllByRole("term").map((term) => term.textContent)).toEqual(["Email", "Role", "User State"]);
+    expect(within(profile).getAllByRole("definition").map((value) => value.textContent)).toEqual(["operator@example.com", "Client Viewer", "Active"]);
+    expect(screen.queryByDisplayValue("Client Viewer")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Security" }));
     fireEvent.click(screen.getByRole("button", { name: "Profile" }));
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Updated Name" } });

@@ -7,7 +7,10 @@
  *  Lists every rate in the maintained table with its unit and what it
  *  pays for, works a two-hour connected Call line by line to its total,
  *  and explains how a Workspace's monthly cost categories and a Deal's
- *  projected revenue are computed.
+ *  projected revenue are computed. It is a reading page built from the
+ *  shared PageHeader and Panels; below md each rate's explanation sits
+ *  under its name instead of in its own column, so the table never
+ *  scrolls sideways on a phone.
  *
  * @remarks
  *  The page reads the rate table directly, so changing a rate in
@@ -22,8 +25,8 @@
  * @author Jaedon Spurlock
  * -------------------------------------------------------------------------
  */
-import { Frame, FramePanel } from "@/components/reui/frame";
 import { formatCallDate } from "@/components/tracer/call-format";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { formatUsd, pricingCheckedOn, pricingGuide, workedTwoHourCall } from "@/data/pricing";
 
 const categories: [string, string][] = [
@@ -37,59 +40,55 @@ const categories: [string, string][] = [
 export default function PricingGuide() {
   const example = workedTwoHourCall();
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-0.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Pricing</h1>
-        <p className="text-sm text-muted-foreground">The rates behind every cost Tracer projects, maintained by hand and last checked on {formatCallDate(`${pricingCheckedOn}T12:00:00Z`, "UTC")}.</p>
-      </div>
-      <Frame>
-        <FramePanel className="overflow-x-auto">
-          <table aria-label="Rates" className="w-full text-sm">
-            <caption className="sr-only">Rates</caption>
-            <thead>
-              <tr className="border-b text-left text-xs text-muted-foreground">
-                <th scope="col" className="py-1 pr-2 font-medium">Rate</th>
-                <th scope="col" className="px-2 py-1 font-medium">Price</th>
-                <th scope="col" className="px-2 py-1 font-medium">Unit</th>
-                <th scope="col" className="py-1 pl-2 font-medium">What it pays for</th>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+      <PageHeader title="Pricing" description={`The rates behind every cost Tracer projects, maintained by hand and last checked on ${formatCallDate(`${pricingCheckedOn}T12:00:00Z`, "UTC")}.`} />
+      <Panel title="Rates">
+        <table aria-label="Rates" className="w-full text-sm">
+          <caption className="sr-only">Rates</caption>
+          <thead>
+            <tr className="border-b text-left text-xs text-muted-foreground">
+              <th scope="col" className="py-2 pr-2 pl-4 font-medium">Rate</th>
+              <th scope="col" className="px-2 py-2 font-medium">Price</th>
+              <th scope="col" className="px-2 py-2 font-medium">Unit</th>
+              <th scope="col" className="hidden py-2 pr-4 pl-2 font-medium md:table-cell">What it pays for</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pricingGuide.map((entry) => (
+              <tr key={entry.key} className="border-b align-top last:border-0">
+                <td className="py-2 pr-2 pl-4">
+                  <span className="font-medium">{entry.label}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground md:hidden">{entry.explanation}</span>
+                </td>
+                <td className="px-2 py-2 tabular-nums">{formatUsd(entry.rate)}</td>
+                <td className="px-2 py-2 text-muted-foreground">{entry.unit}</td>
+                <td className="hidden py-2 pr-4 pl-2 text-muted-foreground md:table-cell">{entry.explanation}</td>
               </tr>
-            </thead>
-            <tbody>
-              {pricingGuide.map((entry) => (
-                <tr key={entry.key} className="border-b align-top">
-                  <td className="py-2 pr-2 font-medium">{entry.label}</td>
-                  <td className="px-2 py-2 font-mono tabular-nums">{formatUsd(entry.rate)}</td>
-                  <td className="px-2 py-2 text-muted-foreground">{entry.unit}</td>
-                  <td className="py-2 pl-2 text-muted-foreground">{entry.explanation}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </FramePanel>
-      </Frame>
-      <Frame className="grid gap-2 lg:grid-cols-2">
-        <FramePanel role="region" aria-labelledby="worked-call-title" className="flex flex-col gap-3">
-          <div className="flex flex-col gap-0.5">
-            <h2 id="worked-call-title" className="font-semibold">A two-hour Call</h2>
-            <p className="text-xs text-muted-foreground">A connected, recorded, transcribed, and assessed Call of {example.seconds / 60} minutes.</p>
-          </div>
-          <ul className="flex flex-col divide-y divide-border text-sm">
-            {example.lines.map((line) => (
-              <li key={line.label} className="flex items-center justify-between gap-3 py-1.5">
-                <span>{line.label}</span>
-                <span className="font-mono tabular-nums">{formatUsd(line.usd)}</span>
-              </li>
             ))}
-            <li className="flex items-center justify-between gap-3 py-1.5 font-medium">
-              <span>Total</span>
-              <span className="font-mono tabular-nums">{formatUsd(example.totalCents / 100)}</span>
-            </li>
-          </ul>
-          <p className="text-xs text-muted-foreground">Storing its Recording adds well under a cent per month, and the number rental is shared by every Call in the month.</p>
-        </FramePanel>
-        <FramePanel role="region" aria-labelledby="monthly-title" className="flex flex-col gap-3">
-          <h2 id="monthly-title" className="font-semibold">Monthly cost and revenue</h2>
-          <dl className="flex flex-col gap-2 text-sm">
+          </tbody>
+        </table>
+      </Panel>
+      <div className="grid items-start gap-5 lg:grid-cols-2">
+        <Panel title="A two-hour Call">
+          <div className="flex flex-col gap-3 p-4">
+            <p className="text-xs text-muted-foreground">A connected, recorded, transcribed, and assessed Call of {example.seconds / 60} minutes.</p>
+            <ul className="flex flex-col divide-y divide-border text-sm">
+              {example.lines.map((line) => (
+                <li key={line.label} className="flex items-center justify-between gap-3 py-1.5">
+                  <span>{line.label}</span>
+                  <span className="tabular-nums">{formatUsd(line.usd)}</span>
+                </li>
+              ))}
+              <li className="flex items-center justify-between gap-3 py-1.5 font-medium">
+                <span>Total</span>
+                <span className="tabular-nums">{formatUsd(example.totalCents / 100)}</span>
+              </li>
+            </ul>
+            <p className="text-xs text-muted-foreground">Storing its Recording adds well under a cent per month, and the number rental is shared by every Call in the month.</p>
+          </div>
+        </Panel>
+        <Panel title="Monthly cost and revenue">
+          <dl className="flex flex-col gap-2 p-4 text-sm">
             {categories.map(([label, explanation]) => (
               <div key={label} className="flex flex-col gap-0.5">
                 <dt className="font-medium">{label}</dt>
@@ -101,8 +100,8 @@ export default function PricingGuide() {
               <dd className="text-muted-foreground">A Monthly Deal projects its amount, a Weekly Deal its amount times 52 over 12, and a Per Lead Deal its amount times the month&apos;s Good Leads with Lead Review precedence. Profit is revenue minus cost, the yearly projection is twelve months, and Cost per Good Lead is cost divided by Good Leads.</dd>
             </div>
           </dl>
-        </FramePanel>
-      </Frame>
+        </Panel>
+      </div>
     </div>
   );
 }

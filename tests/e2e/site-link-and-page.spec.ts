@@ -7,7 +7,9 @@
  *  Connects the fake Cloudflare account on Integrations, syncs its Sites,
  *  creates a Workspace through the wizard choosing a Site at the Site
  *  step, and opens the Site page as the Operator to see the hostname, the
- *  KPI tiles, and the Hosting panel. A Client Viewer with an Access Grant
+ *  stat strip, and the Hosting panel, then checks at 390px that the page
+ *  does not scroll sideways and every header and Hosting action is fully
+ *  on screen. A Client Viewer with an Access Grant
  *  then opens the same Site page and sees the hostname without Hosting.
  *
  * @remarks
@@ -76,6 +78,15 @@ test.describe.serial("Site link and Site page", () => {
     }
     await expect(page.getByRole("region", { name: "Hosting" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Replace Site" })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const main = page.getByRole("main");
+    for (const action of [main.getByRole("button", { name: "7 Days" }), main.getByRole("button", { name: "Replace Site" }), main.getByRole("link", { name: "Open Site" }), main.getByRole("button", { name: "Refresh Preview" })]) {
+      await action.scrollIntoViewIfNeeded();
+      await expect(action).toBeInViewport({ ratio: 1 });
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
     await grantClientViewer(page, workspaceId, workspaceName);
   });
 

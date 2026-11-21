@@ -5,9 +5,8 @@
  *
  * @description
  *  Vector scenes drawn in one stroke weight. Most sit on a shared isometric
- *  orbit field: a tracking line waiting for its first event (Activity), a
- *  report page with empty bars (Reports), an empty Workspace slot, and a
- *  search that found nothing. Calls is an empty call log card, and
+ *  orbit field: a report page with empty bars (Reports), an empty Workspace
+ *  slot, and a search that found nothing. Calls is an empty call log card, and
  *  Transcript is a recording strip at 0:00 with nothing on it.
  *
  * @remarks
@@ -67,32 +66,6 @@ function Orbits({ cx = 100, cy = 70 }: { cx?: number; cy?: number }) {
       <ellipse cx={cx} cy={cy} rx={58} ry={23} strokeDasharray="2 4" />
       <ellipse cx={cx} cy={cy} rx={32} ry={13} strokeDasharray="2 4" />
     </>
-  );
-}
-
-/** A tracking line listening across its orbits, sweep still clear. */
-export function NoActivityArt(props: LineArtProps) {
-  return (
-    <Scene {...props}>
-      <Orbits />
-      {/* Ping: the outer orbit, expanding from the center once per sweep. */}
-      <ellipse className="line-art-ping" cx={100} cy={70} rx={84} ry={34} />
-      {/* Sweep: wedge and line rotate together, staying on the orbit plane. */}
-      <g className="line-art-radar">
-        {/* The tip sits on the outer orbit at 30 degrees: (100 + 84cos30, 70 - 34sin30). */}
-        <path d="M100 70 L172.7 53 A84 34 0 0 1 184 70 Z" fill="currentColor" fillOpacity={0.06} stroke="none" />
-        <line x1={100} y1={70} x2={172.7} y2={53} />
-      </g>
-      <circle cx={158} cy={50} r={1.5} fill="currentColor" stroke="none" />
-      <circle cx={132} cy={62} r={1.5} fill="currentColor" stroke="none" />
-      {/* Tracking line: a solid cylinder on the orbit plane. The body is
-          filled with the panel color so the orbits and sweep pass behind it. */}
-      <path d="M92 46 V70 a8 3.2 0 0 0 16 0 V46 Z" fill="var(--color-card)" stroke="none" />
-      <path d="M92 70 a8 3.2 0 0 0 16 0" />
-      <line x1={92} y1={70} x2={92} y2={46} />
-      <line x1={108} y1={70} x2={108} y2={46} />
-      <ellipse cx={100} cy={46} rx={8} ry={3.2} fill="var(--color-card)" />
-    </Scene>
   );
 }
 

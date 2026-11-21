@@ -4,30 +4,39 @@
  * @brief  Renders the server-backed Calls Data Grid.
  *
  * @description
- *  Shows one page of Calls with Started, Caller, Workspace, Call Outcome,
- *  Connected Duration, Effective Lead Classification, Lead Score, Recording
- *  Availability, and row actions. The first page arrives from the server
- *  and is not fetched again on mount; searching, filtering, sorting, and
- *  paging fetch the next page from the
- *  Calls endpoint, keep the page, sort, search, and filters in the URL, and
- *  show Skeleton rows while it loads. Any search or filter change returns
- *  to the first page. Rows open Call Detail, and Play Recording opens it
- *  with playback started; both carry this list's URL as the `back` param so
- *  Call Detail can return to it and step through it. Download MP3 appears
- *  only when the row's Recording has a retained MP3 and downloads it
- *  through the Workspace-authorized MP3 route. Workspace Calls fixes the
- *  Workspace scope and omits the Workspace column and filter.
+ *  Shows one page of Calls in single-line rows of Started, Caller,
+ *  Workspace, Outcome, Duration, and Lead. The first page arrives from the
+ *  server and is not fetched again on mount; searching, filtering, sorting,
+ *  and paging fetch the next page from the Calls endpoint, keep the page,
+ *  sort, search, and filters in the URL, and show Skeleton rows while it
+ *  loads. Any search or filter change returns to the first page. A row and
+ *  its Started link open Call Detail with this list's URL as the `back`
+ *  param so Call Detail can return to it and step through it. Workspace
+ *  Calls fixes the Workspace scope and omits the Workspace column and
+ *  filter.
  *
  * @remarks
+ *  The Lead Score, Recording availability, Play Recording, and Download MP3
+ *  live behind the row on Call Detail so every row fits one line. Below the
+ *  md breakpoint only Started, Caller, and Outcome show, sized to their
+ *  content, so the grid fits a 390px screen without scrolling. Started
+ *  shows the short time, with the full timestamp as its hover title.
+ *  The list refreshes every 30 seconds while the tab is visible, pauses
+ *  while it is hidden, and refreshes at once on return when the last load
+ *  is 30 seconds old. A refresh rereads the same page, sort, and filters
+ *  without Skeletons and updates rows in place by Call id; a failed
+ *  refresh keeps the rows and the next one tries again, and a refresh
+ *  never overrides a load the user started.
  *  Export Recordings and Export CSV confirm and export the current scope
  *  and the filters in the URL.
  *  The Empty and fetch error states render inside the grid so the header
  *  actions and toolbar stay in place. A scope with no Calls explains where
  *  Calls come from, while filters that match nothing keep the filters and
- *  offer Clear Filters. Search waits for typing to settle before fetching. Dates use the timezone the server names for the
- *  scope: the user's for global Calls and the Workspace's for Workspace
- *  Calls. Clicking Started while it sorts descending flips it to ascending
- *  instead of clearing to the same default.
+ *  offer Clear Filters. Search waits for typing to settle before fetching.
+ *  Dates use the timezone the server names for the scope: the user's for
+ *  global Calls and the Workspace's for Workspace Calls. Clicking Started
+ *  while it sorts descending flips it to ascending instead of clearing to
+ *  the same default.
  *
  * @see
  *  data/calls.ts
@@ -45,38 +54,32 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTable, type ColumnDef, type PaginationState, type SortingState, type Updater } from "@tanstack/react-table";
 
-import { Badge } from "@/components/reui/badge";
 import { DataGrid, dataGridFeatures, type DataGridFeatures } from "@/components/reui/data-grid/data-grid";
 import { DataGridColumnHeader } from "@/components/reui/data-grid/data-grid-column-header";
 import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagination";
 import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
-import { Frame, FramePanel } from "@/components/reui/frame";
 import { EmptyState } from "@/components/tracer/empty-state";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { NoCallsArt, NoResultsArt } from "@/components/tracer/line-art";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CallsExportActions } from "@/components/tracer/call-export";
 import CallFilterToolbar, { callFiltersFromTrees, filterTreesFromCallFilters, type CallFilterTrees } from "@/components/tracer/call-filters";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
-import { formatCallTime, formatClock } from "@/components/tracer/call-format";
+import { formatCallTime, formatClock, formatShortTime } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { callListSearchParams, callPageSize, defaultCallSort, emptyCallFilters, type CallListQuery, type CallSort, type CallSortColumn } from "@/data/call-list-query";
 import { callDetailHref } from "@/data/call-source";
 import type { CallListItem, CallListResult } from "@/data/calls";
 
-const recordingBadges = {
-  Ready: ["Available", "success-light"],
-  Processing: ["Processing", "info-light"],
-  Failed: ["Failed", "destructive-light"],
-  Unavailable: ["Not available", "outline"],
-  Purged: ["Purged", "warning-light"],
-  Expired: ["Expired", "warning-light"],
-} as const satisfies Record<CallListItem["recording"], readonly [string, string]>;
+const refreshIntervalMs = 30_000;
+const narrowHiddenColumns = { workspace: false, connectedDuration: false, leadClassification: false };
 
-function callHref(call: CallListItem, back: string, options?: { play?: boolean }): string {
-  return callDetailHref({ id: call.id, workspaceId: call.workspace.id }, back, options);
+function callHref(call: CallListItem, back: string): string {
+  return callDetailHref({ id: call.id, workspaceId: call.workspace.id }, back);
 }
 
 function callCount(total: number): string {
@@ -109,12 +112,19 @@ export default function CallsView({
   const [fetchError, setFetchError] = useState(false);
   const mounted = useRef(false);
   const requestId = useRef(0);
+  const loadingRef = useRef(false);
+  const loadedAt = useRef(0);
   const workspaceId = workspace?.id;
+  const narrow = useIsMobile();
 
   const loadCalls = useCallback(async (quiet: boolean) => {
-    const id = ++requestId.current;
-    if (!quiet) setLoading(true);
-    setFetchError(false);
+    if (quiet && loadingRef.current) return;
+    const id = quiet ? requestId.current : ++requestId.current;
+    if (!quiet) {
+      loadingRef.current = true;
+      setLoading(true);
+      setFetchError(false);
+    }
     const params = callListSearchParams(query);
     if (workspaceId) params.set("workspaceId", workspaceId);
     const search = params.toString();
@@ -122,13 +132,48 @@ export default function CallsView({
       const response = await fetch(`/api/calls${search ? `?${search}` : ""}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Calls unavailable");
       const body = (await response.json()) as CallListResult;
-      if (id === requestId.current) setResult(body);
+      if (id !== requestId.current) return;
+      setResult(body);
+      setFetchError(false);
+      loadedAt.current = Date.now();
     } catch {
       if (id === requestId.current && !quiet) setFetchError(true);
     } finally {
-      if (id === requestId.current) setLoading(false);
+      if (id === requestId.current && !quiet) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
   }, [query, workspaceId]);
+
+  const loadCallsRef = useRef(loadCalls);
+  useEffect(() => {
+    loadCallsRef.current = loadCalls;
+  }, [loadCalls]);
+
+  useEffect(() => {
+    loadedAt.current = Date.now();
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stop = () => {
+      if (timer !== undefined) clearInterval(timer);
+      timer = undefined;
+    };
+    const start = () => {
+      stop();
+      timer = setInterval(() => void loadCallsRef.current(true), refreshIntervalMs);
+    };
+    const changeVisibility = () => {
+      if (document.visibilityState !== "visible") return stop();
+      if (Date.now() - loadedAt.current >= refreshIntervalMs) void loadCallsRef.current(true);
+      start();
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", changeVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", changeVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mounted.current) {
@@ -184,18 +229,23 @@ export default function CallsView({
         accessorFn: (row) => row.startedAt,
         header: ({ column }) => <DataGridColumnHeader title="Started" column={column} />,
         cell: ({ row }) => (
-          <Link href={callHref(row.original, back)} prefetch className="font-mono font-medium tabular-nums transition-colors hover:text-muted-foreground">
-            {formatCallTime(row.original.startedAt, timeZone)}
+          <Link
+            href={callHref(row.original, back)}
+            prefetch
+            title={formatCallTime(row.original.startedAt, timeZone)}
+            className="font-medium whitespace-nowrap tabular-nums transition-colors hover:text-muted-foreground"
+          >
+            {formatShortTime(row.original.startedAt, timeZone)}
           </Link>
         ),
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        size: 110,
+        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: "callerNumber",
         accessorFn: (row) => row.callerNumber,
         header: ({ column }) => <DataGridColumnHeader title="Caller" column={column} />,
-        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.callerNumber ?? "Unknown caller"}</span>,
+        cell: ({ row }) => <span className="font-mono whitespace-nowrap tabular-nums">{row.original.callerNumber ?? "Unknown caller"}</span>,
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
@@ -203,79 +253,37 @@ export default function CallsView({
         id: "workspace",
         accessorFn: (row) => row.workspace.name,
         header: ({ column }) => <DataGridColumnHeader title="Workspace" column={column} />,
-        cell: ({ row }) => row.original.workspace.name,
-        size: 160,
+        cell: ({ row }) => <span className="block truncate">{row.original.workspace.name}</span>,
+        size: 200,
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         id: "outcome",
         accessorFn: (row) => row.outcome,
-        header: ({ column }) => <DataGridColumnHeader title="Call Outcome" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
         cell: ({ row }) => <CallOutcomeBadge outcome={row.original.outcome} />,
-        size: 140,
+        size: 130,
         meta: { skeleton: <Skeleton className="h-5 w-20" /> },
       },
       {
         id: "connectedDuration",
         accessorFn: (row) => row.connectedDurationSeconds,
-        header: ({ column }) => <DataGridColumnHeader title="Connected Duration" column={column} />,
-        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
-        size: 170,
+        header: ({ column }) => <DataGridColumnHeader title="Duration" column={column} />,
+        cell: ({ row }) =>
+          row.original.connectedDurationSeconds === null ? <span className="text-muted-foreground">None</span> : <span className="tabular-nums">{formatClock(row.original.connectedDurationSeconds)}</span>,
+        size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         id: "leadClassification",
         accessorFn: (row) => row.effectiveLeadClassification?.classification,
-        header: ({ column }) => <DataGridColumnHeader title="Effective Lead Classification" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Lead" column={column} />,
         cell: ({ row }) => {
           const effective = row.original.effectiveLeadClassification;
-          return effective ? <LeadClassificationBadge classification={effective.classification} automated={effective.source === "assessment"} /> : "-";
+          return effective ? <LeadClassificationBadge classification={effective.classification} automated={effective.source === "assessment"} /> : <span className="text-muted-foreground">None</span>;
         },
-        size: 240,
+        size: 170,
         meta: { skeleton: <Skeleton className="h-5 w-24" /> },
-      },
-      {
-        id: "leadScore",
-        accessorFn: (row) => row.leadScore,
-        header: ({ column }) => <DataGridColumnHeader title="Lead Score" column={column} />,
-        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.leadScore ?? ""}</span>,
-        size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-8" /> },
-      },
-      {
-        id: "recording",
-        header: "Recording Availability",
-        cell: ({ row }) => {
-          const [label, variant] = recordingBadges[row.original.recording];
-          return <Badge variant={variant}>{label}</Badge>;
-        },
-        enableSorting: false,
-        size: 190,
-        meta: { skeleton: <Skeleton className="h-5 w-20" /> },
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
-            {row.original.recording === "Ready" ? (
-              <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back, { play: true })}>
-                Play Recording
-              </Link>
-            ) : null}
-            <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href={callHref(row.original, back)} prefetch>
-              Open Call
-            </Link>
-            {row.original.mp3RecordingId ? (
-              <a className={buttonVariants({ variant: "ghost", size: "sm" })} href={`/api/workspaces/${row.original.workspace.id}/recordings/${row.original.mp3RecordingId}/mp3`} download>
-                Download MP3
-              </a>
-            ) : null}
-          </div>
-        ),
-        enableSorting: false,
-        size: 340,
-        meta: { skeleton: <Skeleton className="h-8 w-32" /> },
       },
     ];
     return workspaceId ? all.filter((column) => column.id !== "workspace") : all;
@@ -290,7 +298,7 @@ export default function CallsView({
     enableMultiSort: false,
     rowCount: result.total,
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, columnVisibility: narrow ? narrowHiddenColumns : {} },
     onPaginationChange: changePagination,
     onSortingChange: changeSorting,
   });
@@ -322,44 +330,38 @@ export default function CallsView({
   );
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
-          <p className="text-sm text-muted-foreground tabular-nums">
-            {callCount(result.total)}
-            {workspace ? ` in ${workspace.name}` : null}
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader title="Calls" description={<span className="tabular-nums">{callCount(result.total)}{workspace ? ` in ${workspace.name}` : null}</span>}>
         <CallsExportActions workspaceId={workspaceId} query={listSearch} />
-      </div>
-      <Frame>
-        <FramePanel className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              type="search"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              aria-label="Search Calls"
-              placeholder="Search caller number or Workspace..."
-              className="w-full sm:w-64"
-            />
-            <CallFilterToolbar trees={filterTrees} onTreesChange={changeFilterTrees} workspaceOptions={workspace ? undefined : workspaceOptions} />
-          </div>
-          <DataGrid
-            table={table}
-            recordCount={fetchError ? 0 : result.total}
-            isLoading={loading}
-            emptyMessage={emptyMessage}
-            onRowClick={(call) => router.push(callHref(call, back))}
-          >
-            <DataGridScrollArea orientation="horizontal">
-              <DataGridTable />
-            </DataGridScrollArea>
+      </PageHeader>
+      <Panel>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <Input
+            type="search"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            aria-label="Search Calls"
+            placeholder="Search caller number or Workspace..."
+            className="w-full sm:w-64"
+          />
+          <CallFilterToolbar trees={filterTrees} onTreesChange={changeFilterTrees} workspaceOptions={workspace ? undefined : workspaceOptions} />
+        </div>
+        <DataGrid
+          table={table}
+          recordCount={fetchError ? 0 : result.total}
+          isLoading={loading}
+          emptyMessage={emptyMessage}
+          tableLayout={{ width: narrow ? "auto" : "fixed" }}
+          onRowClick={(call) => router.push(callHref(call, back))}
+        >
+          <DataGridScrollArea orientation="horizontal">
+            <DataGridTable />
+          </DataGridScrollArea>
+          <div className="border-t border-border px-4 py-2">
             <DataGridPagination sizes={[callPageSize]} />
-          </DataGrid>
-        </FramePanel>
-      </Frame>
+          </div>
+        </DataGrid>
+      </Panel>
     </div>
   );
 }

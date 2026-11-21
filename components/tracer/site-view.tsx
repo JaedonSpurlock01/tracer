@@ -4,12 +4,12 @@
  * @brief  Renders the Workspace Site page.
  *
  * @description
- *  Shows the Workspace header with the linked Site's primary hostname,
- *  Open Site, and Replace Site for Operators; the hero preview with the
- *  Site Health Badge and its reason, uptime over 30 days with the median
- *  response time, the last uptime check, last deploy, hostnames, and the
- *  Worker name for Operators; the Workspace date
- *  controls; Visits, Page Views, Calls, and Visit-to-Call; the Traffic
+ *  Shows the PageHeader with the linked Site's primary hostname, the
+ *  Workspace date controls, Open Site, and Replace Site for Operators; the
+ *  hero preview with the Site Health Badge and its reason, uptime over 30
+ *  days with the median response time, the last uptime check, last deploy,
+ *  hostnames, and the Worker name for Operators as a FactList; Visits, Page
+ *  Views, Calls, and Visit-to-Call as one StatStrip; the Traffic
  *  and Calls chart; Top pages and Referrers with the device split;
  *  Core Web Vitals graded at the Good thresholds beside the Search panel
  *  with the Search Visibility score, its 30-day sparkline, and the
@@ -25,7 +25,9 @@
  *  and monthly intervals follow Leads generated. The preview image is served
  *  by the Workspace-authorized preview route with the capture time as a
  *  cache buster; a missing image reads as Preview pending, or as Preview
- *  failed with the stage and reason when the Site's last sync failed. States: No
+ *  failed with the stage and reason when the Site's last sync failed. Every
+ *  region is a Panel, and an absent value is named rather than shown as a
+ *  dash; a Keyword with no 7-day comparison shows nothing. States: No
  *  Site, Syncing before the first sync, Preview pending, Cloudflare
  *  disconnected, Down with the last check time, and No rankings yet with
  *  a Keywords link for Operators before the first rank check.
@@ -48,8 +50,7 @@ import { useState, type ReactNode } from "react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FramePanel } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalyticsRangeControls, RegionRetry, useAnalyticsNavigation } from "@/components/tracer/analytics-panels";
@@ -59,6 +60,8 @@ import { EmptyState } from "@/components/tracer/empty-state";
 import { NoWorkspacesArt } from "@/components/tracer/line-art";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { previewImageSrc, SitePickerDialog, siteHealthBadges, type SitePickerMode, type SiteResponse } from "@/components/tracer/site-picker";
+import { ActionButton, useAction } from "@/components/tracer/form-parts";
+import { FactList, PageHeader, Panel, StatStrip, type Fact } from "@/components/tracer/page-parts";
 import type { AnalyticsSummary } from "@/data/analytics";
 import type { AnalyticsRange, AnalyticsTrendInterval } from "@/data/analytics-range";
 import type { WorkspaceCostRevenue } from "@/data/cost-revenue";
@@ -139,49 +142,35 @@ function tickLabel(interval: AnalyticsTrendInterval, start: string): string {
 
 function uptimeLabel(uptime: SiteViewSite["uptime30d"]): string {
   if (!uptime || uptime.checks === 0) return "No checks yet";
-  const median = uptime.medianResponseMs === null ? "-" : `${count.format(uptime.medianResponseMs)} ms`;
-  return `${percent.format(uptime.ratio ?? 0)} · ${median}`;
+  const ratio = percent.format(uptime.ratio ?? 0);
+  return uptime.medianResponseMs === null ? ratio : `${ratio} · ${count.format(uptime.medianResponseMs)} ms`;
 }
 
 function visitToCall(calls: number | null, visits: number | null): string {
-  if (calls === null || visits === null || visits === 0) return "-";
+  if (calls === null || visits === null || visits === 0) return "None";
   return percent.format(calls / visits);
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+const statLabels = ["Visits", "Page Views", "Calls", "Visit-to-Call"];
+
+function SiteStatSkeleton() {
   return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm">{children}</dd>
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3 xl:grid-cols-4" aria-busy="true">
+      {statLabels.map((label) => (
+        <div key={label} className="flex flex-col gap-1.5 bg-card px-4 py-3.5">
+          <span className="text-xs text-muted-foreground">{label}</span>
+          <Skeleton className="h-8 w-20" />
+        </div>
+      ))}
     </div>
   );
 }
 
-function KpiTile({ id, label, value, definition, accent = false }: { id: string; label: string; value: string; definition: string; accent?: boolean }) {
-  return (
-    <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
-      <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
-      <p className={`font-mono text-2xl font-semibold tracking-tight tabular-nums${accent ? " text-[var(--chart-1)]" : ""}`}>{value}</p>
-      <p className="text-xs text-muted-foreground">{definition}</p>
-    </FramePanel>
-  );
-}
-
-const kpiGrid = "grid gap-2 sm:grid-cols-2 xl:grid-cols-4";
-const kpiLabels = ["Visits", "Page Views", "Calls", "Visit-to-Call"];
-
-function SiteKpiSkeleton() {
-  return (
-    <Frame className={kpiGrid} aria-busy="true">
-      {kpiLabels.map((label) => (
-        <FramePanel key={label} className="flex flex-col gap-2">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <Skeleton className="h-8 w-20" />
-          <Skeleton className="h-4 w-36" />
-        </FramePanel>
-      ))}
-    </Frame>
-  );
+function lastCheckLabel(check: NonNullable<SiteViewSite["latestCheck"]>, zone: string): string {
+  const parts = [check.statusCode === null ? "No response" : String(check.statusCode)];
+  if (check.responseMs !== null) parts.push(`${check.responseMs} ms`);
+  parts.push(formatCallTime(check.checkedAt, zone));
+  return `${check.ok ? "" : "Failed: "}${parts.join(", ")}`;
 }
 
 function HeroPreview({ workspace, site, operator, cloudflareConnected }: { workspace: WorkspaceRecord; site: SiteViewSite; operator: boolean; cloudflareConnected: boolean }) {
@@ -191,78 +180,63 @@ function HeroPreview({ workspace, site, operator, cloudflareConnected }: { works
   const preview = site.latestPreview && !imageFailed ? site.latestPreview : null;
   const check = site.latestCheck;
   const url = `https://${site.primaryHostname}`;
+  const facts: Fact[] = [
+    {
+      label: "Site Health",
+      value: (
+        <span className="flex flex-wrap items-center gap-2">
+          <Badge variant={healthVariant}>{healthLabel}</Badge>
+          {site.healthReason ? <span className="text-xs text-muted-foreground">{site.healthReason}</span> : null}
+        </span>
+      ),
+    },
+    { label: "Uptime, 30 days", value: uptimeLabel(site.uptime30d) },
+    { label: "Last check", value: check ? lastCheckLabel(check, zone) : null, empty: "No check yet" },
+    { label: "Last deploy", value: site.lastDeployedAt ? formatCallTime(site.lastDeployedAt, zone) : null },
+    {
+      label: "Hostnames",
+      value: (
+        <ul className="flex flex-col font-mono">
+          {site.hostnames.map((hostname) => (
+            <li key={hostname.hostname}>{hostname.hostname}</li>
+          ))}
+        </ul>
+      ),
+    },
+  ];
+  if (operator && site.scriptName) facts.push({ label: "Worker", value: site.scriptName, mono: true });
+  facts.push({ label: "Site Link since", value: formatCallDate(site.linkedAt, zone) });
   return (
-    <Frame>
-      <FramePanel role="region" aria-labelledby="site-preview-title" className="flex flex-col gap-4">
-        <h2 id="site-preview-title" className="sr-only">Site preview</h2>
-        {!cloudflareConnected ? (
-          <p role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/25 bg-warning/15 px-3 py-2 text-sm">
-            <span>Cloudflare is disconnected. Showing the last synced data.</span>
-            {operator ? (
-              <Link href="/integrations" prefetch className="underline">
-                Integrations
-              </Link>
-            ) : null}
-          </p>
-        ) : null}
-        <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
-          <div className="flex flex-col gap-2">
-            {preview ? (
-              <a href={url} target="_blank" rel="noreferrer" aria-label={`Open ${site.primaryHostname} in a new tab`} className="group relative block aspect-[16/10] w-full overflow-hidden rounded-md border bg-muted">
-                <Image src={previewImageSrc(workspace.id, preview.capturedAt)} alt={`Preview of ${site.primaryHostname}`} fill unoptimized sizes="(min-width: 1024px) 60vw, 100vw" className="object-cover object-top" onError={() => setImageFailed(true)} />
-                <span aria-hidden="true" className="absolute bottom-2 right-2 rounded-md border bg-background/90 px-2 py-0.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                  Open
-                </span>
-              </a>
-            ) : (
-              <Skeleton className="aspect-[16/10] w-full rounded-md" />
-            )}
-            <p className={preview || !site.lastSync?.error ? "text-xs text-muted-foreground" : "text-xs text-warning"}>
-              {preview ? `Preview captured ${relativeTime(preview.capturedAt)}` : site.lastSync?.error ? `Preview failed at ${site.lastSync.stage ?? "sync"}: ${site.lastSync.error}` : "Preview pending"}
-            </p>
-          </div>
-          <dl className="grid gap-3 sm:grid-cols-2">
-            <Fact label="Site Health">
-              <span className="flex flex-wrap items-center gap-2">
-                <Badge variant={healthVariant}>{healthLabel}</Badge>
-                {site.healthReason ? <span className="text-xs text-muted-foreground">{site.healthReason}</span> : null}
+    <Panel role="region" aria-label="Site preview" className="gap-4 p-4">
+      {!cloudflareConnected ? (
+        <p role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/25 bg-warning/15 px-3 py-2 text-sm">
+          <span>Cloudflare is disconnected. Showing the last synced data.</span>
+          {operator ? (
+            <Link href="/integrations" prefetch className="underline">
+              Integrations
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+        <div className="flex flex-col gap-2">
+          {preview ? (
+            <a href={url} target="_blank" rel="noreferrer" aria-label={`Open ${site.primaryHostname} in a new tab`} className="group relative block aspect-[16/10] w-full overflow-hidden rounded-md border bg-muted">
+              <Image src={previewImageSrc(workspace.id, preview.capturedAt)} alt={`Preview of ${site.primaryHostname}`} fill unoptimized sizes="(min-width: 1024px) 60vw, 100vw" className="object-cover object-top" onError={() => setImageFailed(true)} />
+              <span aria-hidden="true" className="absolute bottom-2 right-2 rounded-md border bg-background/90 px-2 py-0.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                Open
               </span>
-            </Fact>
-            <Fact label="Uptime, 30 days">
-              <span className="font-mono tabular-nums">{uptimeLabel(site.uptime30d)}</span>
-            </Fact>
-            <Fact label="Last check">
-              {check ? (
-                <span className="font-mono tabular-nums">
-                  {check.ok ? "" : "Failed: "}
-                  {check.statusCode ?? "No response"}, {check.responseMs === null ? "-" : `${check.responseMs} ms`}, {formatCallTime(check.checkedAt, zone)}
-                </span>
-              ) : (
-                "No check yet"
-              )}
-            </Fact>
-            <Fact label="Last deploy">
-              <span className="font-mono tabular-nums">{site.lastDeployedAt ? formatCallTime(site.lastDeployedAt, zone) : "-"}</span>
-            </Fact>
-            <Fact label="Hostnames">
-              <ul className="flex flex-col font-mono">
-                {site.hostnames.map((hostname) => (
-                  <li key={hostname.hostname}>{hostname.hostname}</li>
-                ))}
-              </ul>
-            </Fact>
-            {operator && site.scriptName ? (
-              <Fact label="Worker">
-                <span className="font-mono">{site.scriptName}</span>
-              </Fact>
-            ) : null}
-            <Fact label="Site Link since">
-              <span className="font-mono tabular-nums">{formatCallDate(site.linkedAt, zone)}</span>
-            </Fact>
-          </dl>
+            </a>
+          ) : (
+            <Skeleton className="aspect-[16/10] w-full rounded-md" />
+          )}
+          <p className={preview || !site.lastSync?.error ? "text-xs text-muted-foreground" : "text-xs text-warning"}>
+            {preview ? `Preview captured ${relativeTime(preview.capturedAt)}` : site.lastSync?.error ? `Preview failed at ${site.lastSync.stage ?? "sync"}: ${site.lastSync.error}` : "Preview pending"}
+          </p>
         </div>
-      </FramePanel>
-    </Frame>
+        <FactList facts={facts} className="content-start sm:grid-cols-2" />
+      </div>
+    </Panel>
   );
 }
 
@@ -306,7 +280,7 @@ function TrafficAndCallsChart({ points, interval }: { points: TrafficAndCallsPoi
             <tr key={point.start}>
               <th scope="row">{point.label}</th>
               <td>{point.visits}</td>
-              <td>{point.calls ?? "-"}</td>
+              <td>{point.calls ?? "None"}</td>
             </tr>
           ))}
         </tbody>
@@ -315,26 +289,27 @@ function TrafficAndCallsChart({ points, interval }: { points: TrafficAndCallsPoi
   );
 }
 
-function CountedList({ id, title, rows, emptyLabel, footer }: { id: string; title: string; rows: [string, number][]; emptyLabel: (key: string) => string; footer?: ReactNode }) {
+function CountedList({ title, rows, emptyLabel, footer }: { title: string; rows: [string, number][]; emptyLabel: (key: string) => string; footer?: ReactNode }) {
   const max = Math.max(1, ...rows.map(([, value]) => value));
   return (
-    <FramePanel role="region" aria-labelledby={`${id}-title`} className="flex flex-col gap-3">
-      <h2 id={`${id}-title`} className="font-semibold">{title}</h2>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No page views in this range.</p>
-      ) : (
-        <ol className="flex flex-col gap-1">
-          {rows.map(([key, value]) => (
-            <li key={key} className="relative flex items-center justify-between gap-3 px-2 py-1 text-sm">
-              <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded-sm bg-muted" style={{ width: `${(value / max) * 100}%` }} />
-              <span className="relative truncate font-mono">{emptyLabel(key)}</span>
-              <span className="relative font-mono text-xs text-muted-foreground tabular-nums">{count.format(value)}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-      {footer}
-    </FramePanel>
+    <Panel title={title}>
+      <div className="flex flex-col gap-3 p-4">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No page views in this range.</p>
+        ) : (
+          <ol className="flex flex-col gap-1">
+            {rows.map(([key, value]) => (
+              <li key={key} className="relative flex items-center justify-between gap-3 px-2 py-1 text-sm">
+                <span aria-hidden="true" className="absolute inset-y-0 left-0 rounded-sm bg-muted" style={{ width: `${(value / max) * 100}%` }} />
+                <span className="relative truncate font-mono">{emptyLabel(key)}</span>
+                <span className="relative text-xs text-muted-foreground tabular-nums">{count.format(value)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {footer}
+      </div>
+    </Panel>
   );
 }
 
@@ -348,25 +323,30 @@ function Vital({ id, label, value, good, unit }: { id: string; label: string; va
   return (
     <div role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
       <p id={`${id}-label`} className="text-xs text-muted-foreground">{label}</p>
-      <p className="font-mono text-xl font-semibold tabular-nums">{value === null ? "-" : unit(value)}</p>
-      {value === null ? <p className="text-xs text-muted-foreground">No samples</p> : <span><Badge variant={good ? "success-light" : "warning-light"}>{good ? "Good" : "Needs work"}</Badge></span>}
+      {value === null ? (
+        <p className="text-sm text-muted-foreground">No samples</p>
+      ) : (
+        <>
+          <p className="text-xl font-semibold tabular-nums">{unit(value)}</p>
+          <span><Badge variant={good ? "success-light" : "warning-light"}>{good ? "Good" : "Needs work"}</Badge></span>
+        </>
+      )}
     </div>
   );
 }
 
 function Performance({ vitals }: { vitals: SiteViewSummary["vitals"] }) {
   return (
-    <FramePanel role="region" aria-labelledby="performance-title" className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <h2 id="performance-title" className="font-semibold">Performance</h2>
+    <Panel title="Performance">
+      <div className="flex flex-col gap-3 p-4">
         <p className="text-xs text-muted-foreground">Core Web Vitals at the 75th percentile</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Vital id="vital-lcp" label="Largest Contentful Paint" value={vitals.lcpMs} good={(vitals.lcpMs ?? 0) <= 2500} unit={(value) => `${(value / 1000).toFixed(1)} s`} />
+          <Vital id="vital-inp" label="Interaction to Next Paint" value={vitals.inpMs} good={(vitals.inpMs ?? 0) <= 200} unit={(value) => `${count.format(value)} ms`} />
+          <Vital id="vital-cls" label="Cumulative Layout Shift" value={vitals.cls} good={(vitals.cls ?? 0) <= 0.1} unit={(value) => value.toFixed(2)} />
+        </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Vital id="vital-lcp" label="Largest Contentful Paint" value={vitals.lcpMs} good={(vitals.lcpMs ?? 0) <= 2500} unit={(value) => `${(value / 1000).toFixed(1)} s`} />
-        <Vital id="vital-inp" label="Interaction to Next Paint" value={vitals.inpMs} good={(vitals.inpMs ?? 0) <= 200} unit={(value) => `${count.format(value)} ms`} />
-        <Vital id="vital-cls" label="Cumulative Layout Shift" value={vitals.cls} good={(vitals.cls ?? 0) <= 0.1} unit={(value) => value.toFixed(2)} />
-      </div>
-    </FramePanel>
+    </Panel>
   );
 }
 
@@ -376,22 +356,19 @@ function matchedTypeLabel(type: string): string {
   return matchedTypeLabels[type] ?? type;
 }
 
-function changeLabel(change: number | null): string {
-  if (change === null) return "-";
+function changeLabel(change: number): string {
   return change > 0 ? `+${change}` : String(change);
 }
 
 function SearchPanel({ workspace, search, operator, pending, onRetry }: { workspace: WorkspaceRecord; search: SiteSearch | null; operator: boolean; pending: boolean; onRetry: () => void }) {
   const zone = workspace.reportingTimezone;
   return (
-    <FramePanel role="region" aria-labelledby="search-title" className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <h2 id="search-title" className="font-semibold">Search</h2>
+    <Panel title="Search">
+      <div className="flex flex-col gap-3 p-4">
         <p className="text-xs text-muted-foreground">
           {search?.serviceArea.locationName || search?.serviceArea.city ? `Search Visibility from ${search.serviceArea.locationName?.split(",").join(", ") ?? [search.serviceArea.city, search.serviceArea.region, search.serviceArea.country].filter(Boolean).join(", ")}` : "Search Visibility"}
           {search?.checkedAt ? ` · Checked ${formatCallDate(search.checkedAt, zone)}` : ""}
         </p>
-      </div>
       {search === null ? (
         <RegionRetry message="Search rankings are unavailable." pending={pending} onRetry={onRetry} />
       ) : search.checkedAt === null ? (
@@ -410,10 +387,14 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
-            <p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
-              <span>{search.score ?? "-"}</span>
-              <span className="text-base font-normal text-muted-foreground">/100</span>
-            </p>
+            {search.score === null ? (
+              <p className="text-sm text-muted-foreground">No score yet</p>
+            ) : (
+              <p className="text-2xl font-semibold tracking-tight tabular-nums">
+                <span>{search.score}</span>
+                <span className="text-base font-normal text-muted-foreground">/100</span>
+              </p>
+            )}
             <ChartContainer config={searchChartConfig} className="aspect-auto h-12 w-full" aria-hidden="true">
               <LineChart data={search.trend} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
                 <YAxis domain={[0, 100]} hide />
@@ -434,7 +415,7 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
               {search.trend.map((point) => (
                 <tr key={point.day}>
                   <th scope="row">{formatCallDate(`${point.day}T12:00:00Z`, "UTC")}</th>
-                  <td>{point.score ?? "-"}</td>
+                  <td>{point.score ?? "No score"}</td>
                 </tr>
               ))}
             </tbody>
@@ -459,20 +440,18 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
                         {keyword.matchedType && keyword.matchedType !== "organic" ? <Badge variant="info-light">{matchedTypeLabel(keyword.matchedType)}</Badge> : null}
                       </span>
                     </td>
-                    <td className="px-2 py-1.5 font-mono tabular-nums">{keyword.weight}</td>
-                    <td className="px-2 py-1.5 font-mono tabular-nums">
+                    <td className="px-2 py-1.5 tabular-nums">{keyword.weight}</td>
+                    <td className="px-2 py-1.5 tabular-nums">
                       {keyword.status === "check_failed" ? (
-                        <span className="font-sans text-warning" title={keyword.failureReason ?? undefined}>Check failed</span>
+                        <span className="text-warning" title={keyword.failureReason ?? undefined}>Check failed</span>
                       ) : keyword.position === null ? (
-                        <span className="font-sans text-muted-foreground">{keyword.status === "not_ranking" ? "Not ranking" : "-"}</span>
+                        <span className="text-muted-foreground">{keyword.status === "not_ranking" ? "Not ranking" : "Not checked"}</span>
                       ) : (
                         keyword.position
                       )}
                     </td>
-                    <td className="py-1.5 pl-2 font-mono tabular-nums">
-                      {keyword.change7d === null ? (
-                        <span className="text-muted-foreground">-</span>
-                      ) : keyword.change7d === 0 ? (
+                    <td className="py-1.5 pl-2 tabular-nums">
+                      {keyword.change7d === null ? null : keyword.change7d === 0 ? (
                         <span className="text-muted-foreground">0</span>
                       ) : (
                         <Badge variant={keyword.change7d > 0 ? "success-light" : "destructive-light"}>{changeLabel(keyword.change7d)}</Badge>
@@ -485,7 +464,8 @@ function SearchPanel({ workspace, search, operator, pending, onRetry }: { worksp
           </div>
         </>
       )}
-    </FramePanel>
+      </div>
+    </Panel>
   );
 }
 
@@ -498,27 +478,36 @@ function DealAndCost({ workspace, money, pending, onRetry }: { workspace: Worksp
   const revenueCents = money ? projectedMonthlyRevenueCents(deal, money.goodLeads) : 0;
   const profitCents = money ? revenueCents - money.costCents : 0;
   return (
-    <Frame>
-      <FramePanel role="region" aria-labelledby="deal-cost-title" className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="deal-cost-title" className="font-semibold">Deal and cost</h2>
-          {money ? <DealActions workspaceId={workspace.id} deal={deal} onChange={setDeal} /> : null}
-        </div>
+    <Panel title="Deal and cost" action={money ? <DealActions workspaceId={workspace.id} deal={deal} onChange={setDeal} /> : null}>
+      <div className="flex flex-col gap-4 p-4">
         {money === null ? (
           <RegionRetry message="Cost and revenue are unavailable." pending={pending} onRetry={onRetry} />
         ) : (
           <>
-            <dl className="grid gap-3 sm:grid-cols-3">
-              <Fact label="Deal">{describeDeal(deal)}</Fact>
-              <Fact label="Cost">
-                <span className="font-mono text-xl font-semibold tabular-nums">{formatUsdCents(money.costCents)}</span>
-                <span className="text-xs text-muted-foreground"> per month</span>
-              </Fact>
-              <Fact label="Profit">
-                <span className={`font-mono text-xl font-semibold tabular-nums ${profitClass(profitCents)}`}>{formatUsdCents(profitCents)}</span>
-                <span className="text-xs text-muted-foreground"> per month, on {formatUsdCents(revenueCents)} revenue</span>
-              </Fact>
-            </dl>
+            <FactList
+              className="sm:grid-cols-3"
+              facts={[
+                { label: "Deal", value: describeDeal(deal) },
+                {
+                  label: "Cost",
+                  value: (
+                    <>
+                      <span className="text-xl font-semibold tabular-nums">{formatUsdCents(money.costCents)}</span>
+                      <span className="text-xs text-muted-foreground"> per month</span>
+                    </>
+                  ),
+                },
+                {
+                  label: "Profit",
+                  value: (
+                    <>
+                      <span className={`text-xl font-semibold tabular-nums ${profitClass(profitCents)}`}>{formatUsdCents(profitCents)}</span>
+                      <span className="text-xs text-muted-foreground"> per month, on {formatUsdCents(revenueCents)} revenue</span>
+                    </>
+                  ),
+                },
+              ]}
+            />
             <p className="text-xs text-muted-foreground">
               Cost includes Telephony {formatUsdCents(money.telephonyCents)}, Processing {formatUsdCents(money.processingCents)}, Hosting {formatUsdCents(money.hostingCents)}, Search {formatUsdCents(money.searchCents)}, and Domain {formatUsdCents(money.domainCents)} for {money.month}
               {money.costPerGoodLeadCents === null ? "." : `, at ${formatUsdCents(money.costPerGoodLeadCents)} per Good Lead.`}
@@ -530,52 +519,40 @@ function DealAndCost({ workspace, money, pending, onRetry }: { workspace: Worksp
             </p>
           </>
         )}
-      </FramePanel>
-    </Frame>
+      </div>
+    </Panel>
   );
 }
 
 function Hosting({ workspace, site, summary }: { workspace: WorkspaceRecord; site: SiteViewSite; summary: SiteViewSummary | null }) {
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
+  const refresh = useAction();
   const certificates = site.hostnames.filter((hostname) => hostname.certificateId).length;
   const deployments = site.deployments ?? [];
 
-  async function refreshPreview() {
-    setBusy(true);
-    setStatus("");
-    setError("");
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/site/preview/refresh`, { method: "POST" }).catch(() => null);
-    if (response?.ok) setStatus("Preview refresh requested.");
-    else setError("The preview could not be refreshed.");
-    setBusy(false);
+  function refreshPreview() {
+    return refresh.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/site/preview/refresh`, { method: "POST" }).catch(() => null);
+      return response?.ok ? { message: "Preview refresh requested." } : { error: "The preview could not be refreshed." };
+    });
   }
 
   return (
-    <Frame>
-      <FramePanel role="region" aria-labelledby="hosting-title" className="flex flex-col gap-4">
+    <Panel title="Hosting">
+      <div className="flex flex-col gap-4 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="hosting-title" className="font-semibold">Hosting</h2>
-          <div className="flex items-center gap-2">
-            {status ? <p role="status" className="text-xs text-muted-foreground">{status}</p> : null}
-            {error ? <p role="alert" className="text-xs">{error}</p> : null}
-            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void refreshPreview()}>
-              Refresh Preview
-            </Button>
-          </div>
+          <p className="text-xs text-muted-foreground">Worker requests and errors over 7 days</p>
+          <ActionButton type="button" variant="outline" size="sm" action={refresh} onClick={() => void refreshPreview()}>
+            Refresh Preview
+          </ActionButton>
         </div>
-        <dl className="grid gap-3 sm:grid-cols-3">
-          <Fact label="Worker requests">
-            <span className="font-mono tabular-nums">{summary?.requests === undefined ? "-" : count.format(summary.requests)}</span>
-          </Fact>
-          <Fact label="Worker errors">
-            <span className="font-mono tabular-nums">{summary?.errors === undefined ? "-" : count.format(summary.errors)}</span>
-          </Fact>
-          <Fact label="Hostname certificates">
-            <Badge variant={certificates === site.hostnames.length ? "success-light" : "warning-light"}>{certificates} certificates</Badge>
-          </Fact>
-        </dl>
+        <FactList
+          className="sm:grid-cols-3"
+          facts={[
+            { label: "Worker requests", value: summary?.requests === undefined ? null : count.format(summary.requests) },
+            { label: "Worker errors", value: summary?.errors === undefined ? null : count.format(summary.errors) },
+            { label: "Hostname certificates", value: <Badge variant={certificates === site.hostnames.length ? "success-light" : "warning-light"}>{certificates} certificates</Badge> },
+          ]}
+        />
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">Deployments</h3>
           {deployments.length === 0 ? (
@@ -589,14 +566,14 @@ function Hosting({ workspace, site, summary }: { workspace: WorkspaceRecord; sit
                     {deployment.versionId === site.liveVersionId ? <Badge variant="success-light">Live</Badge> : null}
                   </span>
                   <span className="text-muted-foreground">{deployment.source}</span>
-                  <span className="font-mono text-xs text-muted-foreground tabular-nums">{formatCallTime(deployment.deployedAt, workspace.reportingTimezone)}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{formatCallTime(deployment.deployedAt, workspace.reportingTimezone)}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
-      </FramePanel>
-    </Frame>
+      </div>
+    </Panel>
   );
 }
 
@@ -609,103 +586,92 @@ export default function SiteView({ workspace, site, summary, analytics, range, s
   const interval = analytics?.trend.interval ?? "day";
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">{workspace.name}</h1>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+      <PageHeader
+        title={workspace.name}
+        description={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <Badge variant={stateVariant(workspace.state)}>{workspace.state}</Badge>
-            <span className="font-mono tabular-nums">Tracking {workspace.trackingNumber ?? "-"}</span>
+            <span className="tabular-nums">{workspace.trackingNumber ? `Tracking ${workspace.trackingNumber}` : "No Tracking Number"}</span>
             {site ? <span className="font-mono text-foreground">{site.primaryHostname}</span> : null}
             <span>{workspace.reportingTimezone}</span>
-          </div>
-        </div>
+          </span>
+        }
+      >
         {site ? (
-          <div className="flex flex-wrap gap-2">
+          <>
+            <AnalyticsRangeControls range={range} onRangeChange={changeRange} disabled={pending} />
             {operator ? (
               <Button type="button" variant="outline" onClick={() => setPicker("replace")}>
                 Replace Site
               </Button>
             ) : null}
-            <Button render={<a href={`https://${site.primaryHostname}`} target="_blank" rel="noreferrer" />}>Open Site</Button>
-          </div>
+            <a href={`https://${site.primaryHostname}`} target="_blank" rel="noreferrer" className={buttonVariants()}>
+              Open Site
+            </a>
+          </>
         ) : null}
-      </div>
+      </PageHeader>
       {site === undefined ? (
-        <Frame>
-          <FramePanel>
-            <RegionRetry message="The Site is unavailable." pending={pending} onRetry={retry} />
-          </FramePanel>
-        </Frame>
+        <Panel>
+          <RegionRetry message="The Site is unavailable." pending={pending} onRetry={retry} />
+        </Panel>
       ) : site === null ? (
-        <Frame>
-          <FramePanel>
-            <EmptyState
-              art={<NoWorkspacesArt />}
-              title="No Site is linked to this Workspace"
-              description={operator ? "Link one of the connected Cloudflare account's Sites to see its preview, traffic, performance, and health here." : undefined}
-              action={
-                operator ? (
-                  <Button type="button" onClick={() => setPicker("link")}>
-                    Link Site
-                  </Button>
-                ) : null
-              }
-            />
-          </FramePanel>
-        </Frame>
+        <Panel className="p-4">
+          <EmptyState
+            art={<NoWorkspacesArt />}
+            title="No Site is linked to this Workspace"
+            description={operator ? "Link one of the connected Cloudflare account's Sites to see its preview, traffic, performance, and health here." : undefined}
+            action={
+              operator ? (
+                <Button type="button" onClick={() => setPicker("link")}>
+                  Link Site
+                </Button>
+              ) : null
+            }
+          />
+        </Panel>
       ) : (
         <>
           <HeroPreview workspace={workspace} site={site} operator={operator} cloudflareConnected={cloudflareConnected} />
-          <AnalyticsRangeControls range={range} onRangeChange={changeRange} disabled={pending} />
           {syncing ? (
             <>
               <p className="text-sm text-muted-foreground">First sync in progress</p>
-              <SiteKpiSkeleton />
-              <Frame>
-                <FramePanel className="flex flex-col gap-3" aria-busy="true">
-                  <h2 className="font-semibold">Traffic and Calls</h2>
+              <SiteStatSkeleton />
+              <Panel title="Traffic and Calls" aria-busy="true">
+                <div className="p-4">
                   <Skeleton className="h-64 w-full" />
-                </FramePanel>
-              </Frame>
+                </div>
+              </Panel>
             </>
           ) : !summary ? (
-            <Frame>
-              <FramePanel>
-                <RegionRetry message="Site traffic is unavailable." pending={pending} onRetry={retry} />
-              </FramePanel>
-            </Frame>
+            <Panel>
+              <RegionRetry message="Site traffic is unavailable." pending={pending} onRetry={retry} />
+            </Panel>
           ) : (
             <>
-              <Frame className={kpiGrid}>
-                <KpiTile id="kpi-visits" label="Visits" value={count.format(summary.visits)} definition="Sessions on the Site" />
-                <KpiTile id="kpi-page-views" label="Page Views" value={count.format(summary.pageViews)} definition="Pages loaded on the Site" />
-                <KpiTile id="kpi-calls" label="Calls" value={calls === null ? "-" : count.format(calls)} definition="Calls to the Tracking Number" />
-                <KpiTile id="kpi-visit-to-call" label="Visit-to-Call" value={visitToCall(calls, summary.visits)} definition="Calls divided by Visits" accent />
-              </Frame>
-              <Frame>
-                <FramePanel role="region" aria-labelledby="traffic-calls-title" className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-0.5">
-                    <h2 id="traffic-calls-title" className="font-semibold">Traffic and Calls</h2>
-                    <p className="text-xs text-muted-foreground">Times in {workspace.reportingTimezone}</p>
-                  </div>
+              <StatStrip
+                stats={[
+                  { label: "Visits", value: count.format(summary.visits), hint: "Sessions on the Site" },
+                  { label: "Page Views", value: count.format(summary.pageViews), hint: "Pages loaded on the Site" },
+                  { label: "Calls", value: calls === null ? "None" : count.format(calls), hint: "Calls to the Tracking Number" },
+                  { label: "Visit-to-Call", value: visitToCall(calls, summary.visits), hint: "Calls divided by Visits" },
+                ]}
+              />
+              <Panel title="Traffic and Calls">
+                <div className="flex flex-col gap-3 p-4">
+                  <p className="text-xs text-muted-foreground">Times in {workspace.reportingTimezone}</p>
                   <TrafficAndCallsChart points={trafficAndCallsSeries(summary.daily, analytics?.trend ?? null)} interval={interval} />
-                </FramePanel>
-              </Frame>
-              <Frame className="grid gap-2 lg:grid-cols-2">
-                <CountedList id="top-pages" title="Top pages" rows={summary.topPaths} emptyLabel={(key) => key || "/"} />
-                <CountedList
-                  id="referrers"
-                  title="Referrers"
-                  rows={summary.referrers}
-                  emptyLabel={(key) => key || "(direct)"}
-                  footer={<p className="text-xs text-muted-foreground">{deviceSplit(summary.devices)}</p>}
-                />
-              </Frame>
-              <Frame className={search === undefined ? undefined : "grid gap-2 lg:grid-cols-2"}>
+                </div>
+              </Panel>
+              <div className="grid items-start gap-5 lg:grid-cols-2">
+                <CountedList title="Top pages" rows={summary.topPaths} emptyLabel={(key) => key || "/"} />
+                <CountedList title="Referrers" rows={summary.referrers} emptyLabel={(key) => key || "(direct)"} footer={<p className="text-xs text-muted-foreground">{deviceSplit(summary.devices)}</p>} />
+              </div>
+              <div className={search === undefined ? "flex flex-col gap-5" : "grid items-start gap-5 lg:grid-cols-2"}>
                 <Performance vitals={summary.vitals} />
                 {search === undefined ? null : <SearchPanel workspace={workspace} search={search} operator={operator} pending={pending} onRetry={retry} />}
-              </Frame>
+              </div>
             </>
           )}
           {operator && money !== undefined ? <DealAndCost workspace={workspace} money={money} pending={pending} onRetry={retry} /> : null}

@@ -44,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCallDate } from "@/components/tracer/call-format";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { DealRecord } from "@/data/deals";
 import { dealKinds, formatUsdCents, type DealKind } from "@/data/pricing";
 
@@ -183,12 +184,13 @@ export function EndDealDialog({ open, onOpenChange, workspaceId, deal, onEnded }
   );
 }
 
-export function DealActions({ workspaceId, deal, onChange, onMessage }: { workspaceId: string; deal: DealRecord | null; onChange: (deal: DealRecord | null) => void; onMessage?: (message: string) => void }) {
+export function DealActions({ workspaceId, deal, onChange }: { workspaceId: string; deal: DealRecord | null; onChange: (deal: DealRecord | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [status, announce] = useStatusMessage();
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>
           {deal ? "Edit Deal" : "Add Deal"}
         </Button>
@@ -197,6 +199,7 @@ export function DealActions({ workspaceId, deal, onChange, onMessage }: { worksp
             End Deal
           </Button>
         ) : null}
+        <StatusMessage status={status} className="text-sm text-muted-foreground" />
       </div>
       {editing ? (
         <DealDialog
@@ -206,7 +209,7 @@ export function DealActions({ workspaceId, deal, onChange, onMessage }: { worksp
           deal={deal}
           onSaved={(saved) => {
             onChange(saved);
-            onMessage?.("Deal saved.");
+            announce("Deal saved.");
           }}
         />
       ) : null}
@@ -218,7 +221,7 @@ export function DealActions({ workspaceId, deal, onChange, onMessage }: { worksp
           deal={deal}
           onEnded={() => {
             onChange(null);
-            onMessage?.("Deal ended.");
+            announce("Deal ended.");
           }}
         />
       ) : null}

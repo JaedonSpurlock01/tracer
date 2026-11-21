@@ -60,7 +60,7 @@ pnpm dev:local
 
 Bootstrap with the email address listed in `AUTH_EMAIL_ALLOWED_RECIPIENTS` inside the `dev:local` script in `package.json`, since only that address can sign in locally.
 
-Open `http://127.0.0.1:3000/sign-in`. Locally no email is sent; read your sign-in code from `http://127.0.0.1:3000/api/test/auth-otp`.
+Open `http://127.0.0.1:3000/sign-in` or `http://localhost:3000/sign-in`; when `BETTER_AUTH_URL` is either loopback name, sign-in accepts both on the same port. Locally no email is sent: enter your email, then press **Use local code** on the Verify email page to sign in with the code in one click. The button exists only outside production builds, and the code is also readable at `http://127.0.0.1:3000/api/test/auth-otp`.
 
 `pnpm dev:local` needs **no `.env` file**. It brings its own throwaway settings and turns on fakes so nothing calls a real provider:
 
@@ -200,7 +200,7 @@ The Production Neon compute never pauses (set on 2026-10-24 on the Launch plan);
 
 ### Page speed budget
 
-One navigation opens one database runtime shared by the actor, the layouts, and the page, with six connections so queries issued together run together, and every route group paints its loading boundary at once while the page streams in, below the layout that decides authorization so a denied URL still answers with a real 404. `tests/integration/page-budgets.test.ts` replays each page's server work against a database and fails when a page exceeds its ceiling of sequential waves and total queries; lower a ceiling when a change earns it, never raise one. `tests/e2e/navigation-timing.spec.ts` reports warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and only warns until its baseline is steady.
+One navigation opens one database runtime shared by the actor, the layouts, and the page, with six connections so queries issued together run together, and every page paints its own loading state, in the shape of that page, at once while the page streams in, below the layout that decides authorization so a denied URL still answers with a real 404. `tests/integration/page-budgets.test.ts` replays each page's server work against a database and fails when a page exceeds its ceiling of sequential waves and total queries; lower a ceiling when a change earns it, never raise one. `tests/e2e/navigation-timing.spec.ts` reports warm second-visit server times for the main pages against a 1500 ms dev-mode ceiling and only warns until its baseline is steady.
 
 ## Project status
 

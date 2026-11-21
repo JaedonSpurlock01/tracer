@@ -28,13 +28,12 @@
  */
 
 import type { Database } from "@/data/database";
-import { createActivity } from "@/data/activity";
 import { createAnalytics, withWorkspaceListStats, type AnalyticsSummary, type WorkspaceListWithStats, type WorkspaceRoutingHealth } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import type { Actor } from "@/data/authorization";
 import { createBusinesses, type BusinessRecord } from "@/data/business";
 import { createCallDetails } from "@/data/call-details";
-import { defaultCallSort, emptyCallFilters, type CallFilters, type CallListQuery } from "@/data/call-list-query";
+import { defaultCallSort, emptyCallFilters, type CallListQuery } from "@/data/call-list-query";
 import { createCallList, type CallListResult } from "@/data/calls";
 import type { CloudflareClient } from "@/data/cloudflare-client";
 import { createCloudflareConnection } from "@/data/cloudflare-connection";
@@ -260,18 +259,4 @@ export async function loadCallsPage(runtime: PageRuntime, actor: Actor, query: C
 /** Workspace Calls: one page of Calls fixed to the Workspace. */
 export async function loadWorkspaceCallsPage(runtime: PageRuntime, actor: Actor, workspaceId: string, query: CallListQuery): Promise<CallListResult | null> {
   return createCallList(runtime.database, actor).list({ ...query, workspaceId });
-}
-
-export interface ActivityPageData {
-  initialResult: Awaited<ReturnType<ReturnType<typeof createActivity>["list"]>>;
-  workspaceOptions: { id: string; name: string }[];
-}
-
-/** Activity: the first window of entries and the Workspace filter options together. */
-export async function loadActivityPage(runtime: PageRuntime, actor: Actor, filters: CallFilters): Promise<ActivityPageData> {
-  const [initialResult, workspaceOptions] = await Promise.all([
-    createActivity(runtime.database, actor).list({ filters }),
-    createCallList(runtime.database, actor).workspaceOptions(),
-  ]);
-  return { initialResult, workspaceOptions };
 }

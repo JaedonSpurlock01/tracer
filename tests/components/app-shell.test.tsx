@@ -113,7 +113,7 @@ describe("application shell", () => {
   it("shows all navigation links for an Operator and hides Operator links for a Client Viewer", () => {
     render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
     expect(screen.getByRole("link", { name: "Home" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Calls" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Workspaces" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Reports" })).toBeVisible();
@@ -124,6 +124,11 @@ describe("application shell", () => {
     render(<SidebarProvider><AppSidebar actor={viewer} organization={organization} /></SidebarProvider>);
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Integrations" })).not.toBeInTheDocument();
+  });
+
+  it("pads the global navigation inside a Sidebar group like the Workspace navigation", () => {
+    render(<SidebarProvider><AppSidebar actor={operator} organization={organization} /></SidebarProvider>);
+    expect(screen.getByRole("link", { name: "Home" }).closest('[data-slot="sidebar-group"]')).not.toBeNull();
   });
 
   it("opens the account menu from the top of the Sidebar with the current Organization", async () => {

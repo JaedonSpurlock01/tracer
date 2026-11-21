@@ -1,12 +1,14 @@
 /**
  * -------------------------------------------------------------------------
  * @file   cost-and-revenue.spec.ts
- * @brief  Covers the Deal editor, the Home Money row, and the Client Viewer boundary.
+ * @brief  Covers the Deal editor, the money on Home, and the Client Viewer boundary.
  *
  * @description
  *  An Operator activates a Workspace, adds a Monthly Deal from Site
- *  settings, and reads Monthly Cost, Monthly Revenue, and Profit on Home,
- *  the Profit tile with the Deal on the Workspace Overview, and the
+ *  settings, and reads Monthly Revenue and Profit in the Home stat strip
+ *  with the Monthly Cost line beneath it,
+ *  Profit in the Workspace Overview stat strip with the Monthly Cost and
+ *  Deal on the line beneath it, and the
  *  Pricing guide. A Client Viewer granted that Workspace then sees none
  *  of cost, revenue, or profit, gets 403 from the Deal route, and Not
  *  Found from the Pricing guide.
@@ -62,8 +64,7 @@ test.describe.serial("Cost and revenue", () => {
 
     await page.goto("/");
     const money = /-?\$[\d,]+\.\d{2}/;
-    await expect(page.getByRole("group", { name: "Monthly Cost" })).toContainText(money);
-    await expect(page.getByRole("group", { name: "Monthly Cost" })).toContainText(/Projected \$[\d,]+\.\d{2} per year/);
+    await expect(page.getByText(/Monthly Cost \$[\d,]+\.\d{2}, projected \$[\d,]+\.\d{2} per year\./)).toBeVisible();
     await expect(page.getByRole("group", { name: "Monthly Revenue" })).toContainText(money);
     await expect(page.getByRole("group", { name: "Profit" })).toContainText(money);
     await page.getByRole("link", { name: "Pricing guide" }).click();
@@ -71,8 +72,8 @@ test.describe.serial("Cost and revenue", () => {
     await expect(page.getByRole("region", { name: "A two-hour Call" })).toContainText("$4.44");
 
     await page.goto(`/workspaces/${workspaceId}`);
-    await expect(page.getByRole("group", { name: "Profit" })).toContainText("Monthly, $500.00 per month, since Oct 1, 2026");
-    await expect(page.getByRole("group", { name: "Monthly Cost" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "Profit" })).toContainText(money);
+    await expect(page.getByRole("main").getByText(/Monthly Cost \$[\d,]+\.\d{2}, projected \$[\d,]+\.\d{2} per year\. Deal: Monthly, \$500\.00 per month, since Oct 1, 2026\./)).toBeVisible();
   });
 
   test("a Client Viewer never sees cost, revenue, profit, or the Deal", async ({ browser, page, request }) => {
@@ -110,7 +111,7 @@ test.describe.serial("Cost and revenue", () => {
     await clientPage.goto("/");
     await expect(clientPage).toHaveURL(new RegExp(`/workspaces/${workspaceId}$`));
     await expect(clientPage.getByRole("heading", { name: workspaceName })).toBeVisible();
-    await expect(clientPage.getByRole("group", { name: "Monthly Cost" })).toHaveCount(0);
+    await expect(clientPage.getByText(/Monthly Cost/)).toHaveCount(0);
     await expect(clientPage.getByRole("group", { name: "Profit" })).toHaveCount(0);
     await expect(clientPage.getByText("Monthly, $500.00")).toHaveCount(0);
     await clientPage.goto(`/workspaces/${workspaceId}/site`);

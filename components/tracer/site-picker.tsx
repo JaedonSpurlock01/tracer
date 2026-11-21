@@ -172,7 +172,7 @@ export function SitePickerList({ workspaceId, mode, timeZone, onLinked, onSkip }
       />
       {loadError ? (
         <div className="flex items-center gap-3 text-sm">
-          <p role="alert">Sites are unavailable.</p>
+          <p role="alert" className="text-destructive">Sites are unavailable.</p>
           <Button type="button" variant="outline" size="sm" onClick={() => setReloads((value) => value + 1)}>
             Retry
           </Button>
@@ -229,7 +229,7 @@ export function SitePickerList({ workspaceId, mode, timeZone, onLinked, onSkip }
       </div>
       {linkError ? (
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <p role="alert">{linkError}</p>
+          <p role="alert" className="text-destructive">{linkError}</p>
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void link()}>
             Retry
           </Button>
@@ -241,7 +241,7 @@ export function SitePickerList({ workspaceId, mode, timeZone, onLinked, onSkip }
             Skip
           </Button>
         ) : null}
-        <Button type="button" onClick={() => void link()} disabled={!selectedId || busy}>
+        <Button type="button" onClick={() => void link()} disabled={!selectedId || busy} aria-busy={busy || undefined}>
           {mode === "replace" ? "Replace Site" : "Link Site"}
         </Button>
       </div>

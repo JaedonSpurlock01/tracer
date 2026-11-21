@@ -33,10 +33,7 @@
  *  media expiry, and the Lead Review precedence reuse the Call Detail rules.
  *  Filters only add conditions beside the readable Workspace condition, so
  *  a filter naming an ungranted Workspace matches nothing, and every filter
- *  value is a bound parameter; LIKE wildcards in search are escaped, and
- *  Activity, which searches caller numbers only, asks for a caller-only
- *  search that Call Detail's neighbors from Activity repeat. Activity also
- *  reuses the scope source, row columns, and filter compiler here. Each
+ *  value is a bound parameter; LIKE wildcards in search are escaped. Each
  *  filter field has one condition builder, used both for the flat filters
  *  and for the advanced tree, which compiles to a parenthesized And or Or
  *  expression joined by And outside the scope conditions, so an Or can
@@ -108,7 +105,7 @@ export interface CallNeighbors {
   next: CallNeighbor | null;
 }
 
-export type ScopedCallListQuery = CallListQuery & { workspaceId?: string; callerSearchOnly?: boolean };
+export type ScopedCallListQuery = CallListQuery & { workspaceId?: string };
 
 export interface CallList {
   list(query: ScopedCallListQuery): Promise<CallListResult | null>;
@@ -204,7 +201,6 @@ type Bind = (value: unknown) => string;
 export interface FilterScope {
   scoped: boolean;
   timeZone: string;
-  callerSearchOnly?: boolean;
 }
 
 function bounded(expression: string, min: number | null, max: number | null, bind: Bind): string {
@@ -262,8 +258,7 @@ export function filterConditions(filters: CallFilters, values: unknown[], scope:
     const phoneShaped = digits.length > 0 && /^[\d\s()+.-]+$/.test(filters.search);
     const name = () => `w.name ilike '%' || ${bind(filters.search.replace(/[\\%_]/g, "\\$&"))} || '%' escape '\\'`;
     const caller = () => `regexp_replace(coalesce(c.caller_number, ''), '\\D', '', 'g') like '%' || ${bind(digits)} || '%'`;
-    if (scope.callerSearchOnly) conditions.push(phoneShaped ? caller() : "false");
-    else conditions.push(phoneShaped ? `(${name()} or ${caller()})` : name());
+    conditions.push(phoneShaped ? `(${name()} or ${caller()})` : name());
   }
   const flat = groupSql({ combinator: "and", rules: [...flatCallFilterConditions(filters), ...(filters.advanced ? [filters.advanced] : [])] }, bind, scope);
   return flat ? [...conditions, flat] : conditions;
@@ -284,7 +279,7 @@ export function createCallList(database: Database, actor: Actor): CallList {
     const timeZone = workspace?.reportingTimezone ?? actor.timezone;
     const scopeWhere = conditions.join(" and ");
     const scopeValues = [...values];
-    const filters = filterConditions(query.filters, values, { scoped: workspace !== null, timeZone, callerSearchOnly: query.callerSearchOnly });
+    const filters = filterConditions(query.filters, values, { scoped: workspace !== null, timeZone });
     const where = [...conditions, ...filters].join(" and ");
     const direction = query.sort.direction === "asc" ? "asc" : "desc";
     const orderBy = `${sortExpressions[query.sort.column]} ${direction} nulls last, c.started_at desc, c.id`;

@@ -17,7 +17,8 @@
  *  Number Assignments without restoring Twilio.
  *  A Needs attention lane above them lists unconnected Organization
  *  credentials, a missing Twilio Auth Token, and degraded providers with
- *  the action that resolves each. The detail shows the provider's facts,
+ *  the action that resolves each. The page uses the shared PageHeader,
+ *  Panel, and FactList. The detail shows the provider's facts,
  *  its actions, and its own panels: Twilio numbers, Cloudflare Sites with
  *  their link state, Recording transfer failures for R2 and Trigger.dev,
  *  and the oldest purged or expired Recordings whose media cleanup is
@@ -29,7 +30,14 @@
  *  Provider actions remain behind the authenticated HTTP boundary. The first
  *  data arrives from the server, so the page never shows a loading Skeleton;
  *  it refreshes in place after mount and after each action, and a failed
- *  refresh keeps the current data with a Retry.
+ *  refresh keeps the current data with a Retry. Each action keeps its own
+ *  pending state, so one running test never disables the others. A failure
+ *  is named beside the button that caused it, inside the dialog when the
+ *  action is in one, and the dialog stays open with the entered values.
+ *  Each dialog's form lives in its own component, so closing the dialog
+ *  clears its values and failure. Confirmations sit beside the action, or
+ *  at the end of the provider's actions when the dialog that caused them
+ *  has closed.
  *
  * @see
  *  data/integrations-handler.ts
@@ -41,19 +49,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
+import { ActionButton, useAction, type ActionResult } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import { ProviderLogo } from "@/components/tracer/provider-logo";
+import { FactList, PageHeader, Panel, type Fact } from "@/components/tracer/page-parts";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import { callDetailHref } from "@/data/call-source";
 import type { CloudflareConnectionRecord, CloudflareSiteListEntry } from "@/data/cloudflare-connection";
 import type { DataForSeoConnectionRecord } from "@/data/dataforseo-connection";
@@ -70,23 +79,9 @@ type IntegrationResponse = {
   dataforseo?: DataForSeoConnectionRecord | null;
 };
 
-type CloudflareFormValues = { accountId: string; apiToken: string };
-type DataForSeoFormValues = { login: string; password: string };
-
-const emptyCloudflareForm: CloudflareFormValues = { accountId: "", apiToken: "" };
-const emptyDataForSeoForm: DataForSeoFormValues = { login: "", password: "" };
 const cloudflareTokenPermissions = ["Workers Scripts Read", "Workers Custom Domains Read", "Account Analytics Read", "Browser Rendering Edit"];
 const visitsFormatter = new Intl.NumberFormat("en-US");
 
-type Action = "test" | "sync" | "rotate" | "authToken" | "disconnect" | "hyperdrive" | "email" | null;
-
-type FormValues = {
-  accountSid: string;
-  apiKeySid: string;
-  apiKeySecret: string;
-};
-
-const emptyForm: FormValues = { accountSid: "", apiKeySid: "", apiKeySecret: "" };
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 function formatDate(value: string | null): string {
@@ -108,14 +103,6 @@ function stateLabel(state: ProviderState): string {
 
 function responseBody(response: Response): Promise<Record<string, unknown>> {
   return response.json() as Promise<Record<string, unknown>>;
-}
-
-function actionText(action: Action): string | null {
-  if (action === "test") return "Testing...";
-  if (action === "sync") return "Syncing...";
-  if (action === "rotate") return "Rotating...";
-  if (action === "disconnect") return "Disconnecting...";
-  return null;
 }
 
 function providerError(status: number, detail: unknown, fallback: string): string {
@@ -154,78 +141,67 @@ function StatusDot({ state }: { state: ProviderState }) {
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
-type Fact = [term: string, value: ReactNode];
-
-function FactList({ facts }: { facts: Fact[] }) {
-  return (
-    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-      {facts.map(([term, value]) => (
-        <div key={term} className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{term}</dt>
-          <dd className="truncate tabular-nums">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
 function analysisFacts(identifier: string | null, analysis: OpenAIAnalysisHealth): Fact[] {
   return [
-    ["Identifier", identifier ?? "Not available"],
-    ["Transcription model", analysis.transcriptionModel],
-    ["Lead analysis model", analysis.leadAssessmentModel],
-    ["Last successful Transcript", formatDate(analysis.lastTranscriptAt)],
-    ["Last successful Lead Assessment", formatDate(analysis.lastLeadAssessmentAt)],
-    ["Recent processing failures", String(analysis.failedCount)],
-    ["Last failure", formatDate(analysis.lastFailureAt)],
+    { label: "Identifier", value: identifier, empty: "Not available", mono: true },
+    { label: "Transcription model", value: analysis.transcriptionModel },
+    { label: "Lead analysis model", value: analysis.leadAssessmentModel },
+    { label: "Last successful Transcript", value: formatDate(analysis.lastTranscriptAt) },
+    { label: "Last successful Lead Assessment", value: formatDate(analysis.lastLeadAssessmentAt) },
+    { label: "Recent processing failures", value: String(analysis.failedCount) },
+    { label: "Last failure", value: formatDate(analysis.lastFailureAt) },
   ];
 }
 
 function serviceFacts(provider: ProviderHealth): Fact[] {
   if (provider.analysis) return analysisFacts(provider.identifier, provider.analysis);
   const facts: Fact[] = [
-    ["Identifier", provider.identifier ?? "Not available"],
-    [provider.recentFailures ? "Last successful Recording transfer" : "Last successful check", formatDate(provider.lastSuccessAt)],
-    ["Last failure", formatDate(provider.lastFailureAt)],
+    { label: "Identifier", value: provider.identifier, empty: "Not available", mono: true },
+    { label: provider.recentFailures ? "Last successful Recording transfer" : "Last successful check", value: formatDate(provider.lastSuccessAt) },
+    { label: "Last failure", value: formatDate(provider.lastFailureAt) },
   ];
-  if (provider.lastFailureDetail) facts.push(["Failure detail", provider.lastFailureDetail]);
-  if (provider.mediaLifecycle) facts.push(["Unfinished media cleanup", String(provider.mediaLifecycle.stuckCount)]);
+  if (provider.lastFailureDetail) facts.push({ label: "Failure detail", value: provider.lastFailureDetail });
+  if (provider.mediaLifecycle) facts.push({ label: "Unfinished media cleanup", value: String(provider.mediaLifecycle.stuckCount) });
   return facts;
 }
 
 function connectedBy(record: { connectedBy: { name: string } | null; connectedAt: string; lastVerifiedAt: string | null }): Fact[] {
-  return [["Connected by", record.connectedBy?.name ?? "Unknown"], ["Connected at", formatDate(record.connectedAt)], ["Last verified", formatDate(record.lastVerifiedAt)]];
+  return [
+    { label: "Connected by", value: record.connectedBy?.name ?? null, empty: "Unknown" },
+    { label: "Connected at", value: formatDate(record.connectedAt) },
+    { label: "Last verified", value: formatDate(record.lastVerifiedAt) },
+  ];
 }
 
 function twilioFacts(connection: TwilioConnectionRecord): Fact[] {
   return [
-    ["Account SID", <span key="sid" className="font-mono">{connection.accountSid}</span>],
-    ["API Key SID", <span key="key" className="font-mono">{connection.apiKeySid}</span>],
-    ["Account name", connection.accountFriendlyName ?? "Not available"],
+    { label: "Account SID", value: connection.accountSid, mono: true },
+    { label: "API Key SID", value: connection.apiKeySid, mono: true },
+    { label: "Account name", value: connection.accountFriendlyName, empty: "Not available" },
     ...connectedBy(connection),
-    ["Webhook Auth Token", <Badge key="token" variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge>],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Webhook Auth Token", value: <Badge variant={connection.authTokenConfigured ? "success-light" : "warning-light"}>{connection.authTokenConfigured ? "Configured" : "Not configured"}</Badge> },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
 function cloudflareFacts(connection: CloudflareConnectionRecord): Fact[] {
   return [
-    ["Account ID", <span key="id" className="font-mono">{connection.accountId}</span>],
+    { label: "Account ID", value: connection.accountId, mono: true },
     ...connectedBy(connection),
-    ["Last sync", formatDate(connection.lastSyncedAt)],
-    ["Sites", String(connection.siteCount)],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Last sync", value: formatDate(connection.lastSyncedAt) },
+    { label: "Sites", value: String(connection.siteCount) },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
 function dataforseoFacts(connection: DataForSeoConnectionRecord): Fact[] {
   return [
-    ["API login", <span key="login" className="font-mono">{connection.login}</span>],
+    { label: "API login", value: connection.login, mono: true },
     ...connectedBy(connection),
-    ["Last check", formatDate(connection.lastCheckedAt)],
-    ["Lookups this month", visitsFormatter.format(connection.lookupsThisMonth)],
-    ["Keywords tracked", visitsFormatter.format(connection.keywordCount)],
-    ["Last failure", formatDate(connection.lastFailureAt)],
+    { label: "Last check", value: formatDate(connection.lastCheckedAt) },
+    { label: "Lookups this month", value: visitsFormatter.format(connection.lookupsThisMonth) },
+    { label: "Keywords tracked", value: visitsFormatter.format(connection.keywordCount) },
+    { label: "Last failure", value: formatDate(connection.lastFailureAt) },
   ];
 }
 
@@ -293,31 +269,31 @@ function NavGroup({ label, providers, current, records, onSelect }: { label: str
 }
 
 function NumbersTable({ numbers }: { numbers: TwilioNumberRecord[] }) {
-  if (!numbers.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No numbers synced yet.</p>;
+  if (!numbers.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No numbers synced yet.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Twilio numbers" className="w-full text-sm">
         <caption className="sr-only">Twilio numbers</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Phone Number</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Friendly Name</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Voice</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Status</th></tr></thead>
-        <tbody>{numbers.map((number) => <tr key={number.id} className="border-b last:border-0"><td className="px-3 py-2 font-mono">{number.phoneNumber}</td><td className="px-3 py-2">{number.friendlyName}</td><td className="px-3 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-3 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Phone Number</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Friendly Name</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Voice</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Status</th></tr></thead>
+        <tbody>{numbers.map((number) => <tr key={number.id} className="border-b last:border-0"><td className="px-4 py-2 font-mono">{number.phoneNumber}</td><td className="px-4 py-2">{number.friendlyName}</td><td className="px-4 py-2">{number.voiceCapable ? "Yes" : "No"}</td><td className="px-4 py-2"><Badge variant={number.releasedAt ? "outline" : "success-light"}>{number.releasedAt ? "Released" : "Active"}</Badge></td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
 function SitesTable({ sites }: { sites: CloudflareSiteListEntry[] }) {
-  if (!sites.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>;
+  if (!sites.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No Sites with a custom domain were found on the account.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Sites" className="w-full text-sm">
         <caption className="sr-only">Sites</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Site</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Health</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Last deployment</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Visits (30 days)</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th></tr></thead>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Site</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Health</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Last deployment</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Visits (30 days)</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Workspace</th></tr></thead>
         <tbody>{sites.map((site) => <tr key={site.id} className="border-b last:border-0">
-          <td className="px-3 py-2 font-mono">{site.primaryHostname}</td>
-          <td className="px-3 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
-          <td className="px-3 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
-          <td className="px-3 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
-          <td className="px-3 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
+          <td className="px-4 py-2 font-mono">{site.primaryHostname}</td>
+          <td className="px-4 py-2"><Badge variant={siteHealthVariant(site.health)}>{site.health}</Badge></td>
+          <td className="px-4 py-2 tabular-nums">{formatDate(site.lastDeployedAt)}</td>
+          <td className="px-4 py-2 tabular-nums">{visitsFormatter.format(site.visits30d)}</td>
+          <td className="px-4 py-2">{site.linkedWorkspace ? <Link href={`/workspaces/${site.linkedWorkspace.id}`} prefetch={false} className="hover:underline">Linked to {site.linkedWorkspace.name}</Link> : <span className="text-muted-foreground">Not linked</span>}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -325,44 +301,121 @@ function SitesTable({ sites }: { sites: CloudflareSiteListEntry[] }) {
 }
 
 function RecordingTransferFailures({ failures }: { failures: RecordingTransferFailure[] }) {
-  if (!failures.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No Recording transfer failures.</p>;
+  if (!failures.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No Recording transfer failures.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Recent transfer failures" className="w-full text-sm">
         <caption className="sr-only">Recent transfer failures</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Stage</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Reason</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Failed at</th></tr></thead>
-        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b last:border-0"><td className="px-3 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-3 py-2">{failure.reason}</td><td className="px-3 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Stage</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Reason</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Failed at</th></tr></thead>
+        <tbody>{failures.map((failure, index) => <tr key={index} className="border-b last:border-0"><td className="px-4 py-2">{failure.stage[0].toUpperCase() + failure.stage.slice(1)}</td><td className="px-4 py-2">{failure.reason}</td><td className="px-4 py-2 tabular-nums">{formatDate(failure.at)}</td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
 function MediaLifecycle({ health }: { health: MediaLifecycleHealth }) {
-  if (!health.oldestStuck.length) return <p className="px-3 py-3 text-sm text-muted-foreground">No unfinished media cleanup.</p>;
+  if (!health.oldestStuck.length) return <p className="px-4 py-3 text-sm text-muted-foreground">No unfinished media cleanup.</p>;
   return (
     <div className="overflow-x-auto">
       <table aria-label="Unfinished media cleanup" className="w-full text-sm">
         <caption className="sr-only">Unfinished media cleanup</caption>
-        <thead><tr className="border-b text-left"><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Call</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Workspace</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Media</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Since</th><th className="px-3 py-2 text-xs font-medium text-muted-foreground">Detail</th></tr></thead>
-        <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b last:border-0"><td className="px-3 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-3 py-2">{entry.workspaceName}</td><td className="px-3 py-2">{entry.media}</td><td className="px-3 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-3 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
+        <thead><tr className="border-b text-left"><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Call</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Workspace</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Media</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Since</th><th className="px-4 py-2 text-xs font-medium text-muted-foreground">Detail</th></tr></thead>
+        <tbody>{health.oldestStuck.map((entry) => <tr key={entry.callId} className="border-b last:border-0"><td className="px-4 py-2"><Link href={callDetailHref({ id: entry.callId, workspaceId: entry.workspaceId }, null)} prefetch={false} className="font-medium hover:underline">View Call</Link></td><td className="px-4 py-2">{entry.workspaceName}</td><td className="px-4 py-2">{entry.media}</td><td className="px-4 py-2 tabular-nums">{formatDate(entry.since)}</td><td className="px-4 py-2">{entry.twilioNotConnected ? "Twilio is not connected" : "Retried by the daily sweep"}</td></tr>)}</tbody>
       </table>
     </div>
   );
 }
 
-function ProviderAction({ id, action, message, error, onClick }: { id: "hyperdrive" | "email"; action: Action; message?: string; error?: string; onClick: () => void }) {
+type CredentialField = { id: string; name: string; label: string; secret?: boolean; mono?: boolean; description?: ReactNode };
+
+function CredentialForm({ fields, submitLabel, onSubmit }: { fields: CredentialField[]; submitLabel: string; onSubmit: (values: Record<string, string>) => Promise<ActionResult> }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const submit = useAction();
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button type="button" variant="outline" disabled={action === id} onClick={onClick}>{action === id ? <><Spinner /> Testing...</> : id === "email" ? "Send Test Email" : "Test Connection"}</Button>
-      {message ? <p className="text-sm">{message}</p> : null}
-      {error ? <><p role="alert" className="text-sm">{error}</p><Button type="button" variant="outline" onClick={onClick}>Retry</Button></> : null}
-    </div>
+    <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); void submit.run(() => onSubmit(values)); }}>
+      {fields.map((field) => (
+        <Field key={field.name}>
+          <FieldLabel htmlFor={field.id}>{field.label}</FieldLabel>
+          <Input id={field.id} type={field.secret ? "password" : "text"} autoComplete="off" className={field.mono ? "font-mono" : undefined} value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} required />
+          {field.description}
+        </Field>
+      ))}
+      <DialogFooter><ActionButton type="submit" action={submit}>{submitLabel}</ActionButton></DialogFooter>
+    </form>
   );
 }
 
-function ErrorLine({ error, retry }: { error: string; retry: (() => void) | null }) {
-  if (!error) return null;
-  return <div className="flex flex-wrap items-center gap-3"><p role="alert" className="text-sm">{error}</p>{retry ? <Button type="button" variant="outline" onClick={retry}>Retry</Button> : null}</div>;
+function ConfirmFooter({ label, onConfirm }: { label: string; onConfirm: () => Promise<ActionResult> }) {
+  const confirm = useAction();
+  return (
+    <AlertDialogFooter>
+      <AlertDialogCancel>Cancel</AlertDialogCancel>
+      <ActionButton type="button" variant="destructive" action={confirm} onClick={() => void confirm.run(onConfirm)}>{label}</ActionButton>
+    </AlertDialogFooter>
+  );
+}
+
+type TwilioDisconnectResult = { error?: string; blocked?: number } | void;
+
+function TwilioDisconnectConfirm({ disconnect }: { disconnect: (force: boolean) => Promise<TwilioDisconnectResult> }) {
+  const confirm = useAction();
+  const [blocked, setBlocked] = useState<number | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  function run(force: boolean) {
+    return confirm.run(async () => {
+      const result = await disconnect(force);
+      if (result?.blocked === undefined) return result;
+      setBlocked(result.blocked);
+    });
+  }
+
+  return (
+    <>
+      {blocked !== null ? (
+        <>
+          <p role="alert" className="text-sm text-destructive">Disconnect is blocked while {blocked} Active Workspaces depend on Twilio.</p>
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox checked={acknowledged} onCheckedChange={(checked) => setAcknowledged(checked === true)} />
+            <span>End {blocked} Number Assignments and return their Workspaces to Setup Required. Their Twilio voice settings will not be restored; each Workspace will say which number to clear in Twilio.</span>
+          </label>
+        </>
+      ) : null}
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        {blocked !== null ? (
+          <ActionButton type="button" variant="destructive" action={confirm} unavailable={acknowledged ? null : "Acknowledge the ended Number Assignments first."} onClick={() => void run(true)}>Disconnect anyway</ActionButton>
+        ) : (
+          <ActionButton type="button" variant="destructive" action={confirm} onClick={() => void run(false)}>Disconnect</ActionButton>
+        )}
+      </AlertDialogFooter>
+    </>
+  );
+}
+
+function ProviderTest({ id }: { id: "hyperdrive" | "email" }) {
+  const test = useAction();
+
+  function run() {
+    return test.run(async () => {
+      const response = await mutationFetch(`/api/integrations/${id}/test`, { method: "POST" }).catch(() => null);
+      const body = response ? await responseBody(response) : {};
+      if (response?.ok && id === "hyperdrive") return { message: `Connection verified at ${formatDate(typeof body.checkedAt === "string" ? body.checkedAt : null)}` };
+      if (response?.ok) return { message: `Test email sent to ${typeof body.to === "string" ? body.to : "your address"}` };
+      if (id === "email" && response?.status === 409) return { error: "Your address is not on the recipient allowlist." };
+      return { error: id === "hyperdrive" ? "Hyperdrive test failed." : "Test email failed." };
+    });
+  }
+
+  return <ActionButton type="button" variant="outline" action={test} onClick={() => void run()}>{id === "email" ? "Send Test Email" : "Test Connection"}</ActionButton>;
+}
+
+async function saveCredential(path: string, payload: unknown, describe: (status: number, detail: unknown) => string): Promise<string | null> {
+  const response = await mutationFetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
+  if (!response) return "Connection failed.";
+  if (response.ok) return null;
+  const body = await responseBody(response);
+  return describe(response.status, body.detail);
 }
 
 export interface IntegrationsOverview {
@@ -379,42 +432,29 @@ function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
   const [formsKey, setFormsKey] = useState(initial);
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [action, setAction] = useState<"generate" | "revoke" | null>(null);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [outcome, announce] = useStatusMessage();
+  const generate = useAction();
 
-  async function generate() {
-    setAction("generate");
-    setError("");
-    setMessage("");
+  function generateKey() {
     setCopied(false);
-    const response = await mutationFetch("/api/integrations/forms-key", { method: "POST" }).catch(() => null);
-    if (!response?.ok) {
-      setError("The Forms key could not be generated.");
-    } else {
+    return generate.run(async () => {
+      const response = await mutationFetch("/api/integrations/forms-key", { method: "POST" }).catch(() => null);
+      if (!response?.ok) return { error: "The Forms key could not be generated." };
       const body = (await response.json()) as { key: string; createdAt: string };
       setFormsKey({ createdAt: body.createdAt });
       setRevealed(body.key);
-      setMessage(formsKey ? "Forms key rotated. Every Site's form posts are refused until the new key is deployed." : "Forms key generated.");
-    }
-    setAction(null);
+      announce(formsKey ? "Forms key rotated. Every Site's form posts are refused until the new key is deployed." : "Forms key generated.");
+    });
   }
 
-  async function revoke() {
-    setAction("revoke");
-    setError("");
-    setMessage("");
+  async function revoke(): Promise<ActionResult> {
     const response = await mutationFetch("/api/integrations/forms-key", { method: "DELETE" }).catch(() => null);
-    if (!response?.ok) {
-      setError("The Forms key could not be revoked.");
-    } else {
-      setFormsKey(null);
-      setRevealed(null);
-      setMessage("Forms key revoked. Every Site's form posts are refused until a new key is generated.");
-    }
+    if (!response?.ok) return { error: "The Forms key could not be revoked." };
+    setFormsKey(null);
+    setRevealed(null);
     setRevokeOpen(false);
-    setAction(null);
+    announce("Forms key revoked. Every Site's form posts are refused until a new key is generated.");
   }
 
   async function copy() {
@@ -423,9 +463,8 @@ function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
     setCopied(true);
   }
 
-  const busy = action !== null;
   return (
-    <div className="flex flex-col gap-3 px-3 pb-3 text-sm">
+    <div className="flex flex-col gap-3 px-4 py-3 text-sm">
       <p>
         <span className="font-medium">Status: </span>
         {formsKey ? `Generated ${formatDate(formsKey.createdAt)}` : "No key yet"}
@@ -441,16 +480,15 @@ function FormsKeyPanel({ initial }: { initial: { createdAt: string } | null }) {
           </p>
         </div>
       ) : null}
-      {message ? <p>{message}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" disabled={busy} onClick={() => void generate()}>{action === "generate" ? <><Spinner /> Generating...</> : formsKey ? "Rotate Forms key" : "Generate Forms key"}</Button>
-        {formsKey ? <Button type="button" variant="destructive" disabled={busy} onClick={() => setRevokeOpen(true)}>Revoke Forms key</Button> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <ActionButton type="button" variant="outline" action={generate} onClick={() => void generateKey()}>{formsKey ? "Rotate Forms key" : "Generate Forms key"}</ActionButton>
+        {formsKey ? <Button type="button" variant="destructive" onClick={() => setRevokeOpen(true)}>Revoke Forms key</Button> : null}
+        <StatusMessage status={outcome} className="text-sm text-muted-foreground" />
       </div>
       <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Revoke the Forms key?</AlertDialogTitle><AlertDialogDescription>Every Site&apos;s contact form posts are refused until a new key is generated and deployed. Stored Form Submissions are kept.</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={busy} onClick={(event) => { event.preventDefault(); void revoke(); }}>{action === "revoke" ? <><Spinner /> Revoking...</> : "Revoke Forms key"}</AlertDialogAction></AlertDialogFooter>
+          <ConfirmFooter label="Revoke Forms key" onConfirm={revoke} />
         </AlertDialogContent>
       </AlertDialog>
     </div>
@@ -464,37 +502,20 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   const [twilio, setTwilio] = useState<TwilioConnectionRecord | null>(initial.twilio);
   const [numbers, setNumbers] = useState<TwilioNumberRecord[]>(initial.numbers);
   const [refreshError, setRefreshError] = useState(false);
-  const [status, setStatus] = useState("");
-  const [twilioAction, setTwilioAction] = useState<Action>(null);
-  const [providerAction, setProviderAction] = useState<Action>(null);
-  const [twilioError, setTwilioError] = useState("");
-  const [twilioRetry, setTwilioRetry] = useState(false);
-  const [providerErrors, setProviderErrors] = useState<Record<string, string>>({});
-  const [providerMessages, setProviderMessages] = useState<Record<string, string>>({});
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [rotateOpen, setRotateOpen] = useState(false);
-  const [authTokenOpen, setAuthTokenOpen] = useState(false);
-  const [authToken, setAuthToken] = useState("");
-  const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [blockedWorkspaces, setBlockedWorkspaces] = useState<number | null>(null);
-  const [forceAcknowledged, setForceAcknowledged] = useState(false);
-  const [form, setForm] = useState<FormValues>(emptyForm);
-  const [formError, setFormError] = useState("");
+  const [twilioDialog, setTwilioDialog] = useState<"connect" | "rotate" | "authToken" | "disconnect" | null>(null);
+  const [twilioOutcome, announceTwilio] = useStatusMessage();
+  const twilioTest = useAction();
+  const twilioSync = useAction();
   const [cloudflare, setCloudflare] = useState<CloudflareConnectionRecord | null>(initial.cloudflare);
   const [sites, setSites] = useState<CloudflareSiteListEntry[]>(initial.sites);
-  const [cloudflareAction, setCloudflareAction] = useState<Action>(null);
-  const [cloudflareMessage, setCloudflareMessage] = useState("");
-  const [cloudflareConnectOpen, setCloudflareConnectOpen] = useState(false);
-  const [cloudflareRotateOpen, setCloudflareRotateOpen] = useState(false);
-  const [cloudflareDisconnectOpen, setCloudflareDisconnectOpen] = useState(false);
-  const [cloudflareForm, setCloudflareForm] = useState<CloudflareFormValues>(emptyCloudflareForm);
-  const [cloudflareFormError, setCloudflareFormError] = useState("");
+  const [cloudflareDialog, setCloudflareDialog] = useState<"connect" | "rotate" | "disconnect" | null>(null);
+  const [cloudflareOutcome, announceCloudflare] = useStatusMessage();
+  const cloudflareTest = useAction();
+  const cloudflareSync = useAction();
   const [dataforseo, setDataforseo] = useState<DataForSeoConnectionRecord | null>(initial.dataforseo ?? null);
-  const [dataforseoAction, setDataforseoAction] = useState<Action>(null);
-  const [dataforseoMessage, setDataforseoMessage] = useState("");
   const [dataforseoDialog, setDataforseoDialog] = useState<"connect" | "rotate" | "disconnect" | null>(null);
-  const [dataforseoForm, setDataforseoForm] = useState<DataForSeoFormValues>(emptyDataForSeoForm);
-  const [dataforseoFormError, setDataforseoFormError] = useState("");
+  const [dataforseoOutcome, announceDataforseo] = useStatusMessage();
+  const dataforseoTest = useAction();
 
   async function reload() {
     setRefreshError(false);
@@ -513,109 +534,63 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
     }
   }
 
-  async function submitDataForSeo(event: FormEvent<HTMLFormElement>, route: "connect" | "rotate") {
-    event.preventDefault();
-    setDataforseoFormError("");
-    setDataforseoAction(route === "rotate" ? "rotate" : null);
-    const payload = route === "connect" ? dataforseoForm : { password: dataforseoForm.password };
-    const response = await mutationFetch(`/api/integrations/dataforseo/${route}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => null);
-    if (!response) {
-      setDataforseoFormError("Connection failed.");
-      setDataforseoAction(null);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      setDataforseoFormError(dataforseoError(response.status, body.detail, "Connection failed."));
-      setDataforseoAction(null);
-      return;
-    }
+  async function submitDataForSeo(route: "connect" | "rotate", values: Record<string, string>): Promise<ActionResult> {
+    const payload = route === "connect" ? { login: values.login, password: values.password } : { password: values.password };
+    const error = await saveCredential(`/api/integrations/dataforseo/${route}`, payload, (status, detail) => dataforseoError(status, detail, "Connection failed."));
+    if (error) return { error };
     setDataforseoDialog(null);
-    setDataforseoForm(emptyDataForSeoForm);
     await reload();
-    setStatus(route === "connect" ? "DataForSEO connected." : "DataForSEO password rotated.");
-    setDataforseoAction(null);
+    announceDataforseo(route === "connect" ? "DataForSEO connected." : "DataForSEO password rotated.");
   }
 
-  async function runDataForSeo(action: "test" | "disconnect") {
-    setDataforseoAction(action);
-    setDataforseoMessage("");
-    const response = await mutationFetch(`/api/integrations/dataforseo/${action}`, { method: "POST" }).catch(() => null);
-    const body = response ? await responseBody(response) : {};
-    if (response?.ok) {
-      if (action === "disconnect") setDataforseoDialog(null);
+  function testDataForSeo() {
+    return dataforseoTest.run(async () => {
+      const response = await mutationFetch("/api/integrations/dataforseo/test", { method: "POST" }).catch(() => null);
+      const body = response ? await responseBody(response) : {};
       await reload();
-      setStatus(action === "test" ? "DataForSEO connection verified." : "DataForSEO disconnected.");
-    } else {
-      setDataforseoMessage(`DataForSEO ${action} failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}`);
-      if (action === "test") await reload();
-    }
-    setDataforseoAction(null);
+      return response?.ok ? { message: "DataForSEO connection verified." } : { error: `DataForSEO test failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+    });
   }
 
-  function openDataForSeoDialog(dialog: "connect" | "rotate" | "disconnect") {
-    setDataforseoForm(emptyDataForSeoForm);
-    setDataforseoFormError("");
-    setDataforseoMessage("");
-    setDataforseoDialog(dialog);
-  }
-
-  async function submitCloudflare(event: FormEvent<HTMLFormElement>, route: "connect" | "rotate") {
-    event.preventDefault();
-    setCloudflareFormError("");
-    setCloudflareAction(route === "rotate" ? "rotate" : null);
-    const payload = route === "connect" ? cloudflareForm : { apiToken: cloudflareForm.apiToken };
-    const response = await mutationFetch(`/api/integrations/cloudflare/${route}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => null);
-    if (!response) {
-      setCloudflareFormError("Connection failed.");
-      setCloudflareAction(null);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      setCloudflareFormError(cloudflareError(response.status, body.detail, "Connection failed."));
-      setCloudflareAction(null);
-      return;
-    }
-    setCloudflareConnectOpen(false);
-    setCloudflareRotateOpen(false);
-    setCloudflareForm(emptyCloudflareForm);
+  async function disconnectDataForSeo(): Promise<ActionResult> {
+    const response = await mutationFetch("/api/integrations/dataforseo/disconnect", { method: "POST" }).catch(() => null);
+    const body = response ? await responseBody(response) : {};
+    if (!response?.ok) return { error: `DataForSEO disconnect failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+    setDataforseoDialog(null);
     await reload();
-    setStatus(route === "connect" ? "Cloudflare connected." : "Cloudflare token rotated.");
-    setCloudflareAction(null);
+    announceDataforseo("DataForSEO disconnected.");
   }
 
-  async function runCloudflare(action: "test" | "sync" | "disconnect") {
-    setCloudflareAction(action);
-    setCloudflareMessage("");
-    const response = await mutationFetch(`/api/integrations/cloudflare/${action}`, { method: "POST" }).catch(() => null);
-    const body = response ? await responseBody(response) : {};
-    if (response?.ok) {
-      if (action === "disconnect") setCloudflareDisconnectOpen(false);
+  async function submitCloudflare(route: "connect" | "rotate", values: Record<string, string>): Promise<ActionResult> {
+    const payload = route === "connect" ? { accountId: values.accountId, apiToken: values.apiToken } : { apiToken: values.apiToken };
+    const error = await saveCredential(`/api/integrations/cloudflare/${route}`, payload, (status, detail) => cloudflareError(status, detail, "Connection failed."));
+    if (error) return { error };
+    setCloudflareDialog(null);
+    await reload();
+    announceCloudflare(route === "connect" ? "Cloudflare connected." : "Cloudflare token rotated.");
+  }
+
+  function runCloudflare(action: "test" | "sync") {
+    return (action === "test" ? cloudflareTest : cloudflareSync).run(async () => {
+      const response = await mutationFetch(`/api/integrations/cloudflare/${action}`, { method: "POST" }).catch(() => null);
+      const body = response ? await responseBody(response) : {};
+      if (!response?.ok) {
+        if (action === "test") await reload();
+        return { error: `Cloudflare ${action} failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+      }
       await reload();
-      setStatus(action === "test" ? "Cloudflare connection verified." : action === "sync" ? `Synced ${typeof body.siteCount === "number" ? body.siteCount : 0} Sites.` : "Cloudflare disconnected.");
-    } else if (action === "disconnect" && response?.status === 409 && typeof body.activeSiteLinkCount === "number") {
-      setCloudflareMessage(`Disconnect is blocked while ${body.activeSiteLinkCount} Site Links are open.`);
-    } else {
-      setCloudflareMessage(`Cloudflare ${action} failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}`);
-      if (action === "test") await reload();
-    }
-    setCloudflareAction(null);
+      return { message: action === "test" ? "Cloudflare connection verified." : `Synced ${typeof body.siteCount === "number" ? body.siteCount : 0} Sites.` };
+    });
   }
 
-  function openCloudflareDialog(dialog: "connect" | "rotate") {
-    setCloudflareForm(emptyCloudflareForm);
-    setCloudflareFormError("");
-    if (dialog === "connect") setCloudflareConnectOpen(true);
-    else setCloudflareRotateOpen(true);
+  async function disconnectCloudflare(): Promise<ActionResult> {
+    const response = await mutationFetch("/api/integrations/cloudflare/disconnect", { method: "POST" }).catch(() => null);
+    const body = response ? await responseBody(response) : {};
+    if (response?.status === 409 && typeof body.activeSiteLinkCount === "number") return { error: `Disconnect is blocked while ${body.activeSiteLinkCount} Site Links are open.` };
+    if (!response?.ok) return { error: `Cloudflare disconnect failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+    setCloudflareDialog(null);
+    await reload();
+    announceCloudflare("Cloudflare disconnected.");
   }
 
   function selectProvider(id: ProviderId) {
@@ -623,185 +598,55 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
     window.history.replaceState(window.history.state, "", `/integrations?provider=${id}`);
   }
 
-  function resetForm() {
-    setForm(emptyForm);
-    setFormError("");
-  }
-
-  async function connect(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
-    const response = await mutationFetch("/api/integrations/twilio/connect", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(form),
-    }).catch(() => null);
-    if (!response) {
-      setFormError("Connection failed.");
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      setFormError(providerError(response.status, body.detail, "Connection failed."));
-      return;
-    }
-    setConnectOpen(false);
-    resetForm();
+  async function submitTwilio(route: "connect" | "rotate" | "authToken", values: Record<string, string>): Promise<ActionResult> {
+    const error = route === "connect"
+      ? await saveCredential("/api/integrations/twilio/connect", { accountSid: values.accountSid, apiKeySid: values.apiKeySid, apiKeySecret: values.apiKeySecret }, (status, detail) => providerError(status, detail, "Connection failed."))
+      : route === "rotate"
+        ? await saveCredential("/api/integrations/twilio/rotate", { apiKeySid: values.apiKeySid, apiKeySecret: values.apiKeySecret }, (status, detail) => providerError(status, detail, "Connection failed."))
+        : await saveCredential("/api/integrations/twilio/auth-token", { authToken: values.authToken }, (status, detail) => status === 400 ? "Enter the Twilio Auth Token." : providerError(status, detail, "Connection failed."));
+    if (error) return { error };
+    setTwilioDialog(null);
     await reload();
-    setStatus("Twilio connected.");
+    announceTwilio(route === "connect" ? "Twilio connected." : route === "rotate" ? "Twilio API key rotated." : "Twilio Auth Token saved.");
   }
 
-  async function rotate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
-    setTwilioAction("rotate");
-    const response = await mutationFetch("/api/integrations/twilio/rotate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKeySid: form.apiKeySid, apiKeySecret: form.apiKeySecret }),
-    }).catch(() => null);
-    if (!response) {
-      setFormError("Connection failed.");
-      setTwilioAction(null);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      setFormError(providerError(response.status, body.detail, "Connection failed."));
-      setTwilioAction(null);
-      return;
-    }
-    setRotateOpen(false);
-    resetForm();
-    await reload();
-    setStatus("Twilio API key rotated.");
-    setTwilioAction(null);
-  }
-
-  async function saveAuthToken(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
-    setTwilioAction("authToken");
-    const response = await mutationFetch("/api/integrations/twilio/auth-token", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ authToken }),
-    }).catch(() => null);
-    if (!response) {
-      setFormError("Connection failed.");
-      setTwilioAction(null);
-      return;
-    }
-    const body = await responseBody(response);
-    if (!response.ok) {
-      setFormError(response.status === 400 ? "Enter the Twilio Auth Token." : providerError(response.status, body.detail, "Connection failed."));
-      setTwilioAction(null);
-      return;
-    }
-    setAuthTokenOpen(false);
-    setAuthToken("");
-    await reload();
-    setStatus("Twilio Auth Token saved.");
-    setTwilioAction(null);
-  }
-
-  async function testTwilio() {
-    setTwilioAction("test");
-    setTwilioError("");
-    setTwilioRetry(false);
-    const response = await mutationFetch("/api/integrations/twilio/test", { method: "POST" }).catch(() => null);
-    if (response?.ok) {
-      setStatus("Twilio connection verified.");
-    } else {
-      const body = response ? await responseBody(response) : {};
-      setTwilioError(`Twilio test failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}`);
-      setTwilioRetry(true);
-    }
-    await reload();
-    setTwilioAction(null);
-  }
-
-  async function syncTwilio() {
-    setTwilioAction("sync");
-    setTwilioError("");
-    const response = await mutationFetch("/api/integrations/twilio/sync-numbers", { method: "POST" }).catch(() => null);
-    if (response?.ok) {
-      const body = await responseBody(response);
-      setNumbers(Array.isArray(body.numbers) ? body.numbers as TwilioNumberRecord[] : []);
-      setStatus(`Synced ${Array.isArray(body.numbers) ? body.numbers.length : 0} numbers, skipped ${typeof body.skipped === "number" ? body.skipped : 0}.`);
+  function testTwilio() {
+    return twilioTest.run(async () => {
+      const response = await mutationFetch("/api/integrations/twilio/test", { method: "POST" }).catch(() => null);
+      const body = response && !response.ok ? await responseBody(response) : {};
       await reload();
-    } else {
-      const body = response ? await responseBody(response) : {};
-      setTwilioError(`Twilio sync failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}`);
-    }
-    setTwilioAction(null);
+      return response?.ok ? { message: "Twilio connection verified." } : { error: `Twilio test failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+    });
   }
 
-  async function disconnect(force = false) {
-    setTwilioAction("disconnect");
-    setTwilioError("");
+  function syncTwilio() {
+    return twilioSync.run(async () => {
+      const response = await mutationFetch("/api/integrations/twilio/sync-numbers", { method: "POST" }).catch(() => null);
+      const body = response ? await responseBody(response) : {};
+      if (!response?.ok) return { error: `Twilio sync failed.${typeof body.detail === "string" ? ` ${body.detail}` : ""}` };
+      setNumbers(Array.isArray(body.numbers) ? body.numbers as TwilioNumberRecord[] : []);
+      await reload();
+      return { message: `Synced ${Array.isArray(body.numbers) ? body.numbers.length : 0} numbers, skipped ${typeof body.skipped === "number" ? body.skipped : 0}.` };
+    });
+  }
+
+  async function disconnectTwilio(force: boolean): Promise<TwilioDisconnectResult> {
     const response = await mutationFetch("/api/integrations/twilio/disconnect", force
       ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) }
       : { method: "POST" }).catch(() => null);
-    if (response?.ok) {
-      const body = await responseBody(response);
-      setDisconnectOpen(false);
-      setBlockedWorkspaces(null);
-      await reload();
-      setStatus(typeof body.endedAssignments === "number" && body.endedAssignments > 0
-        ? `Twilio disconnected. ${body.endedAssignments} Number Assignments ended without restoring Twilio.`
-        : "Twilio disconnected.");
-    } else {
-      const body = response ? await responseBody(response) : {};
-      if (response?.status === 409 && typeof body.activeWorkspaceCount === "number") {
-        setTwilioError(`Disconnect is blocked while ${body.activeWorkspaceCount} Active Workspaces depend on Twilio.`);
-        setBlockedWorkspaces(body.activeWorkspaceCount);
-      } else {
-        setTwilioError("Disconnect failed.");
-      }
-    }
-    setTwilioAction(null);
-  }
-
-  function openDisconnect() {
-    setTwilioError("");
-    setBlockedWorkspaces(null);
-    setForceAcknowledged(false);
-    setDisconnectOpen(true);
-  }
-
-  async function testProvider(id: "hyperdrive" | "email") {
-    setProviderAction(id);
-    setProviderErrors((current) => ({ ...current, [id]: "" }));
-    const response = await mutationFetch(`/api/integrations/${id}/test`, { method: "POST" }).catch(() => null);
     const body = response ? await responseBody(response) : {};
-    if (response?.ok && id === "hyperdrive") {
-      setProviderMessages((current) => ({ ...current, hyperdrive: `Connection verified at ${formatDate(typeof body.checkedAt === "string" ? body.checkedAt : null)}` }));
-    } else if (response?.ok && id === "email") {
-      setProviderMessages((current) => ({ ...current, email: `Test email sent to ${typeof body.to === "string" ? body.to : "your address"}` }));
-    } else if (id === "email" && response?.status === 409) {
-      setProviderErrors((current) => ({ ...current, email: "Your address is not on the recipient allowlist." }));
-    } else {
-      setProviderErrors((current) => ({ ...current, [id]: id === "hyperdrive" ? "Hyperdrive test failed." : "Test email failed." }));
-    }
-    setProviderAction(null);
+    if (response?.status === 409 && typeof body.activeWorkspaceCount === "number") return { blocked: body.activeWorkspaceCount };
+    if (!response?.ok) return { error: "Disconnect failed." };
+    setTwilioDialog(null);
+    await reload();
+    announceTwilio(typeof body.endedAssignments === "number" && body.endedAssignments > 0
+      ? `Twilio disconnected. ${body.endedAssignments} Number Assignments ended without restoring Twilio.`
+      : "Twilio disconnected.");
   }
 
-  function openConnect() {
-    resetForm();
-    setConnectOpen(true);
-  }
-
-  function openRotate() {
-    resetForm();
-    setRotateOpen(true);
-  }
-
-  function openAuthToken() {
-    setFormError("");
-    setAuthToken("");
-    setAuthTokenOpen(true);
-  }
+  const openConnect = () => setTwilioDialog("connect");
+  const openRotate = () => setTwilioDialog("rotate");
+  const openAuthToken = () => setTwilioDialog("authToken");
 
   const readyCount = providers.filter((provider) => provider.state === "connected" || provider.state === "configured").length;
   const records: ConnectionRecords = { twilio, cloudflare, dataforseo, sites };
@@ -812,13 +657,13 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
 
   const reenterAction: Partial<Record<ProviderId, () => void>> = {
     twilio: openRotate,
-    cloudflare: () => openCloudflareDialog("rotate"),
-    dataforseo: () => openDataForSeoDialog("rotate"),
+    cloudflare: () => setCloudflareDialog("rotate"),
+    dataforseo: () => setDataforseoDialog("rotate"),
   };
   const connectAction: Partial<Record<ProviderId, () => void>> = {
     twilio: openConnect,
-    cloudflare: () => openCloudflareDialog("connect"),
-    dataforseo: () => openDataForSeoDialog("connect"),
+    cloudflare: () => setCloudflareDialog("connect"),
+    dataforseo: () => setDataforseoDialog("connect"),
   };
 
   // Needs attention: what the Operator can resolve from this page, in page order.
@@ -838,74 +683,73 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
       const message = provider.mediaLifecycle?.stuckCount
         ? `${provider.mediaLifecycle.stuckCount} purged or expired Recordings still have media to clean up.`
         : provider.lastFailureDetail ?? provider.note ?? `Last failure ${formatDate(provider.lastFailureAt)}.`;
-      attention.push({ key: `${provider.id}-degraded`, provider, message, action: provider.id === selected.id ? null : <Button type="button" size="sm" variant="outline" render={<Link href={`/integrations?provider=${provider.id}`} scroll={false} />}>View</Button> });
+      attention.push({ key: `${provider.id}-degraded`, provider, message, action: provider.id === selected.id ? null : <Link href={`/integrations?provider=${provider.id}`} scroll={false} className={buttonVariants({ size: "sm", variant: "outline" })}>View</Link> });
     }
   }
 
   function detailActions(provider: ProviderHealth): ReactNode {
     if (provider.id === "twilio") {
-      if (!twilio) return provider.connectable ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null;
-      const busy = twilioAction !== null;
-      const progress = actionText(twilioAction);
-      if (twilio.credentialState === "unreadable") {
-        return (
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={busy} onClick={openRotate}>Re-enter credential</Button>
-            <Button type="button" variant="destructive" disabled={busy} onClick={openDisconnect}>Disconnect</Button>
-          </div>
-        );
-      }
       return (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={busy} onClick={() => void testTwilio()}>{twilioAction === "test" ? <><Spinner /> {progress}</> : "Test Connection"}</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void syncTwilio()}>{twilioAction === "sync" ? <><Spinner /> {progress}</> : "Sync Numbers"}</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={openRotate}>Rotate Key</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={openAuthToken}>Set Auth Token</Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={openDisconnect}>Disconnect</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!twilio ? (provider.connectable ? <Button type="button" onClick={openConnect}>Connect Twilio</Button> : null) : twilio.credentialState === "unreadable" ? (
+            <>
+              <Button type="button" onClick={openRotate}>Re-enter credential</Button>
+              <Button type="button" variant="destructive" onClick={() => setTwilioDialog("disconnect")}>Disconnect</Button>
+            </>
+          ) : (
+            <>
+              <ActionButton type="button" action={twilioTest} onClick={() => void testTwilio()}>Test Connection</ActionButton>
+              <ActionButton type="button" variant="outline" action={twilioSync} onClick={() => void syncTwilio()}>Sync Numbers</ActionButton>
+              <Button type="button" variant="outline" onClick={openRotate}>Rotate Key</Button>
+              <Button type="button" variant="outline" onClick={openAuthToken}>Set Auth Token</Button>
+              <Button type="button" variant="destructive" onClick={() => setTwilioDialog("disconnect")}>Disconnect</Button>
+            </>
+          )}
+          <StatusMessage status={twilioOutcome} className="text-sm text-muted-foreground" />
         </div>
       );
     }
     if (provider.id === "cloudflare") {
-      if (!cloudflare) return provider.connectable ? <Button type="button" onClick={() => openCloudflareDialog("connect")}>Connect Cloudflare</Button> : null;
-      const busy = cloudflareAction !== null;
-      if (cloudflare.credentialState === "unreadable") {
-        return (
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={busy} onClick={() => openCloudflareDialog("rotate")}>Re-enter credential</Button>
-            <Button type="button" variant="destructive" disabled={busy} onClick={() => setCloudflareDisconnectOpen(true)}>Disconnect</Button>
-          </div>
-        );
-      }
       return (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={busy} onClick={() => void runCloudflare("test")}>{cloudflareAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void runCloudflare("sync")}>{cloudflareAction === "sync" ? <><Spinner /> Syncing...</> : "Sync now"}</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => openCloudflareDialog("rotate")}>Rotate Token</Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => { setCloudflareMessage(""); setCloudflareDisconnectOpen(true); }}>Disconnect</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!cloudflare ? (provider.connectable ? <Button type="button" onClick={() => setCloudflareDialog("connect")}>Connect Cloudflare</Button> : null) : cloudflare.credentialState === "unreadable" ? (
+            <>
+              <Button type="button" onClick={() => setCloudflareDialog("rotate")}>Re-enter credential</Button>
+              <Button type="button" variant="destructive" onClick={() => setCloudflareDialog("disconnect")}>Disconnect</Button>
+            </>
+          ) : (
+            <>
+              <ActionButton type="button" action={cloudflareTest} onClick={() => void runCloudflare("test")}>Test Connection</ActionButton>
+              <ActionButton type="button" variant="outline" action={cloudflareSync} onClick={() => void runCloudflare("sync")}>Sync now</ActionButton>
+              <Button type="button" variant="outline" onClick={() => setCloudflareDialog("rotate")}>Rotate Token</Button>
+              <Button type="button" variant="destructive" onClick={() => setCloudflareDialog("disconnect")}>Disconnect</Button>
+            </>
+          )}
+          <StatusMessage status={cloudflareOutcome} className="text-sm text-muted-foreground" />
         </div>
       );
     }
     if (provider.id === "dataforseo") {
-      if (!dataforseo) return provider.connectable ? <Button type="button" onClick={() => openDataForSeoDialog("connect")}>Connect DataForSEO</Button> : null;
-      const busy = dataforseoAction !== null;
-      if (dataforseo.credentialState === "unreadable") {
-        return (
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={busy} onClick={() => openDataForSeoDialog("rotate")}>Re-enter credential</Button>
-            <Button type="button" variant="destructive" disabled={busy} onClick={() => openDataForSeoDialog("disconnect")}>Disconnect</Button>
-          </div>
-        );
-      }
       return (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={busy} onClick={() => void runDataForSeo("test")}>{dataforseoAction === "test" ? <><Spinner /> Testing...</> : "Test Connection"}</Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => openDataForSeoDialog("rotate")}>Rotate Password</Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => openDataForSeoDialog("disconnect")}>Disconnect</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!dataforseo ? (provider.connectable ? <Button type="button" onClick={() => setDataforseoDialog("connect")}>Connect DataForSEO</Button> : null) : dataforseo.credentialState === "unreadable" ? (
+            <>
+              <Button type="button" onClick={() => setDataforseoDialog("rotate")}>Re-enter credential</Button>
+              <Button type="button" variant="destructive" onClick={() => setDataforseoDialog("disconnect")}>Disconnect</Button>
+            </>
+          ) : (
+            <>
+              <ActionButton type="button" action={dataforseoTest} onClick={() => void testDataForSeo()}>Test Connection</ActionButton>
+              <Button type="button" variant="outline" onClick={() => setDataforseoDialog("rotate")}>Rotate Password</Button>
+              <Button type="button" variant="destructive" onClick={() => setDataforseoDialog("disconnect")}>Disconnect</Button>
+            </>
+          )}
+          <StatusMessage status={dataforseoOutcome} className="text-sm text-muted-foreground" />
         </div>
       );
     }
     if ((provider.id === "hyperdrive" || provider.id === "email") && provider.testable) {
-      return <ProviderAction id={provider.id} action={providerAction} message={providerMessages[provider.id]} error={providerErrors[provider.id]} onClick={() => void testProvider(provider.id as "hyperdrive" | "email")} />;
+      return <ProviderTest key={provider.id} id={provider.id} />;
     }
     return null;
   }
@@ -917,13 +761,6 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
     return serviceFacts(provider);
   }
 
-  function detailError(provider: ProviderHealth): ReactNode {
-    if (provider.id === "twilio") return <ErrorLine error={twilioError} retry={twilioRetry && twilioAction === null ? () => void testTwilio() : null} />;
-    if (provider.id === "cloudflare") return <ErrorLine error={cloudflareMessage} retry={cloudflareAction === null ? () => void runCloudflare("test") : null} />;
-    if (provider.id === "dataforseo") return <ErrorLine error={dataforseoMessage} retry={dataforseoAction === null ? () => void runDataForSeo("test") : null} />;
-    return null;
-  }
-
   const facts = detailFacts(selected);
   const panels: { title: string; description?: string; body: ReactNode }[] = [];
   if (selected.id === "twilio" && twilio) panels.push({ title: "Numbers", description: `${twilio.numberCount} eligible numbers. Last synced ${formatDate(twilio.numbersSyncedAt)}.`, body: <NumbersTable numbers={numbers} /> });
@@ -933,188 +770,169 @@ export default function IntegrationsView({ initial, provider: requestedId }: { i
   if (selected.mediaLifecycle) panels.push({ title: "Media cleanup", description: "The oldest purged or expired Recordings whose media cleanup is unfinished.", body: <MediaLifecycle health={selected.mediaLifecycle} /> });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <StatusDot state={attention.length ? "degraded" : "connected"} />
-          {readyCount} of {providers.length} providers ready
-        </p>
-      </div>
-      {status ? <p role="status" className="text-sm">{status}</p> : null}
-      {refreshError ? <div className="flex items-center gap-3"><p role="alert" className="text-sm">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Integrations"
+        description={
+          <span className="flex items-center gap-2">
+            <StatusDot state={attention.length ? "degraded" : "connected"} />
+            {readyCount} of {providers.length} providers ready
+          </span>
+        }
+      />
+      {refreshError ? <div className="flex items-center gap-3"><p role="alert" className="text-sm text-destructive">Integrations could not be refreshed.</p><Button type="button" variant="outline" onClick={() => void reload()}>Retry</Button></div> : null}
 
       {attention.length ? (
-        <Frame>
-          <FrameHeader><FrameTitle>Needs attention</FrameTitle></FrameHeader>
-          <FramePanel className="p-0">
-            <ul aria-label="Needs attention" className="divide-y">
-              {attention.map((item) => (
-                <li key={item.key} className="flex items-center gap-3 px-3 py-2.5">
-                  <ProviderLogo id={item.provider.id} className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 text-sm"><span className="font-medium">{item.provider.name}</span><span className="text-muted-foreground"> · {item.message}</span></span>
-                  {item.action}
-                </li>
-              ))}
-            </ul>
-          </FramePanel>
-        </Frame>
+        <Panel title="Needs attention">
+          <ul aria-label="Needs attention" className="divide-y">
+            {attention.map((item) => (
+              <li key={item.key} className="flex items-center gap-3 px-4 py-2.5">
+                <ProviderLogo id={item.provider.id} className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 text-sm"><span className="font-medium">{item.provider.name}</span><span className="text-muted-foreground"> · {item.message}</span></span>
+                {item.action}
+              </li>
+            ))}
+          </ul>
+        </Panel>
       ) : null}
 
-      <div className="grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className="grid gap-5 md:grid-cols-[15rem_minmax(0,1fr)]">
         <nav aria-label="Providers" className="flex gap-4 overflow-x-auto md:flex-col md:overflow-visible">
           <NavGroup label="Organization connections" providers={connections} current={selected.id} records={records} onSelect={selectProvider} />
           <NavGroup label="Platform services" providers={services} current={selected.id} records={records} onSelect={selectProvider} />
         </nav>
-        <section aria-labelledby={headingId} className="min-w-0">
-          <Frame>
-            <FramePanel className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <ProviderLogo id={selected.id} className="size-6 shrink-0" />
-                    <h2 id={headingId} className="text-lg font-semibold">{selected.name}</h2>
-                    <Badge variant={stateVariant(selected.state)}>{stateLabel(selected.state)}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{summaryLine(selected, records)}</p>
+        <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-5">
+          <Panel className="gap-5 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <ProviderLogo id={selected.id} className="size-6 shrink-0" />
+                  <h2 id={headingId} className="text-base font-semibold">{selected.name}</h2>
+                  <Badge variant={stateVariant(selected.state)}>{stateLabel(selected.state)}</Badge>
                 </div>
-                {detailActions(selected)}
+                <p className="text-sm text-muted-foreground">{summaryLine(selected, records)}</p>
               </div>
-              {detailError(selected)}
-              {facts ? <FactList facts={facts} /> : null}
-              {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
-            </FramePanel>
-            {panels.map((panel) => (
-              <FramePanel key={panel.title} role="region" aria-label={panel.title} className="flex flex-col p-0">
-                <div className="flex flex-col gap-0.5 px-3 pt-3 pb-2">
-                  <h3 className="text-sm font-medium">{panel.title}</h3>
-                  {panel.description ? <p className="text-xs text-muted-foreground">{panel.description}</p> : null}
-                </div>
-                {panel.body}
-              </FramePanel>
-            ))}
-          </Frame>
+              {detailActions(selected)}
+            </div>
+            {facts ? <FactList facts={facts} className="sm:grid-cols-2 lg:grid-cols-3" /> : null}
+            {selected.note ? <p className="text-sm text-muted-foreground">{selected.note}</p> : null}
+          </Panel>
+          {panels.map((panel) => (
+            <Panel key={panel.title} title={panel.title}>
+              {panel.description ? <p className="px-4 pt-3 text-xs text-muted-foreground">{panel.description}</p> : null}
+              {panel.body}
+            </Panel>
+          ))}
         </section>
       </div>
 
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
+      <Dialog open={twilioDialog === "connect"} onOpenChange={(open) => setTwilioDialog(open ? "connect" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Connect Twilio</DialogTitle><DialogDescription>Connect the Organization Twilio account.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void connect(event)}>
-            <Field data-invalid={Boolean(formError)}><FieldLabel htmlFor="twilio-account-sid">Account SID</FieldLabel><Input id="twilio-account-sid" value={form.accountSid} onChange={(event) => setForm((current) => ({ ...current, accountSid: event.target.value }))} required />{formError ? <FieldError>{formError}</FieldError> : null}</Field>
-            <Field><FieldLabel htmlFor="twilio-api-key-sid">API Key SID</FieldLabel><Input id="twilio-api-key-sid" value={form.apiKeySid} onChange={(event) => setForm((current) => ({ ...current, apiKeySid: event.target.value }))} required /></Field>
-            <Field><FieldLabel htmlFor="twilio-api-key-secret">API Key Secret</FieldLabel><Input id="twilio-api-key-secret" type="password" autoComplete="off" value={form.apiKeySecret} onChange={(event) => setForm((current) => ({ ...current, apiKeySecret: event.target.value }))} required /><FieldDescription>The secret is encrypted with the deployment master key and never shown again.</FieldDescription></Field>
-            <DialogFooter><Button type="submit">Connect</Button></DialogFooter>
-          </form>
+          <CredentialForm
+            submitLabel="Connect"
+            onSubmit={(values) => submitTwilio("connect", values)}
+            fields={[
+              { id: "twilio-account-sid", name: "accountSid", label: "Account SID", mono: true },
+              { id: "twilio-api-key-sid", name: "apiKeySid", label: "API Key SID", mono: true },
+              { id: "twilio-api-key-secret", name: "apiKeySecret", label: "API Key Secret", secret: true, description: <FieldDescription>The secret is encrypted with the deployment master key and never shown again.</FieldDescription> },
+            ]}
+          />
         </DialogContent>
       </Dialog>
 
-      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
+      <Dialog open={twilioDialog === "rotate"} onOpenChange={(open) => setTwilioDialog(open ? "rotate" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Rotate Twilio API Key</DialogTitle><DialogDescription>Verify the replacement key before changing the connection.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void rotate(event)}>
-            <Field data-invalid={Boolean(formError)}><FieldLabel htmlFor="rotate-api-key-sid">API Key SID</FieldLabel><Input id="rotate-api-key-sid" value={form.apiKeySid} onChange={(event) => setForm((current) => ({ ...current, apiKeySid: event.target.value }))} required />{formError ? <FieldError>{formError}</FieldError> : null}</Field>
-            <Field><FieldLabel htmlFor="rotate-api-key-secret">API Key Secret</FieldLabel><Input id="rotate-api-key-secret" type="password" autoComplete="off" value={form.apiKeySecret} onChange={(event) => setForm((current) => ({ ...current, apiKeySecret: event.target.value }))} required /></Field>
-            <DialogFooter><Button type="submit">Rotate Key</Button></DialogFooter>
-          </form>
+          <CredentialForm
+            submitLabel="Rotate Key"
+            onSubmit={(values) => submitTwilio("rotate", values)}
+            fields={[
+              { id: "rotate-api-key-sid", name: "apiKeySid", label: "API Key SID", mono: true },
+              { id: "rotate-api-key-secret", name: "apiKeySecret", label: "API Key Secret", secret: true },
+            ]}
+          />
         </DialogContent>
       </Dialog>
 
-      <Dialog open={authTokenOpen} onOpenChange={setAuthTokenOpen}>
+      <Dialog open={twilioDialog === "authToken"} onOpenChange={(open) => setTwilioDialog(open ? "authToken" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Set Twilio Auth Token</DialogTitle><DialogDescription>Tracer verifies Twilio webhook signatures with the account Auth Token. It is verified, encrypted, and never displayed again.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void saveAuthToken(event)}>
-            <Field data-invalid={Boolean(formError)}><FieldLabel htmlFor="twilio-auth-token">Auth Token</FieldLabel><Input id="twilio-auth-token" type="password" autoComplete="off" value={authToken} onChange={(event) => setAuthToken(event.target.value)} required />{formError ? <FieldError>{formError}</FieldError> : null}</Field>
-            <DialogFooter><Button type="submit" disabled={twilioAction === "authToken"}>{twilioAction === "authToken" ? <><Spinner /> Saving...</> : "Save Auth Token"}</Button></DialogFooter>
-          </form>
+          <CredentialForm submitLabel="Save Auth Token" onSubmit={(values) => submitTwilio("authToken", values)} fields={[{ id: "twilio-auth-token", name: "authToken", label: "Auth Token", secret: true }]} />
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cloudflareConnectOpen} onOpenChange={setCloudflareConnectOpen}>
+      <Dialog open={cloudflareDialog === "connect"} onOpenChange={(open) => setCloudflareDialog(open ? "connect" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Connect Cloudflare</DialogTitle><DialogDescription>Connect the Organization Cloudflare account with an Account ID and a scoped API token.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void submitCloudflare(event, "connect")}>
-            <Field data-invalid={Boolean(cloudflareFormError)}><FieldLabel htmlFor="cloudflare-account-id">Account ID</FieldLabel><Input id="cloudflare-account-id" className="font-mono" value={cloudflareForm.accountId} onChange={(event) => setCloudflareForm((current) => ({ ...current, accountId: event.target.value }))} required />{cloudflareFormError ? <FieldError>{cloudflareFormError}</FieldError> : null}</Field>
-            <Field>
-              <FieldLabel htmlFor="cloudflare-api-token">API Token</FieldLabel>
-              <Input id="cloudflare-api-token" type="password" autoComplete="off" value={cloudflareForm.apiToken} onChange={(event) => setCloudflareForm((current) => ({ ...current, apiToken: event.target.value }))} required />
-              <FieldDescription>Create the token on the Cloudflare <a className="underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">API tokens</a> page with these permissions. It is encrypted with the deployment master key and never shown again.</FieldDescription>
-              <ul className="list-disc pl-5 text-xs text-muted-foreground">{cloudflareTokenPermissions.map((permission) => <li key={permission}>{permission}</li>)}</ul>
-            </Field>
-            <DialogFooter><Button type="submit">Connect</Button></DialogFooter>
-          </form>
+          <CredentialForm
+            submitLabel="Connect"
+            onSubmit={(values) => submitCloudflare("connect", values)}
+            fields={[
+              { id: "cloudflare-account-id", name: "accountId", label: "Account ID", mono: true },
+              {
+                id: "cloudflare-api-token",
+                name: "apiToken",
+                label: "API Token",
+                secret: true,
+                description: (
+                  <>
+                    <FieldDescription>Create the token on the Cloudflare <a className="underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">API tokens</a> page with these permissions. It is encrypted with the deployment master key and never shown again.</FieldDescription>
+                    <ul className="list-disc pl-5 text-xs text-muted-foreground">{cloudflareTokenPermissions.map((permission) => <li key={permission}>{permission}</li>)}</ul>
+                  </>
+                ),
+              },
+            ]}
+          />
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cloudflareRotateOpen} onOpenChange={setCloudflareRotateOpen}>
+      <Dialog open={cloudflareDialog === "rotate"} onOpenChange={(open) => setCloudflareDialog(open ? "rotate" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Rotate Cloudflare Token</DialogTitle><DialogDescription>Verify the replacement token before changing the connection.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void submitCloudflare(event, "rotate")}>
-            <Field data-invalid={Boolean(cloudflareFormError)}><FieldLabel htmlFor="cloudflare-rotate-token">API Token</FieldLabel><Input id="cloudflare-rotate-token" type="password" autoComplete="off" value={cloudflareForm.apiToken} onChange={(event) => setCloudflareForm((current) => ({ ...current, apiToken: event.target.value }))} required />{cloudflareFormError ? <FieldError>{cloudflareFormError}</FieldError> : null}</Field>
-            <DialogFooter><Button type="submit" disabled={cloudflareAction === "rotate"}>{cloudflareAction === "rotate" ? <><Spinner /> Rotating...</> : "Rotate Token"}</Button></DialogFooter>
-          </form>
+          <CredentialForm submitLabel="Rotate Token" onSubmit={(values) => submitCloudflare("rotate", values)} fields={[{ id: "cloudflare-rotate-token", name: "apiToken", label: "API Token", secret: true }]} />
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={cloudflareDisconnectOpen} onOpenChange={setCloudflareDisconnectOpen}>
+      <AlertDialog open={cloudflareDialog === "disconnect"} onOpenChange={(open) => setCloudflareDialog(open ? "disconnect" : null)}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect Cloudflare?</AlertDialogTitle><AlertDialogDescription>The encrypted token is removed. Discovered Sites and their synced traffic stay until the account is connected again.</AlertDialogDescription></AlertDialogHeader>
-          {cloudflareMessage ? <p role="alert">{cloudflareMessage}</p> : null}
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={cloudflareAction !== null} onClick={() => void runCloudflare("disconnect")}>{cloudflareAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect"}</AlertDialogAction></AlertDialogFooter>
+          <ConfirmFooter label="Disconnect" onConfirm={disconnectCloudflare} />
         </AlertDialogContent>
       </AlertDialog>
 
       <Dialog open={dataforseoDialog === "connect"} onOpenChange={(open) => setDataforseoDialog(open ? "connect" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Connect DataForSEO</DialogTitle><DialogDescription>Connect the Organization DataForSEO account with its API login and password.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void submitDataForSeo(event, "connect")}>
-            <Field data-invalid={Boolean(dataforseoFormError)}><FieldLabel htmlFor="dataforseo-login">API login</FieldLabel><Input id="dataforseo-login" className="font-mono" autoComplete="off" value={dataforseoForm.login} onChange={(event) => setDataforseoForm((current) => ({ ...current, login: event.target.value }))} required />{dataforseoFormError ? <FieldError>{dataforseoFormError}</FieldError> : null}</Field>
-            <Field>
-              <FieldLabel htmlFor="dataforseo-password">API password</FieldLabel>
-              <Input id="dataforseo-password" type="password" autoComplete="off" value={dataforseoForm.password} onChange={(event) => setDataforseoForm((current) => ({ ...current, password: event.target.value }))} required />
-              <FieldDescription>Find both on the DataForSEO <a className="underline" href="https://app.dataforseo.com/api-access" target="_blank" rel="noreferrer">API access</a> page. The password is encrypted with the deployment master key and never shown again. Each Keyword check costs about $0.002.</FieldDescription>
-            </Field>
-            <DialogFooter><Button type="submit">Connect</Button></DialogFooter>
-          </form>
+          <CredentialForm
+            submitLabel="Connect"
+            onSubmit={(values) => submitDataForSeo("connect", values)}
+            fields={[
+              { id: "dataforseo-login", name: "login", label: "API login", mono: true },
+              { id: "dataforseo-password", name: "password", label: "API password", secret: true, description: <FieldDescription>Find both on the DataForSEO <a className="underline" href="https://app.dataforseo.com/api-access" target="_blank" rel="noreferrer">API access</a> page. The password is encrypted with the deployment master key and never shown again. Each Keyword check costs about $0.002.</FieldDescription> },
+            ]}
+          />
         </DialogContent>
       </Dialog>
 
       <Dialog open={dataforseoDialog === "rotate"} onOpenChange={(open) => setDataforseoDialog(open ? "rotate" : null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Rotate DataForSEO Password</DialogTitle><DialogDescription>Verify the replacement password before changing the connection.</DialogDescription></DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void submitDataForSeo(event, "rotate")}>
-            <Field data-invalid={Boolean(dataforseoFormError)}><FieldLabel htmlFor="dataforseo-rotate-password">API password</FieldLabel><Input id="dataforseo-rotate-password" type="password" autoComplete="off" value={dataforseoForm.password} onChange={(event) => setDataforseoForm((current) => ({ ...current, password: event.target.value }))} required />{dataforseoFormError ? <FieldError>{dataforseoFormError}</FieldError> : null}</Field>
-            <DialogFooter><Button type="submit" disabled={dataforseoAction === "rotate"}>{dataforseoAction === "rotate" ? <><Spinner /> Rotating...</> : "Rotate Password"}</Button></DialogFooter>
-          </form>
+          <CredentialForm submitLabel="Rotate Password" onSubmit={(values) => submitDataForSeo("rotate", values)} fields={[{ id: "dataforseo-rotate-password", name: "password", label: "API password", secret: true }]} />
         </DialogContent>
       </Dialog>
 
       <AlertDialog open={dataforseoDialog === "disconnect"} onOpenChange={(open) => setDataforseoDialog(open ? "disconnect" : null)}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect DataForSEO?</AlertDialogTitle><AlertDialogDescription>The encrypted password is removed. Keywords and their stored positions stay, and the daily check pauses until the account is connected again.</AlertDialogDescription></AlertDialogHeader>
-          {dataforseoMessage ? <p role="alert">{dataforseoMessage}</p> : null}
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={dataforseoAction !== null} onClick={() => void runDataForSeo("disconnect")}>{dataforseoAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect"}</AlertDialogAction></AlertDialogFooter>
+          <ConfirmFooter label="Disconnect" onConfirm={disconnectDataForSeo} />
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+      <AlertDialog open={twilioDialog === "disconnect"} onOpenChange={(open) => setTwilioDialog(open ? "disconnect" : null)}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Disconnect Twilio?</AlertDialogTitle><AlertDialogDescription>The encrypted credential and synced number inventory are removed.</AlertDialogDescription></AlertDialogHeader>
-          {twilioError ? <p role="alert">{twilioError}</p> : null}
-          {blockedWorkspaces !== null ? (
-            <label className="flex items-start gap-2 text-sm">
-              <Checkbox checked={forceAcknowledged} onCheckedChange={(checked) => setForceAcknowledged(checked === true)} />
-              <span>End {blockedWorkspaces} Number Assignments and return their Workspaces to Setup Required. Their Twilio voice settings will not be restored; each Workspace will say which number to clear in Twilio.</span>
-            </label>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            {blockedWorkspaces !== null ? (
-              <AlertDialogAction variant="destructive" disabled={twilioAction !== null || !forceAcknowledged} onClick={() => void disconnect(true)}>{twilioAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect anyway"}</AlertDialogAction>
-            ) : (
-              <AlertDialogAction variant="destructive" disabled={twilioAction !== null} onClick={() => void disconnect()}>{twilioAction === "disconnect" ? <><Spinner /> Disconnecting...</> : "Disconnect"}</AlertDialogAction>
-            )}
-          </AlertDialogFooter>
+          <TwilioDisconnectConfirm disconnect={disconnectTwilio} />
         </AlertDialogContent>
       </AlertDialog>
     </div>

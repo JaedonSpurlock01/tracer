@@ -139,7 +139,7 @@ export default function PurgeMediaDialog({ workspaceId, callId, open, onOpenChan
             <FieldLabel htmlFor="purge-media-acknowledgement">I understand this permanently deletes this Call&apos;s media</FieldLabel>
           </Field>
           {error ? (
-            <p role="alert" className="text-sm">
+            <p role="alert" className="text-sm text-destructive">
               {error}
             </p>
           ) : null}

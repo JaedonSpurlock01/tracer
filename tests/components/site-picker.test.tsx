@@ -126,6 +126,7 @@ describe("SitePickerList", () => {
     fireEvent.click(await screen.findByRole("radio", { name: "pocatelloasphaltpaving.com" }));
     fireEvent.click(screen.getByRole("button", { name: "Link Site" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This Site is already linked to another Workspace.");
+    expect(screen.getByRole("alert")).toHaveClass("text-destructive");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/site/link"))).toHaveLength(2));
     expect(onLinked).not.toHaveBeenCalled();

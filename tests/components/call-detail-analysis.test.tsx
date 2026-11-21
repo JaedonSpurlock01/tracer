@@ -178,6 +178,7 @@ describe("Call Detail Transcript states", () => {
     render(<CallDetailView call={withTranscript({ state: "Failed" })} operator />);
     fireEvent.click(within(transcript()).getByRole("button", { name: "Retry" }));
     expect(await within(transcript()).findByRole("alert")).toHaveTextContent("Analysis could not be restarted. Try again.");
+    expect(within(transcript()).getByRole("alert")).toHaveClass("text-destructive");
     expect(within(transcript()).getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 

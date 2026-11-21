@@ -30,7 +30,9 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ActionButton, SettingsSection, useAction } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { StatusMessage } from "@/components/tracer/status-message";
 import type { OperatorRecord } from "@/data/operator-administration";
 import type { WorkspaceRecord } from "@/data/workspaces";
 
@@ -56,8 +58,9 @@ export default function WorkspaceAccessSection({
   const [clientViewers, setClientViewers] = useState<OperatorRecord[] | null>(initialUsers ? clientViewersOf(initialUsers) : null);
   const [loadError, setLoadError] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const add = useAction();
+  const remove = useAction();
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const load = async () => {
     setLoadError(false);
@@ -80,32 +83,44 @@ export default function WorkspaceAccessSection({
   const ungranted = (clientViewers ?? []).filter((user) => !granted.includes(user));
   const items = Object.fromEntries(ungranted.map((user) => [user.id, user.name]));
 
-  async function update(path: string, init: RequestInit) {
-    setBusy(true);
-    setError("");
+  async function update(path: string, init: RequestInit, message: string) {
     const response = await mutationFetch(path, init).catch(() => null);
     if (!response?.ok) {
       const body = response ? ((await response.json().catch(() => ({}))) as { error?: string }) : {};
-      setError(body.error === "last_access_grant" ? lastGrantMessage : "Access could not be updated.");
-    } else {
-      setSelectedUserId(null);
-      await load();
+      return { error: body.error === "last_access_grant" ? lastGrantMessage : "Access could not be updated." };
     }
-    setBusy(false);
+    setSelectedUserId(null);
+    await load();
+    return { message };
+  }
+
+  function removeAccess(user: OperatorRecord) {
+    setRemoving(user.id);
+    return remove.run(() => update(`/api/users/${user.id}/access-grants/${workspace.id}`, { method: "DELETE" }, `Access removed for ${user.name}.`)).finally(() => setRemoving(null));
+  }
+
+  function addAccess() {
+    return add.run(() =>
+      update(
+        `/api/users/${selectedUserId}/access-grants`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) },
+        "Access added.",
+      ),
+    );
   }
 
   return (
-    <section id="access" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="font-semibold">Access</h2>
-          <p className="text-sm text-muted-foreground">Client Viewers with read access to this Workspace. Operators have global access.</p>
-        </div>
-        <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/users">
+    <SettingsSection
+      id="access"
+      title="Access"
+      action={
+        <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href="/users">
           Provision a Client Viewer
         </Link>
-      </div>
-      {error ? <p role="alert">{error}</p> : null}
+      }
+      description="Client Viewers with read access to this Workspace. Operators have global access."
+    >
+      {remove.error ? <p role="alert" className="text-sm text-destructive">{remove.error}</p> : <StatusMessage status={remove.status} className="text-sm text-muted-foreground" />}
       {loadError ? (
         <div className="flex items-center gap-3">
           <p role="alert">Access is unavailable.</p>
@@ -133,8 +148,9 @@ export default function WorkspaceAccessSection({
                       size="sm"
                       aria-label={`Remove Access for ${user.name}`}
                       title={user.accessGrants.length <= 1 ? lastGrantMessage : undefined}
-                      disabled={busy || user.accessGrants.length <= 1}
-                      onClick={() => void update(`/api/users/${user.id}/access-grants/${workspace.id}`, { method: "DELETE" })}
+                      aria-busy={removing === user.id || undefined}
+                      disabled={removing === user.id || user.accessGrants.length <= 1}
+                      onClick={() => void removeAccess(user)}
                     >
                       Remove Access
                     </Button>
@@ -162,26 +178,15 @@ export default function WorkspaceAccessSection({
                   </SelectContent>
                 </Select>
               </Field>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy || !selectedUserId}
-                onClick={() =>
-                  void update(`/api/users/${selectedUserId}/access-grants`, {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ workspaceId: workspace.id }),
-                  })
-                }
-              >
+              <ActionButton type="button" variant="outline" action={add} disabled={!selectedUserId} onClick={() => void addAccess()}>
                 Add Access
-              </Button>
+              </ActionButton>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Only Active Workspaces can receive new Access Grants.</p>
           )}
         </>
       )}
-    </section>
+    </SettingsSection>
   );
 }

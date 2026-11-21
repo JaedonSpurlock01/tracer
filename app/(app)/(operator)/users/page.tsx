@@ -31,5 +31,5 @@ export default async function UsersPage() {
     notFound();
   }
   const users = await withRequestRuntime(({ database }) => createOperatorAdministration(database, actor.organizationId).list());
-  return <UsersView currentUserId={actor.userId} initialUsers={users} />;
+  return <UsersView currentUserId={actor.userId} initialUsers={users} timeZone={actor.timezone} />;
 }

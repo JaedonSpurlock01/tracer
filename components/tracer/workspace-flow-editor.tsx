@@ -54,6 +54,7 @@ import { layoutCallFlow } from "@/components/tracer/flow/graph-layout";
 import FlowNodeView, { FlowCanvasContext } from "@/components/tracer/flow/flow-nodes";
 import FlowInspector from "@/components/tracer/flow/flow-inspector";
 import { NodeIcon } from "@/components/tracer/flow/node-icon";
+import { ActionButton, useAction } from "@/components/tracer/form-parts";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
 import {
   createFlowNode,
@@ -88,7 +89,10 @@ function EditorBody({ workspace, initialFlow }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [serverValidation, setServerValidation] = useState<{ graph: string; result: ValidationResult } | null>(null);
   const [saveState, setSaveState] = useState(initialFlow.draft ? "Saved" : "");
-  const [status, setStatus] = useState("");
+  const publishAction = useAction();
+  const editAction = useAction();
+  const discardAction = useAction();
+  const versionAction = useAction();
   const [versionDialog, setVersionDialog] = useState(false);
   const [discardDialog, setDiscardDialog] = useState(false);
   const [versions, setVersions] = useState(initialFlow.versions);
@@ -178,56 +182,61 @@ function EditorBody({ workspace, initialFlow }: Props) {
     setSelectedId(null);
     setServerValidation(null);
   }
-  async function beginEditing() {
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ graph }),
+  function beginEditing() {
+    return editAction.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ graph }),
+      }).catch(() => null);
+      if (!response?.ok) return { error: "The Draft could not be started." };
+      const body = (await response.json()) as { validation: ValidationResult };
+      lastSavedRef.current = serialized;
+      setServerValidation({ graph: serialized, result: body.validation });
+      setEditing(true);
+      setReadOnlyVersion(null);
     });
-    if (!response.ok) return;
-    const body = (await response.json()) as { validation: ValidationResult };
-    lastSavedRef.current = serialized;
-    setServerValidation({ graph: serialized, result: body.validation });
-    setEditing(true);
-    setReadOnlyVersion(null);
   }
-  async function publish() {
-    const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow/publish`, { method: "POST" });
-    if (!response.ok) {
-      if (response.status === 422) {
+  function publish() {
+    return publishAction.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow/publish`, { method: "POST" }).catch(() => null);
+      if (response?.status === 422) {
         const body = (await response.json()) as { issues?: ValidationIssue[] };
         if (body.issues) setServerValidation({ graph: serialized, result: { valid: false, issues: body.issues } });
-        setStatus("Draft is not publishable");
-      } else {
-        setStatus("Publish failed. The published version is unchanged.");
+        return { error: "Draft is not publishable." };
       }
-      return;
-    }
-    const body = (await response.json()) as { workspace: WorkspaceRecord };
-    setStatus(`Version ${body.workspace.publishedFlowVersion?.version ?? ""} published`);
-    const refreshed = await fetch(`/api/workspaces/${workspace.id}/flow`).catch(() => null);
-    if (refreshed?.ok) {
-      const refreshedFlow = (await refreshed.json()) as FlowState;
-      if (Array.isArray(refreshedFlow.versions)) setVersions(refreshedFlow.versions);
-    }
-    setEditing(false);
-    setReadOnlyVersion(body.workspace.publishedFlowVersion?.version ?? null);
+      if (!response?.ok) return { error: "Publish failed. The published version is unchanged." };
+      const body = (await response.json()) as { workspace: WorkspaceRecord };
+      const refreshed = await fetch(`/api/workspaces/${workspace.id}/flow`).catch(() => null);
+      if (refreshed?.ok) {
+        const refreshedFlow = (await refreshed.json()) as FlowState;
+        if (Array.isArray(refreshedFlow.versions)) setVersions(refreshedFlow.versions);
+      }
+      setEditing(false);
+      setReadOnlyVersion(body.workspace.publishedFlowVersion?.version ?? null);
+      return { message: `Version ${body.workspace.publishedFlowVersion?.version ?? ""} published` };
+    });
   }
-  async function discard() {
-    await mutationFetch(`/api/workspaces/${workspace.id}/flow`, { method: "DELETE" });
-    setEditing(false);
-    setDiscardDialog(false);
-    loadGraph(initialFlow.published?.graph ?? null);
-    setReadOnlyVersion(initialFlow.published?.version ?? null);
+  function discard() {
+    return discardAction.run(async () => {
+      const response = await mutationFetch(`/api/workspaces/${workspace.id}/flow`, { method: "DELETE" }).catch(() => null);
+      if (!response?.ok) return { error: "The Draft could not be discarded." };
+      setEditing(false);
+      setDiscardDialog(false);
+      loadGraph(initialFlow.published?.graph ?? null);
+      setReadOnlyVersion(initialFlow.published?.version ?? null);
+    });
   }
-  async function showVersion(version: number) {
-    const response = await fetch(`/api/workspaces/${workspace.id}/flow/versions/${version}`);
-    if (!response.ok) return;
-    const body = (await response.json()) as { graph: CallFlowGraph };
-    loadGraph(body.graph);
-    setReadOnlyVersion(version);
-    setVersionDialog(false);
-    setEditing(false);
+  function showVersion(version: number) {
+    return versionAction.run(async () => {
+      const response = await fetch(`/api/workspaces/${workspace.id}/flow/versions/${version}`).catch(() => null);
+      if (!response?.ok) return { error: `Version ${version} could not be opened.` };
+      const body = (await response.json()) as { graph: CallFlowGraph };
+      loadGraph(body.graph);
+      setReadOnlyVersion(version);
+      setVersionDialog(false);
+      setEditing(false);
+    });
   }
   function addNode(type: FlowNodeType) {
     const next = createFlowNode(type, { destinationNumber: workspace.destinationNumber ?? "" });
@@ -241,8 +250,15 @@ function EditorBody({ workspace, initialFlow }: Props) {
 
   const selected = nodes.find((node) => node.id === selectedId)?.data;
   const hasDisclosure = nodes.some((node) => node.data.type === "recording_disclosure");
-  const publishable = validation?.valid === true && workspace.state === "Active";
   const issues = validation?.issues ?? [];
+  const publishBlocker =
+    workspace.state !== "Active"
+      ? "Publishing opens once the Workspace is Active."
+      : !editing
+        ? "Edit Flow to start a Draft before publishing."
+        : validation?.valid !== true
+          ? `Fix ${issues.length === 1 ? "the issue" : `the ${issues.length} issues`} before publishing.`
+          : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -258,7 +274,6 @@ function EditorBody({ workspace, initialFlow }: Props) {
             Activation publishes the first version
           </Link>
         ) : null}
-        {status ? <span role="status">{status}</span> : null}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={() => setVersionDialog(true)}>
             Version history
@@ -268,13 +283,13 @@ function EditorBody({ workspace, initialFlow }: Props) {
               Discard Draft
             </Button>
           ) : workspace.state !== "Archived" && nodes.length ? (
-            <Button variant="outline" onClick={() => void beginEditing()}>
+            <ActionButton variant="outline" action={editAction} onClick={() => void beginEditing()}>
               Edit Flow
-            </Button>
+            </ActionButton>
           ) : null}
-          <Button disabled={!publishable} onClick={() => void publish()}>
+          <ActionButton action={publishAction} unavailable={publishBlocker} onClick={() => void publish()}>
             Publish
-          </Button>
+          </ActionButton>
         </div>
       </div>
       <div className="relative h-[40rem] overflow-hidden rounded-lg border bg-background">
@@ -364,10 +379,11 @@ function EditorBody({ workspace, initialFlow }: Props) {
             <DialogTitle>Version history</DialogTitle>
           </DialogHeader>
           {versions.map((version) => (
-            <Button key={version.version} variant="outline" onClick={() => void showVersion(version.version)}>
+            <Button key={version.version} variant="outline" disabled={versionAction.pending} onClick={() => void showVersion(version.version)}>
               Version {version.version}
             </Button>
           ))}
+          {versionAction.error ? <p role="alert" className="text-sm text-destructive">{versionAction.error}</p> : null}
         </DialogContent>
       </Dialog>
       <Dialog open={discardDialog} onOpenChange={setDiscardDialog}>
@@ -379,7 +395,9 @@ function EditorBody({ workspace, initialFlow }: Props) {
             <Button variant="outline" onClick={() => setDiscardDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void discard()}>Discard Draft</Button>
+            <ActionButton action={discardAction} onClick={() => void discard()}>
+              Discard Draft
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -20,7 +20,7 @@
 import Link from "next/link";
 
 import { Frame, FramePanel } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 
 export default function CallNotFound() {
   return (
@@ -30,9 +30,9 @@ export default function CallNotFound() {
           <h1 className="font-semibold">Call not found</h1>
           <p className="text-sm text-muted-foreground">This Call does not exist or you do not have access to it.</p>
         </div>
-        <Button variant="outline" render={<Link href="/workspaces" />}>
+        <Link href="/workspaces" className={buttonVariants({ variant: "outline" })}>
           Workspaces
-        </Button>
+        </Link>
       </FramePanel>
     </Frame>
   );

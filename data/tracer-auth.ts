@@ -14,7 +14,10 @@
  *  Disabled keeps a working session for at most that minute, which the
  *  Product Owner accepted on 2026-10-24 for an internal tool. A before
  *  hook reports auth.handler to onPhase so a stalled session check shows
- *  whether it stopped in Better Auth's setup or inside the endpoint.
+ *  whether it stopped in Better Auth's setup or inside the endpoint. When
+ *  the base URL is localhost or 127.0.0.1, both names on that port are
+ *  trusted origins, because local development is reached under either and
+ *  Better Auth otherwise refuses the other one before any code is sent.
  *
  * @see
  *  docs/adr/0003-map-better-auth-membership-roles-to-canonical-roles.md
@@ -50,12 +53,23 @@ export interface TracerAuthOptions {
   onPhase?: (phase: string) => void;
 }
 
+const loopbackHosts = ["localhost", "127.0.0.1"];
+
+function loopbackAliases(baseURL: string | undefined): string[] {
+  if (!baseURL) return [];
+  const url = new URL(baseURL);
+  if (!loopbackHosts.includes(url.hostname)) return [];
+  return loopbackHosts.map((host) => `${url.protocol}//${host}${url.port ? `:${url.port}` : ""}`);
+}
+
 export function createTracerAuth(options: TracerAuthOptions) {
   const database = options.database;
+  const baseURL = options.baseURL ?? process.env.BETTER_AUTH_URL;
 
   return betterAuth({
     secret: options.secret ?? process.env.BETTER_AUTH_SECRET,
-    baseURL: options.baseURL ?? process.env.BETTER_AUTH_URL,
+    baseURL,
+    trustedOrigins: loopbackAliases(baseURL),
     database: drizzleAdapter(database, { provider: "pg", schema }),
     user: {
       additionalFields: {

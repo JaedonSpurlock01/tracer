@@ -31,7 +31,7 @@ describe("PricingGuide", () => {
     const table = screen.getByRole("table", { name: "Rates" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(pricingGuide.length);
-    expect(within(rows[0]).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Tracking Number rental", "$1.15", "per number per month", pricingGuide[0].explanation]);
+    expect(within(rows[0]).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([`Tracking Number rental${pricingGuide[0].explanation}`, "$1.15", "per number per month", pricingGuide[0].explanation]);
     expect(within(rows[1]).getAllByRole("cell").map((cell) => cell.textContent?.slice(0, 7))).toEqual(["Inbound", "$0.0085", "per min", pricingGuide[1].explanation.slice(0, 7)]);
   });
 

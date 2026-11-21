@@ -7,15 +7,21 @@
  *  Lists Organization-scoped Workspaces as one table grouped in triage
  *  order: Needs attention (Setup Required, or an Active Workspace whose
  *  attention roll-up asks for an Operator), then Running, then Archived
- *  collapsed. Each row shows the Workspace's routing pair, its Calls and
- *  Good Leads for the last 30 days with the lead rate, its last Call in its
- *  reporting timezone, and the attention roll-up with its reason. Setup
- *  Required rows name the next setup step and make Resume Setup the row's
- *  primary action. Search, the Workspace State chips, and the page live in
+ *  collapsed. Each row reads on one line: the name with its Workspace
+ *  State, the Tracking Number, its Calls and Good Leads for the last 30
+ *  days with the lead rate, its last Call as a short time in its reporting
+ *  timezone, and the attention roll-up with its reason. Setup Required rows
+ *  name the next setup step in the Attention column and make Resume Setup
+ *  the row's primary action. Search, the Workspace State chips, and the page live in
  *  the URL. The server renders the first page and the view fetches again
  *  only when the search, state, or page changes or the wizard reports.
  *
  * @remarks
+ *  Details that would wrap a row sit in hover titles: the reporting
+ *  timezone on the name, the Destination Number on the Tracking Number,
+ *  the full timestamp on the last Call, and the full attention reason. An
+ *  absent value is named (None, No Calls, No Tracking Number), never a dash,
+ *  and only the Tracking Number is monospace.
  *  The wizard is a separate module mounted with a fresh key per opening;
  *  this view only decides when it opens and refreshes after it reports.
  *
@@ -35,14 +41,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChevronDownIcon, SearchIcon } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FramePanel } from "@/components/reui/frame";
 import { EmptyState } from "@/components/tracer/empty-state";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import { NoResultsArt, NoWorkspacesArt } from "@/components/tracer/line-art";
 import WorkspaceSetupWizard from "@/components/tracer/workspace-setup-wizard";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCallTime } from "@/components/tracer/call-format";
+import { formatCallTime, formatShortTime } from "@/components/tracer/call-format";
+import { StatusMessage, useStatusMessage } from "@/components/tracer/status-message";
 import type { WorkspaceAttention, WorkspaceListStats, WorkspaceListWithStats } from "@/data/analytics";
 import type { WorkspaceListResult, WorkspaceRecord } from "@/data/workspaces";
 import { nextSetupStep, type WorkspaceState } from "@/data/workspace-policy";
@@ -86,8 +93,12 @@ function Dot({ className }: { className: string }) {
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${className}`} />;
 }
 
-const headerCell = "h-10 px-3 text-left align-middle text-xs font-medium text-muted-foreground first:ps-(--frame-panel-px) last:pe-(--frame-panel-px)";
-const bodyCell = "px-3 py-2.5 align-top text-sm first:ps-(--frame-panel-px) last:pe-(--frame-panel-px)";
+const headerCell = "h-10 px-3 text-left align-middle text-xs font-medium whitespace-nowrap text-muted-foreground first:ps-4 last:pe-4";
+const bodyCell = "px-3 py-2.5 align-middle text-sm whitespace-nowrap first:ps-4 last:pe-4";
+
+function Absent({ children }: { children: ReactNode }) {
+  return <span className="text-muted-foreground">{children}</span>;
+}
 
 function LedgerRow({ row, readOnly, onResume }: { row: WorkspaceRow; readOnly: boolean; onResume: (workspace: WorkspaceRecord) => void }) {
   const stats = row.stats;
@@ -97,50 +108,61 @@ function LedgerRow({ row, readOnly, onResume }: { row: WorkspaceRow; readOnly: b
   return (
     <tr className="border-t border-border transition-colors hover:bg-muted/40">
       <td className={bodyCell}>
-        <div className="flex flex-col gap-0.5">
-          <Link className="font-medium hover:underline" href={`/workspaces/${row.id}`} prefetch>
+        <span className="flex min-w-0 items-center gap-2">
+          <Link className="max-w-64 truncate font-medium hover:underline" href={`/workspaces/${row.id}`} title={row.reportingTimezone} prefetch>
             {row.name}
           </Link>
-          <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant={stateVariant(row.state)} size="sm">
-              {row.state}
-            </Badge>
-            <span>{next ? `Next: ${next}` : row.reportingTimezone}</span>
-          </span>
-        </div>
+          <Badge variant={stateVariant(row.state)} size="sm">
+            {row.state}
+          </Badge>
+        </span>
       </td>
       <td className={bodyCell}>
-        <div className="flex flex-col gap-0.5 font-mono text-xs tabular-nums">
-          <span className={row.trackingNumber ? "" : "text-muted-foreground"}>{row.trackingNumber ?? "No Tracking Number"}</span>
-          <span className="text-muted-foreground">{row.destinationNumber ? `→ ${row.destinationNumber}` : "→ No Destination Number"}</span>
-        </div>
+        {row.trackingNumber ? (
+          <span className="font-mono text-xs tabular-nums" title={row.destinationNumber ? `Forwards to ${row.destinationNumber}` : "No Destination Number"}>
+            {row.trackingNumber}
+          </span>
+        ) : (
+          <Absent>No Tracking Number</Absent>
+        )}
       </td>
-      <td className={`${bodyCell} text-right font-mono tabular-nums`}>{stats ? numberFormatter.format(stats.callsLast30Days) : "-"}</td>
-      <td className={`${bodyCell} text-right font-mono tabular-nums`}>{stats ? numberFormatter.format(stats.goodLeadsLast30Days) : "-"}</td>
+      <td className={`${bodyCell} text-right tabular-nums`}>{stats ? numberFormatter.format(stats.callsLast30Days) : <Absent>None</Absent>}</td>
+      <td className={`${bodyCell} text-right tabular-nums`}>{stats ? numberFormatter.format(stats.goodLeadsLast30Days) : <Absent>None</Absent>}</td>
       <td className={bodyCell}>
         {rate === null ? (
-          <span className="text-muted-foreground">-</span>
+          <Absent>None</Absent>
         ) : (
           <span className="inline-flex items-center gap-2">
             <span className="h-1 w-14 overflow-hidden rounded-full bg-muted" aria-hidden>
               <span className="block h-full rounded-full bg-primary" style={{ width: `${rate}%` }} />
             </span>
-            <span className="font-mono text-xs tabular-nums">{rate}%</span>
+            <span className="text-xs tabular-nums">{rate}%</span>
           </span>
         )}
       </td>
-      <td className={`${bodyCell} font-mono tabular-nums`}>{stats?.lastCallAt ? formatCallTime(stats.lastCallAt, row.reportingTimezone) : "-"}</td>
+      <td className={`${bodyCell} tabular-nums`}>
+        {stats?.lastCallAt ? <span title={formatCallTime(stats.lastCallAt, row.reportingTimezone)}>{formatShortTime(stats.lastCallAt, row.reportingTimezone)}</span> : <Absent>No Calls</Absent>}
+      </td>
       <td className={bodyCell}>
-        {attention ? (
-          <span className="flex flex-col gap-0.5">
-            <span className="inline-flex items-center gap-1.5">
-              <Dot className={attentionTone[attention.status]} />
-              {attention.status}
-            </span>
-            {attention.reason ? <span className="text-xs text-muted-foreground">{attention.reason}</span> : null}
+        {next ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Dot className={attentionTone["Needs attention"]} />
+            Next: {next}
+          </span>
+        ) : attention ? (
+          <span className="inline-flex max-w-72 items-center gap-1.5" title={attention.reason ? `${attention.status}: ${attention.reason}` : undefined}>
+            <Dot className={attentionTone[attention.status]} />
+            {attention.reason ? (
+              <span className="truncate">
+                <span className="sr-only">{attention.status}: </span>
+                {attention.reason}
+              </span>
+            ) : (
+              attention.status
+            )}
           </span>
         ) : (
-          "-"
+          <Absent>None</Absent>
         )}
       </td>
       <td className={`${bodyCell} text-right`}>
@@ -149,9 +171,9 @@ function LedgerRow({ row, readOnly, onResume }: { row: WorkspaceRow; readOnly: b
             Resume Setup
           </Button>
         ) : (
-          <Button variant="outline" size="xs" render={<Link href={`/workspaces/${row.id}`} prefetch />}>
+          <Link href={`/workspaces/${row.id}`} prefetch className={buttonVariants({ variant: "outline", size: "xs" })}>
             Open
-          </Button>
+          </Link>
         )}
       </td>
     </tr>
@@ -164,12 +186,12 @@ function LedgerGroup({ group, rows, defaultOpen, children }: { group: GroupKey; 
   return (
     <tbody>
       <tr className="border-t border-border bg-muted/30">
-        <th colSpan={8} scope="rowgroup" className="px-(--frame-panel-px) py-1.5 text-left text-xs font-medium text-muted-foreground">
+        <th colSpan={8} scope="rowgroup" className="px-4 py-1.5 text-left text-xs font-medium text-muted-foreground">
           <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="inline-flex items-center gap-2">
             <ChevronDownIcon className={`size-3.5 transition-transform ${open ? "" : "-rotate-90"}`} aria-hidden />
             <Dot className={groups[group].tone} />
             <span className="uppercase tracking-wider">{groups[group].title}</span>
-            <span className="font-mono tabular-nums">{rows.length}</span>
+            <span className="tabular-nums">{rows.length}</span>
           </button>
         </th>
       </tr>
@@ -201,7 +223,7 @@ export default function WorkspacesView({
   const [page, setPage] = useState(initialQuery.page);
   const mounted = useRef(false);
   const requestId = useRef(0);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useStatusMessage();
   const [resumeHandled, setResumeHandled] = useState(false);
   const [wizard, setWizard] = useState<{ key: number; workspace: WorkspaceRecord | null; open: boolean } | null>(null);
 
@@ -295,142 +317,139 @@ export default function WorkspacesView({
   const renderRow = (row: WorkspaceRow) => <LedgerRow key={row.id} row={row} readOnly={readOnly} onResume={openWizard} />;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Workspaces</h1>
-          <p className="text-sm text-muted-foreground">
-            {readOnly ? null : `${result.counts.setupRequired} Setup Required, `}{result.counts.active} Active, {result.counts.archived} Archived
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Workspaces"
+        description={`${readOnly ? "" : `${result.counts.setupRequired} Setup Required, `}${result.counts.active} Active, ${result.counts.archived} Archived`}
+      >
         {readOnly ? null : (
-          <Button type="button" onClick={() => openWizard(null)}>
-            Create Workspace
-          </Button>
+          <>
+            <StatusMessage status={status} className="text-sm text-muted-foreground" />
+            <Button type="button" onClick={() => openWizard(null)}>
+              Create Workspace
+            </Button>
+          </>
         )}
-      </div>
-      <Frame>
-        <FramePanel className="flex flex-col gap-3 p-0">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-(--frame-panel-px) pt-(--frame-panel-py)">
-            <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Workspace State">
-              {states
-                .filter((state) => !(readOnly && state === "Setup Required"))
-                .map((state) => {
-                  const active = stateFilter === state;
-                  return (
-                    <button
-                      key={state}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => {
-                        setStateFilter(state);
-                        setPage(1);
-                      }}
-                      className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${active ? "border-border bg-muted text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
-                    >
-                      {state}
-                      <span className="font-mono tabular-nums">{counts[state]}</span>
-                    </button>
-                  );
-                })}
-            </div>
-            <div className="relative w-full sm:w-72">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-              <Input
-                id="search-workspaces"
-                aria-label="Search workspaces"
-                placeholder="Search name or number"
-                className="pl-8"
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
+      </PageHeader>
+      <Panel>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Workspace State">
+            {states
+              .filter((state) => !(readOnly && state === "Setup Required"))
+              .map((state) => {
+                const active = stateFilter === state;
+                return (
+                  <button
+                    key={state}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      setStateFilter(state);
+                      setPage(1);
+                    }}
+                    className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${active ? "border-border bg-muted text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                  >
+                    {state}
+                    <span className="tabular-nums">{counts[state]}</span>
+                  </button>
+                );
+              })}
           </div>
-          {status ? <p role="status" className="px-(--frame-panel-px) text-sm">{status}</p> : null}
-          {fetchError ? (
-            <div className="flex items-center gap-3 px-(--frame-panel-px) pb-(--frame-panel-py)">
-              <p role="alert">Workspaces are unavailable.</p>
-              <Button type="button" variant="outline" onClick={() => void loadWorkspaces()}>
-                Retry
-              </Button>
-            </div>
-          ) : null}
-          {noResults ? (
-            <div className="px-(--frame-panel-px) pb-(--frame-panel-py)">
-              <EmptyState
-                data-testid="workspace-empty-state"
-                art={filtered ? <NoResultsArt /> : <NoWorkspacesArt />}
-                title={filtered ? "No matching Workspaces" : readOnly ? "No Workspaces shared" : "No Workspaces yet"}
-                description={
-                  filtered
-                    ? "Clear the search or change the Workspace State filter."
-                    : readOnly
-                      ? "No Workspaces are shared with you."
-                      : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."
-                }
-                action={
-                  readOnly ? null : (
-                    <Button type="button" onClick={() => openWizard(null)}>
-                      Create Workspace
-                    </Button>
-                  )
-                }
-              />
-            </div>
-          ) : null}
-          {!fetchError && (loading || result.workspaces.length > 0) ? (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[56rem]">
-                  <thead>
-                    <tr>
-                      <th scope="col" className={headerCell}>Workspace</th>
-                      <th scope="col" className={headerCell}>Routing</th>
-                      <th scope="col" className={`${headerCell} text-right`}>Calls (30d)</th>
-                      <th scope="col" className={`${headerCell} text-right`}>Good Leads (30d)</th>
-                      <th scope="col" className={headerCell}>Lead rate</th>
-                      <th scope="col" className={headerCell}>Last Call</th>
-                      <th scope="col" className={headerCell}>Attention</th>
-                      <th scope="col" className={headerCell}><span className="sr-only">Actions</span></th>
-                    </tr>
-                  </thead>
-                  {loading ? (
-                    <tbody>
-                      {[0, 1, 2].map((index) => (
-                        <tr key={index} className="border-t border-border">
-                          <td colSpan={8} className={bodyCell}>
-                            <Skeleton className="h-8 w-full" />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  ) : (
-                    <>
-                      <LedgerGroup group="attention" rows={grouped.attention} defaultOpen>{renderRow}</LedgerGroup>
-                      <LedgerGroup group="running" rows={grouped.running} defaultOpen>{renderRow}</LedgerGroup>
-                      <LedgerGroup key={stateFilter} group="archived" rows={grouped.archived} defaultOpen={stateFilter === "Archived"}>{renderRow}</LedgerGroup>
-                    </>
-                  )}
-                </table>
-              </div>
-              <div className="flex items-center justify-between border-t border-border px-(--frame-panel-px) py-3 text-xs text-muted-foreground">
-                <span className="font-mono tabular-nums">{first}–{last} of {result.total}</span>
-                <div className="flex items-center gap-1">
-                  <Button type="button" variant="outline" size="xs" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>
-                    Previous
+          <div className="relative w-full sm:w-72">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              id="search-workspaces"
+              aria-label="Search workspaces"
+              placeholder="Search name or number"
+              className="pl-8"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
+        </div>
+        {fetchError ? (
+          <div className="flex items-center gap-3 px-4 py-3">
+            <p role="alert" className="text-sm text-destructive">Workspaces are unavailable.</p>
+            <Button type="button" variant="outline" onClick={() => void loadWorkspaces()}>
+              Retry
+            </Button>
+          </div>
+        ) : null}
+        {noResults ? (
+          <div className="px-4 py-3">
+            <EmptyState
+              data-testid="workspace-empty-state"
+              art={filtered ? <NoResultsArt /> : <NoWorkspacesArt />}
+              title={filtered ? "No matching Workspaces" : readOnly ? "No Workspaces shared" : "No Workspaces yet"}
+              description={
+                filtered
+                  ? "Clear the search or change the Workspace State filter."
+                  : readOnly
+                    ? "No Workspaces are shared with you."
+                    : "No Workspaces yet. Create a Workspace now; activating it later requires the connected Organization Twilio account."
+              }
+              action={
+                readOnly ? null : (
+                  <Button type="button" onClick={() => openWizard(null)}>
+                    Create Workspace
                   </Button>
-                  <Button type="button" variant="outline" size="xs" disabled={page >= pageCount || loading} onClick={() => setPage((current) => current + 1)}>
-                    Next
-                  </Button>
-                </div>
+                )
+              }
+            />
+          </div>
+        ) : null}
+        {!fetchError && (loading || result.workspaces.length > 0) ? (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[56rem]">
+                <thead>
+                  <tr>
+                    <th scope="col" className={headerCell}>Workspace</th>
+                    <th scope="col" className={headerCell}>Tracking Number</th>
+                    <th scope="col" className={`${headerCell} text-right`}>Calls (30d)</th>
+                    <th scope="col" className={`${headerCell} text-right`}>Good Leads (30d)</th>
+                    <th scope="col" className={headerCell}>Lead Rate</th>
+                    <th scope="col" className={headerCell}>Last Call</th>
+                    <th scope="col" className={headerCell}>Attention</th>
+                    <th scope="col" className={headerCell}><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                {loading ? (
+                  <tbody>
+                    {[0, 1, 2].map((index) => (
+                      <tr key={index} className="border-t border-border">
+                        <td colSpan={8} className={bodyCell}>
+                          <Skeleton className="h-8 w-full" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ) : (
+                  <>
+                    <LedgerGroup group="attention" rows={grouped.attention} defaultOpen>{renderRow}</LedgerGroup>
+                    <LedgerGroup group="running" rows={grouped.running} defaultOpen>{renderRow}</LedgerGroup>
+                    <LedgerGroup key={stateFilter} group="archived" rows={grouped.archived} defaultOpen={stateFilter === "Archived"}>{renderRow}</LedgerGroup>
+                  </>
+                )}
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted-foreground">
+              <span className="tabular-nums">{first}–{last} of {result.total}</span>
+              <div className="flex items-center gap-1">
+                <Button type="button" variant="outline" size="xs" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>
+                  Previous
+                </Button>
+                <Button type="button" variant="outline" size="xs" disabled={page >= pageCount || loading} onClick={() => setPage((current) => current + 1)}>
+                  Next
+                </Button>
               </div>
-            </>
-          ) : null}
-        </FramePanel>
-      </Frame>
+            </div>
+          </>
+        ) : null}
+      </Panel>
       {wizard ? (
         <WorkspaceSetupWizard
           key={wizard.key}

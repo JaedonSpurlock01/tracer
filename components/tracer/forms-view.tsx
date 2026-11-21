@@ -4,10 +4,11 @@
  * @brief  Renders the Workspace Forms page: a ledger of Form Submissions.
  *
  * @description
- *  Lists a Workspace's Form Submissions newest first with when each was
- *  received, who sent it and how to reach them, a summary of the other
- *  fields, the forwarding result, and the effective Lead classification.
- *  Any row expands to show every field in full. Operators approve or
+ *  Lists a Workspace's Form Submissions newest first in one-line rows of
+ *  Received, Name, Contact, Fields, Forwarding, and Lead. Received shows
+ *  the short time with the full timestamp as its hover title. Any row
+ *  expands to show the page, the recipients, the forwarding time, and
+ *  every field in full. Operators approve or
  *  reject a Held submission, add or clear a Lead Review, and Resend one
  *  whose forwarding failed or had no recipients. Client Viewers read the
  *  same ledger without actions.
@@ -16,7 +17,9 @@
  *  Every mutation replaces the row with the submission the route returns,
  *  so the ledger and the held count never guess at the outcome. Times are
  *  shown in UTC because the list carries no Workspace timezone and the
- *  received time is an identifier more than a schedule.
+ *  received time is an identifier more than a schedule. Long cell values
+ *  truncate rather than wrap, and an absent value is named rather than
+ *  printed as a dash.
  *
  * @see
  *  data/form-submissions.ts
@@ -32,22 +35,22 @@ import { ChevronDownIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { Badge } from "@/components/reui/badge";
-import { Frame, FramePanel } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatCallTime } from "@/components/tracer/call-format";
+import { formatCallTime, formatShortTime } from "@/components/tracer/call-format";
 import { EmptyState } from "@/components/tracer/empty-state";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
 import { NoWorkspacesArt } from "@/components/tracer/line-art";
 import { mutationFetch } from "@/components/tracer/mutation-fetch";
+import { PageHeader, Panel } from "@/components/tracer/page-parts";
 import type { FormForwardStatus, FormSubmissionList, FormSubmissionRecord } from "@/data/form-submissions";
 import { leadClassifications, leadReviewNoteMaxLength, type LeadClassification } from "@/data/lead-classification";
 
-const headerCell = "h-10 px-3 text-left align-middle text-xs font-medium text-muted-foreground first:ps-(--frame-panel-px) last:pe-(--frame-panel-px)";
-const bodyCell = "px-3 py-2.5 align-top text-sm first:ps-(--frame-panel-px) last:pe-(--frame-panel-px)";
+const headerCell = "h-10 px-3 text-left align-middle text-xs font-medium whitespace-nowrap text-muted-foreground first:ps-4 last:pe-4";
+const bodyCell = "px-3 py-2.5 align-middle text-sm whitespace-nowrap first:ps-4 last:pe-4";
 
 const forwardBadges: Record<FormForwardStatus, [label: string, variant: "success-light" | "destructive-light" | "warning-light" | "outline"]> = {
   Sent: ["Forwarded", "success-light"],
@@ -63,6 +66,10 @@ function formatReceived(iso: string): string {
   return `${formatCallTime(iso, "UTC")} UTC`;
 }
 
+function Absent({ children = "None" }: { children?: string }) {
+  return <span className="text-muted-foreground">{children}</span>;
+}
+
 function otherFields(submission: FormSubmissionRecord): [string, string][] {
   return Object.entries(submission.fields).filter(([key]) => !identityFields.has(key.trim().toLowerCase()));
 }
@@ -72,7 +79,7 @@ function actionError(action: string, status: number | undefined): string {
   return `The Form Submission could not be ${action}.`;
 }
 
-function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmissionRecord; busy: boolean; onReview: (classification: LeadClassification, note: string) => Promise<boolean> }) {
+function ReviewPopover({ submission, busy, pending, onReview }: { submission: FormSubmissionRecord; busy: boolean; pending: boolean; onReview: (classification: LeadClassification, note: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [classification, setClassification] = useState<LeadClassification | null>(submission.review?.classification ?? null);
   const [note, setNote] = useState(submission.review?.note ?? "");
@@ -111,6 +118,7 @@ function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmiss
             type="button"
             size="sm"
             disabled={busy || !classification || noteTooLong}
+            aria-busy={pending || undefined}
             onClick={async () => {
               if (classification && (await onReview(classification, note.trim()))) setOpen(false);
             }}
@@ -126,13 +134,15 @@ function ReviewPopover({ submission, busy, onReview }: { submission: FormSubmiss
 function SubmissionRow({
   submission,
   operator,
-  busy,
+  pending,
+  error,
   onAction,
   onReview,
 }: {
   submission: FormSubmissionRecord;
   operator: boolean;
-  busy: boolean;
+  pending: string | null;
+  error: string | null;
   onAction: (path: "approve" | "reject" | "resend" | "review", init?: RequestInit) => Promise<boolean>;
   onReview: (classification: LeadClassification, note: string) => Promise<boolean>;
 }) {
@@ -141,65 +151,86 @@ function SubmissionRow({
   const [forwardLabel, forwardVariant] = forwardBadges[submission.forward.status];
   const summary = otherFields(submission);
   const canResend = submission.forward.status === "Failed" || submission.forward.status === "Not configured";
+  const busy = pending !== null;
   return (
     <>
       <tr className="border-t border-border">
-        <td className={`${bodyCell} whitespace-nowrap font-mono text-xs tabular-nums`}>{formatReceived(submission.receivedAt)}</td>
-        <td className={`${bodyCell} font-medium`}>{submission.name}</td>
-        <td className={`${bodyCell} font-mono text-xs`}>
-          <div className="flex flex-col gap-0.5">
-            {submission.phone ? <span>{submission.phone}</span> : null}
-            {submission.email ? <span className="truncate">{submission.email}</span> : null}
-          </div>
+        <td className={`${bodyCell} tabular-nums`}>
+          <span title={formatReceived(submission.receivedAt)}>{formatShortTime(submission.receivedAt, "UTC")}</span>
         </td>
-        <td className={`${bodyCell} max-w-64 text-muted-foreground`}>
-          <div className="flex flex-col gap-0.5">
-            {summary.map(([key, value]) => (
-              <span key={key} className="truncate">
-                {key}: {value}
-              </span>
-            ))}
-          </div>
+        <td className={`${bodyCell} font-medium`}>
+          <span className="block max-w-40 truncate">{submission.name}</span>
         </td>
         <td className={bodyCell}>
-          <div className="flex flex-col gap-1">
+          {submission.phone || submission.email ? (
+            <span className="flex max-w-64 items-center gap-2">
+              {submission.phone ? <span className="font-mono tabular-nums">{submission.phone}</span> : null}
+              {submission.email ? <span className="truncate text-muted-foreground">{submission.email}</span> : null}
+            </span>
+          ) : (
+            <Absent />
+          )}
+        </td>
+        <td className={`${bodyCell} text-muted-foreground`}>
+          {summary.length > 0 ? (
+            <span className="block max-w-64 truncate">
+              {summary.map(([key, value], index) => (
+                <span key={key}>
+                  {index > 0 ? " · " : null}
+                  <span>
+                    {key}: {value}
+                  </span>
+                </span>
+              ))}
+            </span>
+          ) : (
+            "None"
+          )}
+        </td>
+        <td className={bodyCell}>
+          <span className="flex max-w-56 items-center gap-2">
             <Badge variant={forwardVariant}>{forwardLabel}</Badge>
-            {submission.forward.status === "Sent" && submission.forward.forwardedAt ? (
-              <span className="font-mono text-xs text-muted-foreground tabular-nums">{formatReceived(submission.forward.forwardedAt)}</span>
+            {submission.forward.status === "Failed" && submission.forward.error ? (
+              <span className="truncate text-xs text-muted-foreground" title={submission.forward.error}>
+                {submission.forward.error}
+              </span>
             ) : null}
-            {submission.forward.status === "Failed" && submission.forward.error ? <span className="text-xs text-muted-foreground">{submission.forward.error}</span> : null}
-          </div>
+          </span>
         </td>
         <td className={bodyCell}>
-          <div className="flex flex-col gap-1">
+          <span className="flex max-w-56 items-center gap-2">
             {submission.effectiveClassification ? (
               <LeadClassificationBadge classification={submission.effectiveClassification.classification} />
             ) : (
               <span className="text-xs text-muted-foreground">Awaiting approval</span>
             )}
-            {submission.review?.note ? <span className="text-xs text-muted-foreground">{submission.review.note}</span> : null}
-          </div>
+            {submission.review?.note ? (
+              <span className="truncate text-xs text-muted-foreground" title={submission.review.note}>
+                {submission.review.note}
+              </span>
+            ) : null}
+          </span>
         </td>
         <td className={`${bodyCell} text-right`}>
-          <div className="flex flex-wrap justify-end gap-1">
+          <div className="flex justify-end gap-1">
             {operator && submission.held ? (
               <>
-                <Button type="button" size="sm" disabled={busy} onClick={() => void onAction("approve")}>
+                <Button type="button" size="sm" disabled={busy} aria-busy={pending === "approve" || undefined} onClick={() => void onAction("approve")}>
                   Approve
                 </Button>
-                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void onAction("reject")}>
+                <Button type="button" variant="outline" size="sm" disabled={busy} aria-busy={pending === "reject" || undefined} onClick={() => void onAction("reject")}>
                   Reject
                 </Button>
               </>
             ) : null}
-            {operator && !submission.held ? <ReviewPopover key={submission.review?.reviewedAt ?? "none"} submission={submission} busy={busy} onReview={onReview} /> : null}
+            {operator && !submission.held ? <ReviewPopover key={submission.review?.reviewedAt ?? "none"} submission={submission} busy={busy} pending={pending === "review"} onReview={onReview} /> : null}
             {operator && submission.review ? (
-              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void onAction("review", { method: "DELETE" })}>
+              <Button type="button" variant="ghost" size="sm" disabled={busy} aria-busy={pending === "review" || undefined} onClick={() => void onAction("review", { method: "DELETE" })}>
                 Clear review
               </Button>
             ) : null}
             {operator && canResend ? (
-              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void onAction("resend")}>
+              <Button type="button" variant="outline" size="sm" disabled={busy} aria-busy={pending === "resend" || undefined} onClick={() => void onAction("resend")}>
                 Resend
               </Button>
             ) : null}
@@ -210,15 +241,30 @@ function SubmissionRow({
           </div>
         </td>
       </tr>
+      {error ? (
+        <tr>
+          <td colSpan={7} className={`${bodyCell} pt-0 whitespace-normal`}>
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          </td>
+        </tr>
+      ) : null}
       {expanded ? (
         <tr>
-          <td colSpan={7} className={`${bodyCell} pt-0`}>
+          <td colSpan={7} className={`${bodyCell} pt-0 whitespace-normal`}>
             <section id={detailsId} aria-label={`${submission.name} details`} className="rounded-md bg-muted/40 px-3 py-2">
               <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
                 <dt className="text-xs text-muted-foreground">Page</dt>
-                <dd className="font-mono text-xs">{submission.page ?? "-"}</dd>
+                <dd className="font-mono text-xs">{submission.page ?? <Absent />}</dd>
                 <dt className="text-xs text-muted-foreground">Forwarded to</dt>
-                <dd className="font-mono text-xs">{submission.forward.to.length > 0 ? submission.forward.to.join(", ") : "-"}</dd>
+                <dd>{submission.forward.to.length > 0 ? submission.forward.to.join(", ") : <Absent>No recipients</Absent>}</dd>
+                {submission.forward.status === "Sent" && submission.forward.forwardedAt ? (
+                  <>
+                    <dt className="text-xs text-muted-foreground">Forwarded at</dt>
+                    <dd className="tabular-nums">{formatReceived(submission.forward.forwardedAt)}</dd>
+                  </>
+                ) : null}
                 {Object.entries(submission.fields).map(([key, value]) => (
                   <div key={key} className="contents">
                     <dt className="text-xs text-muted-foreground">{key}</dt>
@@ -236,91 +282,87 @@ function SubmissionRow({
 
 export default function FormsView({ list, readOnly = false }: { list: FormSubmissionList; readOnly?: boolean }) {
   const [submissions, setSubmissions] = useState(list.submissions);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [pending, setPending] = useState<{ id: string; path: string } | null>(null);
+  const [failure, setFailure] = useState<{ id: string; text: string } | null>(null);
   const operator = !readOnly;
   const heldCount = submissions.filter((submission) => submission.held).length;
 
-  async function act(submission: FormSubmissionRecord, path: string, init: RequestInit, failure: string): Promise<boolean> {
-    setBusyId(submission.id);
-    setError("");
+  async function act(submission: FormSubmissionRecord, path: string, init: RequestInit, verb: string): Promise<boolean> {
+    setPending({ id: submission.id, path });
+    setFailure(null);
     const response = await mutationFetch(`/api/workspaces/${list.workspace.id}/forms/${submission.id}/${path}`, init).catch(() => null);
     if (!response?.ok) {
-      setError(actionError(failure, response?.status));
-      setBusyId(null);
+      setFailure({ id: submission.id, text: actionError(verb, response?.status) });
+      setPending(null);
       return false;
     }
     const body = (await response.json()) as { submission: FormSubmissionRecord };
     setSubmissions((current) => current.map((item) => (item.id === submission.id ? body.submission : item)));
-    setBusyId(null);
+    setPending(null);
     return true;
   }
 
   const failures = { approve: "approved", reject: "rejected", resend: "resent", review: "changed" } as const;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Forms</h1>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>{submissions.length === 1 ? "1 Form Submission" : `${submissions.length} Form Submissions`}</span>
-          {heldCount > 0 ? <Badge variant="warning-light">{heldCount} held for approval</Badge> : null}
-        </div>
-      </div>
-      <Frame>
-        <FramePanel className="flex flex-col gap-3 p-0">
-          {error ? (
-            <p role="alert" className="px-(--frame-panel-px) pt-(--frame-panel-py) text-sm">
-              {error}
-            </p>
-          ) : null}
-          {submissions.length === 0 ? (
-            <div className="px-(--frame-panel-px) py-(--frame-panel-py)">
-              <EmptyState
-                art={<NoWorkspacesArt />}
-                title="No Form Submissions yet"
-                description={
-                  list.site
-                    ? `Form Submissions appear here when the contact form on ${list.site.primaryHostname} posts with the Forms key.`
-                    : "This Workspace has no linked Site. Link a Site in Workspace Settings to receive its Form Submissions."
-                }
-              />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[64rem]">
-                <thead>
-                  <tr>
-                    <th scope="col" className={headerCell}>Received</th>
-                    <th scope="col" className={headerCell}>Name</th>
-                    <th scope="col" className={headerCell}>Contact</th>
-                    <th scope="col" className={headerCell}>Fields</th>
-                    <th scope="col" className={headerCell}>Forwarding</th>
-                    <th scope="col" className={headerCell}>Lead</th>
-                    <th scope="col" className={headerCell}>
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {submissions.map((submission) => (
-                    <SubmissionRow
-                      key={submission.id}
-                      submission={submission}
-                      operator={operator}
-                      busy={busyId === submission.id}
-                      onAction={(path, init) => act(submission, path, init ?? { method: "POST" }, failures[path])}
-                      onReview={(classification, note) =>
-                        act(submission, "review", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ classification, note: note || null }) }, "reviewed")
-                      }
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </FramePanel>
-      </Frame>
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Forms"
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="tabular-nums">{submissions.length === 1 ? "1 Form Submission" : `${submissions.length} Form Submissions`}</span>
+            {heldCount > 0 ? <Badge variant="warning-light">{heldCount} held for approval</Badge> : null}
+          </span>
+        }
+      />
+      <Panel>
+        {submissions.length === 0 ? (
+          <div className="px-4 py-6">
+            <EmptyState
+              art={<NoWorkspacesArt />}
+              title="No Form Submissions yet"
+              description={
+                list.site
+                  ? `Form Submissions appear here when the contact form on ${list.site.primaryHostname} posts with the Forms key.`
+                  : "This Workspace has no linked Site. Link a Site in Workspace Settings to receive its Form Submissions."
+              }
+            />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th scope="col" className={headerCell}>Received</th>
+                  <th scope="col" className={headerCell}>Name</th>
+                  <th scope="col" className={headerCell}>Contact</th>
+                  <th scope="col" className={headerCell}>Fields</th>
+                  <th scope="col" className={headerCell}>Forwarding</th>
+                  <th scope="col" className={headerCell}>Lead</th>
+                  <th scope="col" className={headerCell}>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((submission) => (
+                  <SubmissionRow
+                    key={submission.id}
+                    submission={submission}
+                    operator={operator}
+                    pending={pending?.id === submission.id ? pending.path : null}
+                    error={failure?.id === submission.id ? failure.text : null}
+                    onAction={(path, init) => act(submission, path, init ?? { method: "POST" }, failures[path])}
+                    onReview={(classification, note) =>
+                      act(submission, "review", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ classification, note: note || null }) }, "reviewed")
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

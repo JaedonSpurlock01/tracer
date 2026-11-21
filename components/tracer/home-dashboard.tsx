@@ -1,19 +1,20 @@
 /**
  * -------------------------------------------------------------------------
  * @file   home-dashboard.tsx
- * @brief  Renders the Home dashboard for every Workspace the user can read.
+ * @brief  Renders the Home briefing for every Workspace the user can read.
  *
  * @description
- *  Shows the Home header with its scope, date controls, and Generate
- *  Report, then the KPI row, the Operator-only Money row (this month's
- *  cost with its yearly projection, the revenue of open Deals, and the
- *  profit), the Leads generated chart, Workspace performance when the user
- *  reads more than one Workspace (with Cost and Revenue columns for
- *  Operators), and the five newest Calls in scope. A Workspace performance row opens that Workspace Overview. A
- *  Recent Calls row opens Call Detail with the global Calls list as its
- *  source, and View Calls opens Calls with the dashboard range as the
- *  Started filter. An Operator without Workspaces sees why Tracer needs an
- *  imported Twilio number and a Create Workspace action instead.
+ *  Shows the Home header with a sentence naming the scope and range, the
+ *  date controls, and Generate Report on one row, then one stat strip with
+ *  the four Call stats and, for Operators, this month's Monthly Revenue and
+ *  Profit with the Monthly Cost named beneath it. Leads generated sits
+ *  beside the five newest Calls as one-line rows, and the Workspaces list
+ *  follows when the user reads more than one Workspace (with each
+ *  Workspace's profit for Operators). A Workspace row opens that Workspace
+ *  Overview. A Recent Calls row opens Call Detail with the global Calls
+ *  list as its source, and View Calls opens Calls with the dashboard range
+ *  as the Started filter. An Operator without Workspaces sees why Tracer
+ *  needs an imported Twilio number and a Create Workspace action instead.
  *
  * @remarks
  *  The server page loads the analytics summary and Recent Calls as separate
@@ -24,7 +25,8 @@
  *  accessible Workspace with the account timezone.
  *
  * @see
- *  app/(app)/page.tsx
+ *  app/(app)/(everyone)/(home)/page.tsx
+ *  components/tracer/page-parts.tsx
  *  components/tracer/analytics-panels.tsx
  *  data/analytics.ts
  *  DESIGN.md
@@ -35,32 +37,16 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useMemo } from "react";
-import { useTable, type ColumnDef } from "@tanstack/react-table";
 
-import { Badge } from "@/components/reui/badge";
-import { DataGrid, dataGridFeatures, type DataGridFeatures } from "@/components/reui/data-grid/data-grid";
-import { DataGridScrollArea } from "@/components/reui/data-grid/data-grid-scroll-area";
-import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
-import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  AnalyticsKpiRow,
-  AnalyticsKpiSkeleton,
-  AnalyticsRangeControls,
-  CallTrendsChart,
-  CallTrendsSkeleton,
-  formatRate,
-  RegionRetry,
-  useAnalyticsNavigation,
-} from "@/components/tracer/analytics-panels";
+import { AnalyticsRangeControls, CallTrendsChart, CallTrendsSkeleton, formatRate, RegionRetry, useAnalyticsNavigation } from "@/components/tracer/analytics-panels";
 import CallOutcomeBadge from "@/components/tracer/call-outcome-badge";
+import { formatCallTime, formatClock, formatShortTime } from "@/components/tracer/call-format";
 import GenerateReportButton, { type GenerateReportScope } from "@/components/tracer/generate-report-dialog";
-import { formatCallTime, formatClock } from "@/components/tracer/call-format";
 import LeadClassificationBadge from "@/components/tracer/lead-classification-badge";
-import type { AnalyticsSummary, WorkspacePerformanceRow } from "@/data/analytics";
+import { ListRow, PageHeader, Panel, StatStrip, type Stat } from "@/components/tracer/page-parts";
+import type { AnalyticsKpi, AnalyticsSummary, WorkspacePerformanceRow } from "@/data/analytics";
 import type { AnalyticsRange } from "@/data/analytics-range";
 import { callDetailHref } from "@/data/call-source";
 import type { CallListItem, CallListResult } from "@/data/calls";
@@ -76,6 +62,8 @@ export interface HomeMoney {
 const recentCallCount = 5;
 const callsSource = "/calls";
 const noCallsYet = "Activity appears after the first inbound Call.";
+const count = new Intl.NumberFormat("en-US");
+const isoDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
 
 interface HomeDashboardProps {
   operator: boolean;
@@ -88,150 +76,102 @@ interface HomeDashboardProps {
   money?: HomeMoney | null;
 }
 
-function WorkspacePerformance({ rows, money }: { rows: WorkspacePerformanceRow[]; money: HomeMoney["byWorkspace"] | undefined }) {
-  const router = useRouter();
-  const columns = useMemo<ColumnDef<DataGridFeatures, WorkspacePerformanceRow>[]>(
-    () => [
-      {
-        id: "workspace",
-        header: "Workspace",
-        cell: ({ row }) => (
-          <Link href={`/workspaces/${row.original.workspace.id}`} prefetch className="font-medium transition-colors hover:text-muted-foreground">
-            {row.original.workspace.name}
-          </Link>
-        ),
-        size: 200,
-      },
-      { id: "trackingNumber", header: "Tracking Number", cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.trackingNumber ?? "-"}</span>, size: 160 },
-      { id: "totalCalls", header: "Total Calls", cell: ({ row }) => <span className="tabular-nums">{row.original.totalCalls}</span>, size: 120 },
-      { id: "answerRate", header: "Answer Rate", cell: ({ row }) => <span className="tabular-nums">{formatRate(row.original.answerRate)}</span>, size: 120 },
-      { id: "goodLeads", header: "Good Leads", cell: ({ row }) => <span className="tabular-nums">{row.original.goodLeads}</span>, size: 120 },
-      { id: "leadRate", header: "Lead Rate", cell: ({ row }) => <span className="tabular-nums">{formatRate(row.original.leadRate)}</span>, size: 120 },
-      ...(money
-        ? [
-            { id: "cost", header: "Cost", cell: ({ row }) => <span className="font-mono tabular-nums">{formatUsdCents(money[row.original.workspace.id]?.costCents ?? 0)}</span>, size: 120 },
-            { id: "revenue", header: "Revenue", cell: ({ row }) => <span className="font-mono tabular-nums">{formatUsdCents(money[row.original.workspace.id]?.revenueCents ?? 0)}</span>, size: 120 },
-          ] satisfies ColumnDef<DataGridFeatures, WorkspacePerformanceRow>[]
-        : []),
-    ],
-    [money],
-  );
-  const table = useTable({ features: dataGridFeatures, data: rows, columns, getRowId: (row) => row.workspace.id });
-  return (
-    <DataGrid table={table} recordCount={rows.length} emptyMessage="No Workspaces to compare." onRowClick={(row) => router.push(`/workspaces/${row.workspace.id}`)}>
-      <DataGridScrollArea orientation="horizontal">
-        <DataGridTable />
-      </DataGridScrollArea>
-    </DataGrid>
-  );
+function rangeLabel(range: AnalyticsRange): string {
+  if (range.kind === "days") return `the last ${range.days} days`;
+  if (range.kind === "all") return "all time";
+  return `${isoDate.format(new Date(`${range.from}T00:00:00Z`))} to ${isoDate.format(new Date(`${range.to}T00:00:00Z`))}`;
 }
 
-function RecentCallsGrid({ calls, timeZone, hasCalls }: { calls: CallListItem[]; timeZone: string; hasCalls: boolean }) {
-  const router = useRouter();
-  const columns = useMemo<ColumnDef<DataGridFeatures, CallListItem>[]>(
-    () => [
-      { id: "outcome", header: "Call Outcome", cell: ({ row }) => <CallOutcomeBadge outcome={row.original.outcome} />, size: 140, meta: { skeleton: <Skeleton className="h-5 w-20" /> } },
-      {
-        id: "callerNumber",
-        header: "Caller",
-        cell: ({ row }) => (
-          <Link href={callDetailHref({ id: row.original.id, workspaceId: row.original.workspace.id }, callsSource)} prefetch className="font-mono font-medium tabular-nums transition-colors hover:text-muted-foreground">
-            {row.original.callerNumber ?? "Unknown caller"}
-          </Link>
-        ),
-        size: 150,
-      },
-      { id: "workspace", header: "Workspace", cell: ({ row }) => row.original.workspace.name, size: 160 },
-      { id: "startedAt", header: "Started", cell: ({ row }) => <span className="font-mono tabular-nums">{formatCallTime(row.original.startedAt, timeZone)}</span>, size: 200 },
-      {
-        id: "connectedDuration",
-        header: "Connected Duration",
-        cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.connectedDurationSeconds === null ? "-" : formatClock(row.original.connectedDurationSeconds)}</span>,
-        size: 170,
-      },
-      {
-        id: "leadClassification",
-        header: "Effective Lead Classification",
-        cell: ({ row }) => {
-          const effective = row.original.effectiveLeadClassification;
-          return effective ? <LeadClassificationBadge classification={effective.classification} automated={effective.source === "assessment"} /> : "-";
-        },
-        size: 240,
-      },
-    ],
-    [timeZone],
-  );
-  const table = useTable({ features: dataGridFeatures, data: calls, columns, getRowId: (row) => row.id });
-  return (
-    <DataGrid
-      table={table}
-      recordCount={calls.length}
-      emptyMessage={hasCalls ? "No Calls yet." : noCallsYet}
-      onRowClick={(call) => router.push(callDetailHref({ id: call.id, workspaceId: call.workspace.id }, callsSource))}
-    >
-      <DataGridScrollArea orientation="horizontal">
-        <DataGridTable />
-      </DataGridScrollArea>
-    </DataGrid>
-  );
+function change(kpi: AnalyticsKpi): Stat["change"] {
+  return kpi.comparison && kpi.comparison.change !== null ? { value: kpi.comparison.change, unit: kpi.comparison.unit } : null;
 }
 
-function MoneyTile({ id, label, value, definition, footer, valueClass = "" }: { id: string; label: string; value: string; definition: string; footer?: React.ReactNode; valueClass?: string }) {
-  return (
-    <FramePanel role="group" aria-labelledby={`${id}-label`} className="flex flex-col gap-1">
-      <p id={`${id}-label`} className="text-sm text-muted-foreground">{label}</p>
-      <p className={`font-mono text-2xl font-semibold tracking-tight tabular-nums ${valueClass}`}>{value}</p>
-      <p className="text-xs text-muted-foreground">{definition}</p>
-      {footer ? <p className="text-xs text-muted-foreground">{footer}</p> : null}
-    </FramePanel>
-  );
-}
-
-function MoneyRow({ money, pending, onRetry }: { money: HomeMoney | null; pending: boolean; onRetry: () => void }) {
-  if (!money) {
-    return (
-      <Frame>
-        <FramePanel>
-          <RegionRetry message="Cost and revenue are unavailable." pending={pending} onRetry={onRetry} />
-        </FramePanel>
-      </Frame>
+function homeStats(summary: AnalyticsSummary, money: HomeMoney | null | undefined, operator: boolean): Stat[] {
+  const { kpis, goodLeadForms } = summary;
+  const stats: Stat[] = [
+    { label: "Total Calls", value: count.format(kpis.totalCalls.value ?? 0), change: change(kpis.totalCalls), hint: "Calls started in the period" },
+    { label: "Answer Rate", value: kpis.answerRate.value === null ? "None" : formatRate(kpis.answerRate.value), change: change(kpis.answerRate), hint: "Answered Calls of forwarding attempts" },
+    {
+      label: "Good Leads",
+      value: count.format(kpis.goodLeads.value ?? 0),
+      change: change(kpis.goodLeads),
+      hint: goodLeadForms > 0 ? `Good Lead Calls and Form Submissions, ${count.format(goodLeadForms)} from Forms` : "Good Lead Calls and Form Submissions",
+    },
+    {
+      label: "Average Duration",
+      value: kpis.averageConnectedSeconds.value === null ? "None" : formatClock(kpis.averageConnectedSeconds.value),
+      change: change(kpis.averageConnectedSeconds),
+      hint: "Connected talk time of Answered Calls",
+    },
+  ];
+  if (operator && money) {
+    stats.push(
+      { label: "Monthly Revenue", value: formatUsdCents(money.totals.revenueCents), hint: `Open Deals for ${money.month}` },
+      { label: "Profit", value: formatUsdCents(money.totals.profitCents), hint: "Monthly Revenue minus Monthly Cost", tone: money.totals.profitCents < 0 ? "destructive" : "success" },
     );
   }
-  const { totals } = money;
+  return stats;
+}
+
+function MoneyLine({ money, pending, onRetry }: { money: HomeMoney | null; pending: boolean; onRetry: () => void }) {
+  if (!money) return <RegionRetry message="Cost and revenue are unavailable." pending={pending} onRetry={onRetry} />;
   return (
-    <Frame className="grid gap-2 sm:grid-cols-3">
-      <MoneyTile
-        id="money-cost"
-        label="Monthly Cost"
-        value={formatUsdCents(totals.costCents)}
-        definition={`Projected ${formatUsdCents(totals.yearlyCostCents)} per year`}
-        footer={
-          <>
-            Rates in the{" "}
-            <Link className="underline" href="/pricing" prefetch>
-              Pricing guide
-            </Link>
-            .
-          </>
-        }
-      />
-      <MoneyTile id="money-revenue" label="Monthly Revenue" value={formatUsdCents(totals.revenueCents)} definition={`Open Deals for ${money.month}`} />
-      <MoneyTile id="money-profit" label="Profit" value={formatUsdCents(totals.profitCents)} definition="Revenue minus cost this month" valueClass={totals.profitCents < 0 ? "text-destructive" : "text-success"} />
-    </Frame>
+    <p className="text-xs text-muted-foreground">
+      Monthly Cost {formatUsdCents(money.totals.costCents)}, projected {formatUsdCents(money.totals.yearlyCostCents)} per year. Rates in the{" "}
+      <Link className="underline transition-colors hover:text-foreground" href="/pricing" prefetch>
+        Pricing guide
+      </Link>
+      .
+    </p>
   );
 }
 
-function RegionTitle({ id, title, description, action }: { id: string; title: string; description?: string; action?: React.ReactNode }) {
+function RecentCallRow({ call, timeZone }: { call: CallListItem; timeZone: string }) {
+  const lead = call.effectiveLeadClassification;
   return (
-    <FrameHeader className="flex-row items-center justify-between gap-2">
-      <div className="flex flex-col gap-0.5">
-        <FrameTitle id={id}>
-          <h2>{title}</h2>
-        </FrameTitle>
-        {description ? <FrameDescription>{description}</FrameDescription> : null}
-      </div>
-      {action}
-    </FrameHeader>
+    <ListRow
+      href={callDetailHref({ id: call.id, workspaceId: call.workspace.id }, callsSource)}
+      title={call.callerNumber ? <span className="font-mono">{call.callerNumber}</span> : "Unknown caller"}
+      detail={
+        <>
+          {call.workspace.name} · <span title={formatCallTime(call.startedAt, timeZone)}>{formatShortTime(call.startedAt, timeZone)}</span>
+          {call.connectedDurationSeconds ? ` · ${formatClock(call.connectedDurationSeconds)}` : ""}
+        </>
+      }
+    >
+      {lead ? <LeadClassificationBadge classification={lead.classification} automated={lead.source === "assessment"} /> : <CallOutcomeBadge outcome={call.outcome} />}
+    </ListRow>
+  );
+}
+
+function WorkspaceRow({ row, money }: { row: WorkspacePerformanceRow; money: HomeMoney["byWorkspace"] | undefined }) {
+  const cents = money ? (money[row.workspace.id] ?? { costCents: 0, revenueCents: 0 }) : null;
+  const profit = cents ? cents.revenueCents - cents.costCents : null;
+  return (
+    <ListRow
+      href={`/workspaces/${row.workspace.id}`}
+      title={row.workspace.name}
+      detail={row.trackingNumber ? <span className="font-mono">{row.trackingNumber}</span> : "No Tracking Number"}
+    >
+      <span className="flex shrink-0 items-baseline gap-4 text-sm tabular-nums">
+        <span>
+          {row.totalCalls} <span className="text-xs text-muted-foreground">{row.totalCalls === 1 ? "Call" : "Calls"}</span>
+        </span>
+        <span className="hidden sm:inline">
+          {row.goodLeads} <span className="text-xs text-muted-foreground">{row.goodLeads === 1 ? "Good Lead" : "Good Leads"}</span>
+        </span>
+        {row.answerRate === null ? null : (
+          <span className="hidden sm:inline">
+            {formatRate(row.answerRate)} <span className="text-xs text-muted-foreground">answered</span>
+          </span>
+        )}
+        {profit === null ? null : (
+          <span className={profit < 0 ? "text-destructive" : undefined}>
+            {formatUsdCents(profit)} <span className="text-xs text-muted-foreground">profit</span>
+          </span>
+        )}
+      </span>
+    </ListRow>
   );
 }
 
@@ -240,77 +180,79 @@ export default function HomeDashboard({ operator, workspaceCount, range, summary
   const scope = operator ? "All Workspaces" : `${workspaceCount} ${workspaceCount === 1 ? "Workspace" : "Workspaces"}`;
   const noWorkspaces = operator && workspaceCount === 0;
   const hasCalls = recentCalls?.hasCalls ?? true;
+  const showChart = pending || summary !== null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
-          <p className="text-sm text-muted-foreground">{operator ? "Calls across every Workspace in this Organization." : "Calls across the Workspaces you can access."}</p>
-          <div>
-            <Badge variant="outline">{scope}</Badge>
-          </div>
-        </div>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+      <PageHeader title="Home" description={noWorkspaces ? "Calls across every Workspace in this Organization." : `${scope}, ${rangeLabel(range)}.`}>
+        {noWorkspaces ? null : <AnalyticsRangeControls range={range} onRangeChange={changeRange} disabled={pending} />}
         <GenerateReportButton scope={reportScope} />
-      </div>
+      </PageHeader>
       {noWorkspaces ? (
-        <Frame>
-          <FramePanel className="flex flex-col items-center gap-3 py-10 text-center text-sm text-muted-foreground">
-            <p>Tracer needs an imported Twilio number before it can track Calls. Create a Workspace to assign one.</p>
-            <Button render={<Link href="/workspaces" prefetch />}>Create Workspace</Button>
-          </FramePanel>
-        </Frame>
+        <Panel className="items-center gap-3 py-10 text-center text-sm text-muted-foreground">
+          <p>Tracer needs an imported Twilio number before it can track Calls. Create a Workspace to assign one.</p>
+          <Link href="/workspaces" prefetch className={buttonVariants()}>Create Workspace</Link>
+        </Panel>
       ) : (
         <>
-          <AnalyticsRangeControls range={range} onRangeChange={changeRange} disabled={pending} />
-          {pending ? (
-            <AnalyticsKpiSkeleton />
-          ) : summary ? (
-            <AnalyticsKpiRow kpis={summary.kpis} goodLeadForms={summary.goodLeadForms} />
-          ) : (
-            <Frame>
-              <FramePanel>
+          <div className="flex flex-col gap-2">
+            {pending ? (
+              <Skeleton className="h-[78px] w-full rounded-lg" aria-busy="true" />
+            ) : summary ? (
+              <StatStrip stats={homeStats(summary, money, operator)} />
+            ) : (
+              <Panel>
                 <RegionRetry message="Analytics are unavailable." pending={pending} onRetry={retry} />
-              </FramePanel>
-            </Frame>
-          )}
-          {operator && money !== undefined ? <MoneyRow money={money} pending={pending} onRetry={retry} /> : null}
-          {summary || pending ? (
-            <Frame stacked>
-              <FramePanel className="p-0" role="region" aria-labelledby="call-trends-title">
-                <RegionTitle id="call-trends-title" title="Leads generated" description={summary ? `Times in ${summary.timeZone}` : undefined} />
-                <div className="px-(--frame-panel-px) pb-(--frame-panel-py)">
+              </Panel>
+            )}
+            {operator && money !== undefined && !pending ? <MoneyLine money={money} pending={pending} onRetry={retry} /> : null}
+          </div>
+          <div className="grid items-start gap-5 lg:grid-cols-3">
+            {showChart ? (
+              <Panel title="Leads generated" className="lg:col-span-2">
+                <div className="p-4">
                   {pending || !summary ? <CallTrendsSkeleton /> : hasCalls ? <CallTrendsChart trend={summary.trend} /> : <p className="py-10 text-center text-sm text-muted-foreground">{noCallsYet}</p>}
                 </div>
-              </FramePanel>
-            </Frame>
-          ) : null}
-          {!pending && summary?.workspacePerformance ? (
-            <Frame stacked>
-              <FramePanel className="flex flex-col gap-3 p-0" role="region" aria-labelledby="workspace-performance-title">
-                <RegionTitle id="workspace-performance-title" title="Workspace performance" />
-                <WorkspacePerformance rows={summary.workspacePerformance} money={operator && money ? money.byWorkspace : undefined} />
-              </FramePanel>
-            </Frame>
-          ) : null}
-          <Frame stacked>
-            <FramePanel className="flex flex-col gap-3 p-0" role="region" aria-labelledby="home-recent-calls-title">
-              <RegionTitle
-                id="home-recent-calls-title"
-                title="Recent Calls"
-                action={
-                  <Button variant="outline" size="sm" render={<Link href={callsHref} prefetch />}>
-                    View Calls
-                  </Button>
-                }
-              />
-              {recentCalls ? (
-                <RecentCallsGrid calls={recentCalls.calls.slice(0, recentCallCount)} timeZone={recentCalls.timeZone} hasCalls={recentCalls.hasCalls} />
-              ) : (
+              </Panel>
+            ) : null}
+            <Panel
+              title="Recent Calls"
+              className={showChart ? undefined : "lg:col-span-3"}
+              action={
+                <Link href={callsHref} prefetch className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  View Calls
+                </Link>
+              }
+            >
+              {recentCalls === null ? (
                 <RegionRetry message="Recent Calls are unavailable." pending={pending} onRetry={retry} />
+              ) : recentCalls.calls.length === 0 ? (
+                <p className="px-4 py-10 text-center text-sm text-muted-foreground">{hasCalls ? "No Calls yet." : noCallsYet}</p>
+              ) : (
+                <div className="flex flex-col divide-y divide-border">
+                  {recentCalls.calls.slice(0, recentCallCount).map((call) => (
+                    <RecentCallRow key={call.id} call={call} timeZone={recentCalls.timeZone} />
+                  ))}
+                </div>
               )}
-            </FramePanel>
-          </Frame>
+            </Panel>
+          </div>
+          {!pending && summary?.workspacePerformance ? (
+            <Panel
+              title="Workspaces"
+              action={
+                <Link href="/workspaces" prefetch className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  View all
+                </Link>
+              }
+            >
+              <div className="flex flex-col divide-y divide-border">
+                {summary.workspacePerformance.map((row) => (
+                  <WorkspaceRow key={row.workspace.id} row={row} money={operator && money ? money.byWorkspace : undefined} />
+                ))}
+              </div>
+            </Panel>
+          ) : null}
         </>
       )}
     </div>
